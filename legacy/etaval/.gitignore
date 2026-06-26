@@ -1,0 +1,32 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+
+# uv / venv
+.venv/
+uv.lock
+
+# Test / coverage
+.pytest_cache/
+.coverage
+htmlcov/
+.ruff_cache/
+
+# Tooling
+.mypy_cache/
+.DS_Store
+
+# Runtime artifacts
+*.sqlite
+*.sqlite3
+*.db
+*.parquet
+!tests/fixtures/**
+
+# Editors
+.vscode/
+.idea/
