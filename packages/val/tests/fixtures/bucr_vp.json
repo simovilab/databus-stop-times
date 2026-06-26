@@ -1,0 +1,63 @@
+{
+  "header": {
+    "gtfs_realtime_version": "2.0",
+    "incrementality": "FULL_DATASET",
+    "timestamp": 1700010000
+  },
+  "entity": [
+    {
+      "id": "bucr_v1",
+      "is_deleted": false,
+      "vehicle": {
+        "trip": {
+          "trip_id": "bucr_trip_1",
+          "route_id": "bucr_route_A",
+          "direction_id": 0,
+          "start_date": "20240101",
+          "schedule_relationship": "SCHEDULED"
+        },
+        "vehicle": {
+          "id": "bucr_bus_10",
+          "label": "10"
+        },
+        "position": {
+          "latitude": 9.9350,
+          "longitude": -84.0830,
+          "bearing": 270.0,
+          "speed": 8.3
+        },
+        "current_stop_sequence": 1,
+        "stop_id": "bucr_s1",
+        "current_status": "IN_TRANSIT_TO",
+        "timestamp": 1700010000
+      }
+    },
+    {
+      "id": "bucr_v2",
+      "is_deleted": false,
+      "vehicle": {
+        "trip": {
+          "trip_id": "bucr_trip_2",
+          "route_id": "bucr_route_B",
+          "direction_id": 1,
+          "start_date": "20240101",
+          "schedule_relationship": "SCHEDULED"
+        },
+        "vehicle": {
+          "id": "bucr_bus_20",
+          "label": "20"
+        },
+        "position": {
+          "latitude": 9.9380,
+          "longitude": -84.0800,
+          "bearing": 45.0,
+          "speed": 12.0
+        },
+        "current_stop_sequence": 2,
+        "stop_id": "bucr_s2",
+        "current_status": "STOPPED_AT",
+        "timestamp": 1699999995
+      }
+    }
+  ]
+}

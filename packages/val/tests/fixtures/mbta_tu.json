@@ -1,0 +1,60 @@
+{
+  "header": {
+    "gtfs_realtime_version": "2.0",
+    "incrementality": "FULL_DATASET",
+    "timestamp": 1700000000
+  },
+  "entity": [
+    {
+      "id": "tu1",
+      "is_deleted": false,
+      "trip_update": {
+        "trip": {
+          "trip_id": "trip_1",
+          "route_id": "route_1",
+          "direction_id": 0,
+          "start_date": "20240101",
+          "schedule_relationship": "SCHEDULED"
+        },
+        "stop_time_update": [
+          {
+            "stop_sequence": 2,
+            "stop_id": "s2",
+            "arrival": {"delay": 30, "time": 1700000120, "uncertainty": 60},
+            "departure": {"delay": 30, "time": 1700000150, "uncertainty": 60},
+            "schedule_relationship": "SCHEDULED"
+          },
+          {
+            "stop_sequence": 3,
+            "stop_id": "s3",
+            "arrival": {"delay": 45, "time": 1700000300, "uncertainty": 90},
+            "departure": {"delay": 45, "time": 1700000330, "uncertainty": 90},
+            "schedule_relationship": "SCHEDULED"
+          }
+        ]
+      }
+    },
+    {
+      "id": "tu2",
+      "is_deleted": false,
+      "trip_update": {
+        "trip": {
+          "trip_id": "trip_2",
+          "route_id": "route_2",
+          "direction_id": 1,
+          "start_date": "20240101",
+          "schedule_relationship": "SCHEDULED"
+        },
+        "stop_time_update": [
+          {
+            "stop_sequence": 3,
+            "stop_id": "s3",
+            "arrival": {"delay": 0, "time": 1700000200, "uncertainty": 30},
+            "departure": {"delay": 0, "time": 1700000220, "uncertainty": 30},
+            "schedule_relationship": "SCHEDULED"
+          }
+        ]
+      }
+    }
+  ]
+}
