@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import type { TableRow } from '@nuxt/ui'
 import type { RunInfo } from '~/types/api'
 
 useHead({ title: 'History – etaval' })
@@ -10,11 +11,12 @@ const runs = ref<RunInfo[]>([])
 const loading = ref(false)
 const loadError = ref<string | null>(null)
 
-const statusColors: Record<string, string> = {
-  pending: 'yellow',
-  running: 'blue',
-  done: 'green',
-  error: 'red'
+type BadgeColor = 'success' | 'info' | 'warning' | 'error' | 'neutral'
+const statusColors: Record<string, BadgeColor> = {
+  pending: 'warning',
+  running: 'info',
+  done: 'success',
+  error: 'error'
 }
 
 async function loadRuns() {
@@ -112,12 +114,12 @@ const columns = [
       :columns="columns"
       :loading="loading"
       class="cursor-pointer"
-      @select="(row: RunInfo) => router.push(`/runs/${row.id}`)"
+      @select="(_e: Event, row: TableRow<RunInfo>) => router.push(`/runs/${row.original.id}`)"
     >
       <!-- Status badge -->
       <template #status-cell="{ row }">
         <UBadge
-          :color="(statusColors[row.original.status] as 'yellow' | 'blue' | 'green' | 'red') ?? 'gray'"
+          :color="statusColors[row.original.status] ?? 'neutral'"
           variant="subtle"
           :label="row.original.status"
         />

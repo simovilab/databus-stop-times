@@ -25,11 +25,12 @@ const deleteError = ref<string | null>(null)
 // ── Live stream (always call at top level; start() called conditionally) ───────
 const stream = useRunStream(id)
 
-const statusColors: Record<string, string> = {
-  pending: 'yellow',
-  running: 'blue',
-  done: 'green',
-  error: 'red'
+type BadgeColor = 'success' | 'info' | 'warning' | 'error' | 'neutral'
+const statusColors: Record<string, BadgeColor> = {
+  pending: 'warning',
+  running: 'info',
+  done: 'success',
+  error: 'error'
 }
 
 async function loadPostRunData() {
@@ -140,11 +141,11 @@ const isError = computed(() => displayStatus.value === 'error')
           </h1>
           <UBadge
             v-if="run || stream.connected.value"
-            :color="(statusColors[displayStatus] as 'yellow' | 'blue' | 'green' | 'red') ?? 'gray'"
+            :color="statusColors[displayStatus] ?? 'neutral'"
             variant="subtle"
             :label="displayStatus"
           />
-          <UBadge v-if="stream.connected.value" color="blue" variant="solid" label="● live" />
+          <UBadge v-if="stream.connected.value" color="info" variant="solid" label="● live" />
         </div>
         <p v-if="run" class="text-sm text-gray-500">
           Source: <strong>{{ run.params.source }}</strong> ·
@@ -314,24 +315,13 @@ const isError = computed(() => displayStatus.value === 'error')
       </UCard>
 
       <!-- ════════════════════════════════════════════════════════════════════
-           C2: Analytics dashboard placeholder
-           @unovis charts (XY plots, scatter, horizon buckets, convergence,
-           head-to-head) will mount here in the next phase.
+           C2: Analytics dashboard — @unovis cross-filtered charts
            ════════════════════════════════════════════════════════════════════ -->
-      <UCard class="border-2 border-dashed border-gray-300 dark:border-gray-700">
+      <UCard>
         <template #header>
-          <h2 class="font-semibold text-gray-500 dark:text-gray-400">
-            Analytics
-            <span class="ml-2 text-xs font-normal text-gray-400">(C2 – coming next)</span>
-          </h2>
+          <h2 class="font-semibold text-gray-800 dark:text-gray-200">Analytics</h2>
         </template>
-        <!-- C2: analytics dashboard goes here -->
-        <div class="py-12 text-center text-gray-400 dark:text-gray-600">
-          <p class="text-lg">📊 @unovis charts will render here in Phase C2</p>
-          <p class="text-sm mt-2">
-            Planned: horizon-bucket bars · convergence lines · head-to-head scatter · error distributions
-          </p>
-        </div>
+        <AnalyticsDashboard :run-id="id" />
       </UCard>
     </template>
 

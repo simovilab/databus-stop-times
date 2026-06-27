@@ -43,7 +43,7 @@ export function useRunStream(runId: string) {
   let ws: WebSocket | null = null
 
   function start() {
-    if (!process.client) return
+    if (!import.meta.client) return
     const url = `${wsBase}/api/runs/${runId}/stream`
 
     try {
