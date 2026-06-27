@@ -33,7 +33,6 @@ from __future__ import annotations
 import asyncio
 import os
 import sys
-import tempfile
 from pathlib import Path
 from typing import Any
 
@@ -43,8 +42,15 @@ from rich.console import Console
 from rich.table import Table
 
 import etaval
+from etaval.engine.assembly import (
+    DEFAULT_PREDICTOR_IDS,
+    PREDICTOR_REGISTRY,
+    _RouteFilterLiveSource,
+    build_detectors,
+    download_gtfs,
+    parse_duration,
+)
 from etaval.engine.runtime import (
-    FeedSnapshot,
     LiveFeedSource,
     ReplayFeedSource,
     RunSummary,
@@ -52,109 +58,20 @@ from etaval.engine.runtime import (
 )
 from etaval.feeds.gtfsrt_json import (
     TripUpdatesPoller,
-    VehiclePositionRecord,
     VehiclePositionsPoller,
 )
 from etaval.feeds.source_config import list_sources, load_named_source
 from etaval.feeds.static import GtfsStaticLoader
-from etaval.groundtruth.position_radius import PositionRadiusDetector
-from etaval.groundtruth.shape_distance import ShapeDistanceDetector
-from etaval.groundtruth.stop_status import StopStatusDetector
-from etaval.predictors.constant_speed import ConstantSpeedPredictor
-from etaval.predictors.gtfsrt_tripupdates import GtfsRtTripUpdatesPredictor
 from etaval.scoring.metrics import compute_metrics
 from etaval.storage.parquet_export import export_results, load_results_parquet
 from etaval.storage.sqlite import SqliteStorage
 
 app = typer.Typer(help="etaval — ETA Prediction Validation Tool", no_args_is_help=True)
 
-# ── Predictor registry ────────────────────────────────────────────────────────
-
-_PREDICTOR_REGISTRY: dict[str, type] = {
-    "gtfsrt": GtfsRtTripUpdatesPredictor,
-    "baseline:constant_speed": ConstantSpeedPredictor,
-}
-_DEFAULT_PREDICTOR_IDS: list[str] = ["gtfsrt", "baseline:constant_speed"]
-
-
-# ── Duration parser ───────────────────────────────────────────────────────────
-
-
-def parse_duration(value: str) -> float:
-    """Parse a human-friendly duration string into seconds.
-
-    Supported formats:
-
-    - ``<N>h``  — hours (e.g. ``"1h"`` → 3600.0)
-    - ``<N>m``  — minutes (e.g. ``"30m"`` → 1800.0)
-    - ``<N>s``  — seconds (e.g. ``"90s"`` → 90.0)
-    - ``<N>``   — bare number treated as seconds (e.g. ``"45"`` → 45.0)
-
-    Raises:
-        ValueError: If *value* is empty, has an unrecognised suffix, or its
-            numeric part cannot be converted to float.
-
-    Examples::
-
-        >>> parse_duration("30m")
-        1800.0
-        >>> parse_duration("1h")
-        3600.0
-        >>> parse_duration("90s")
-        90.0
-        >>> parse_duration("45")
-        45.0
-    """
-    s = value.strip()
-    if not s:
-        raise ValueError(f"Empty duration string: {value!r}")
-    try:
-        if s.endswith("h"):
-            return float(s[:-1]) * 3600.0
-        if s.endswith("m"):
-            return float(s[:-1]) * 60.0
-        if s.endswith("s"):
-            return float(s[:-1])
-        return float(s)
-    except (ValueError, OverflowError) as exc:
-        raise ValueError(f"Invalid duration {value!r}: {exc}") from exc
-
-
-# ── Route filter (preserves LiveFeedSource semantics) ─────────────────────────
-
-
-class _RouteFilterLiveSource(LiveFeedSource):
-    """LiveFeedSource wrapper that drops VP records for non-matching route IDs.
-
-    Inherits ``LiveFeedSource`` so ``isinstance(feed_source, LiveFeedSource)``
-    remains ``True`` inside ``run_engine`` — this preserves the live-mode
-    sleep (``asyncio.sleep(poll_interval_s)``) and the wall-clock duration check.
-
-    ``LiveFeedSource.__init__`` is intentionally bypassed via
-    ``object.__init__`` to avoid constructing duplicate poller references.
-    This means ``self._vp`` and ``self._tu`` are never set on this subclass;
-    they are never accessed because ``__anext__`` is fully overridden.
-    """
-
-    def __init__(self, inner: LiveFeedSource, route_ids: set[str]) -> None:
-        object.__init__(self)  # bypass LiveFeedSource.__init__
-        self._inner = inner
-        self._route_ids = route_ids
-
-    def __aiter__(self) -> _RouteFilterLiveSource:
-        return self
-
-    async def __anext__(self) -> FeedSnapshot:
-        snap: FeedSnapshot = await self._inner.__anext__()
-        filtered: list[VehiclePositionRecord] = [
-            r for r in snap.vp_records if r.route_id in self._route_ids
-        ]
-        return FeedSnapshot(
-            header_timestamp=snap.header_timestamp,
-            vp_records=filtered,
-            tu_header_timestamp=snap.tu_header_timestamp,
-            tu_records=snap.tu_records,
-        )
+# ``parse_duration`` and ``_RouteFilterLiveSource`` are imported from
+# ``etaval.engine.assembly`` above so the CLI and the future API share one
+# implementation.  They remain importable from this module for backward compat
+# (e.g. ``from etaval.cli.main import parse_duration`` in tests).
 
 
 # ── Core validation function (testable without network) ───────────────────────
@@ -292,28 +209,21 @@ def run(
         raise typer.Exit(code=1) from None
 
     # ── Resolve predictor list ────────────────────────────────────────────────
-    predictor_ids: list[str] = list(predictor) if predictor else _DEFAULT_PREDICTOR_IDS
-    unknown = [pid for pid in predictor_ids if pid not in _PREDICTOR_REGISTRY]
+    predictor_ids: list[str] = list(predictor) if predictor else DEFAULT_PREDICTOR_IDS
+    unknown = [pid for pid in predictor_ids if pid not in PREDICTOR_REGISTRY]
     if unknown:
         typer.echo(f"Error: unknown predictor IDs: {unknown!r}", err=True)
-        typer.echo(f"Known predictor IDs: {sorted(_PREDICTOR_REGISTRY)}", err=True)
+        typer.echo(f"Known predictor IDs: {sorted(PREDICTOR_REGISTRY)}", err=True)
         raise typer.Exit(code=1)
-    predictors: list[Any] = [_PREDICTOR_REGISTRY[pid]() for pid in predictor_ids]
+    predictors: list[Any] = [PREDICTOR_REGISTRY[pid]() for pid in predictor_ids]
 
     # ── Download GTFS static zip (synchronous; before asyncio.run) ────────────
     typer.echo(f"Downloading GTFS static zip from {cfg.gtfs_static_url} …")
     try:
-        with httpx.Client(timeout=120.0) as client:
-            resp = client.get(cfg.gtfs_static_url, headers=dict(cfg.headers))
-            resp.raise_for_status()
+        tmp_path = download_gtfs(cfg)
     except httpx.HTTPError as exc:
         typer.echo(f"Error downloading GTFS static zip: {exc}", err=True)
         raise typer.Exit(code=1) from exc
-
-    # Write to a temp file so GtfsStaticLoader can zipfile.ZipFile it.
-    with tempfile.NamedTemporaryFile(suffix=".zip", delete=False) as tmp:
-        tmp.write(resp.content)
-        tmp_path = tmp.name
 
     try:
         try:
@@ -342,11 +252,7 @@ def run(
         feed_source = live_source
 
     # ── Build detectors from source config ────────────────────────────────────
-    detectors: list[Any] = [
-        ShapeDistanceDetector(shape_threshold_m=cfg.shape_threshold_m),
-        PositionRadiusDetector(arrival_radius_m=cfg.arrival_radius_m, dwell_s=cfg.dwell_s),
-        StopStatusDetector(),
-    ]
+    detectors: list[Any] = build_detectors(cfg)
 
     # ── Storage ───────────────────────────────────────────────────────────────
     db_path: str = str(db) if db is not None else ":memory:"

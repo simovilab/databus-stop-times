@@ -35,10 +35,16 @@ from __future__ import annotations
 
 import asyncio
 import time
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Any
 
-from etaval.domain.models import ActualArrival, PredictionSample, VehicleState
+from etaval.domain.models import (
+    ActualArrival,
+    PredictionSample,
+    ValidationResult,
+    VehicleState,
+)
 from etaval.feeds.gtfsrt_json import (
     TripUpdateRecord,
     TripUpdatesPoller,
@@ -155,6 +161,36 @@ class RunSummary:
     results_saved: int = 0
 
 
+@dataclass(frozen=True)
+class VehiclePing:
+    """Position ping for one active trip, emitted each tick."""
+
+    trip_key: str
+    route_id: str
+    lat: float
+    lon: float
+    progress_m: float | None
+
+
+@dataclass(frozen=True)
+class TickEvent:
+    """Event fired once per engine tick when ``on_tick`` is provided.
+
+    Cumulative counts (``samples_saved``, ``arrivals_saved``, ``results_saved``)
+    match the RunSummary totals *at the end of this tick*.  ``new_results``
+    contains only the ValidationResults produced *this tick*.  ``vehicles`` is
+    one VehiclePing per active trip processed this tick.
+    """
+
+    tick: int                              # 1-based tick counter
+    header_timestamp: float                # VP feed header_timestamp for this tick
+    samples_saved: int                     # cumulative summary.samples_saved
+    arrivals_saved: int                    # cumulative summary.arrivals_saved
+    results_saved: int                     # cumulative summary.results_saved
+    new_results: list[ValidationResult]    # THIS tick's scored results
+    vehicles: list[VehiclePing]            # one ping per active trip this tick
+
+
 # ── Geometry cache entry ──────────────────────────────────────────────────────
 
 @dataclass
@@ -178,6 +214,7 @@ async def run_engine(
     max_ticks: int | None = None,
     poll_interval_s: float = 15.0,
     source_name: str = "",
+    on_tick: Callable[[TickEvent], Awaitable[None]] | None = None,
 ) -> RunSummary:
     """Run the validation engine tick loop.
 
@@ -245,6 +282,7 @@ async def run_engine(
         tick_samples: list[PredictionSample] = []
         tick_arrivals: list[ActualArrival] = []
         tick_results = []
+        tick_vehicles: list[VehiclePing] = []
 
         for trip in tracker.active_trips():
             tracker_key = (trip.trip_id, trip.vehicle_id)
@@ -286,6 +324,15 @@ async def run_engine(
                 continue
 
             latest = enriched_history[-1]
+            tick_vehicles.append(
+                VehiclePing(
+                    trip_key=trip.trip_key,
+                    route_id=trip.route_id,
+                    lat=latest.lat,
+                    lon=latest.lon,
+                    progress_m=latest.progress_m,
+                )
+            )
             current_progress_m = latest.progress_m if latest.progress_m is not None else 0.0
             upcoming = upcoming_stops(current_progress_m, stops)
 
@@ -379,6 +426,20 @@ async def run_engine(
         tracker.expire(now=now, max_age_s=300.0)
 
         summary.ticks += 1
+
+        # ── Stream tick event (before the live sleep so events fire promptly) ──
+        if on_tick is not None:
+            await on_tick(
+                TickEvent(
+                    tick=summary.ticks,
+                    header_timestamp=now,
+                    samples_saved=summary.samples_saved,
+                    arrivals_saved=summary.arrivals_saved,
+                    results_saved=summary.results_saved,
+                    new_results=tick_results,
+                    vehicles=tick_vehicles,
+                )
+            )
 
         # Sleep between ticks only in live mode.
         if is_live:

@@ -19,6 +19,9 @@ dependencies = [
 [project.scripts]
 etaval = "etaval.cli.main:app"
 
+[project.optional-dependencies]
+api = ["fastapi>=0.115", "uvicorn[standard]>=0.30"]
+
 [dependency-groups]
 dev = [
     "pytest>=8.2",

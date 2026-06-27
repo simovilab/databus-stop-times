@@ -333,3 +333,97 @@ async def test_max_ticks_cap() -> None:
         source_name="test",
     )
     assert summary.ticks == 2
+
+
+# ── on_tick streaming hook ────────────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_on_tick_hook_fires_per_tick() -> None:
+    """on_tick coroutine receives one TickEvent per engine tick."""
+    import math
+
+    from etaval.engine.runtime import TickEvent
+
+    static_loader = GtfsStaticLoader(_MINI_GTFS)
+    storage = SqliteStorage(":memory:")
+    predictors = [GtfsRtTripUpdatesPredictor(), ConstantSpeedPredictor()]
+    detectors = [ShapeDistanceDetector(shape_threshold_m=30.0)]
+
+    snapshots = _build_snapshots()  # 5 ticks
+    feed_source = ReplayFeedSource(snapshots)
+
+    captured: list[TickEvent] = []
+
+    async def on_tick(event: TickEvent) -> None:
+        captured.append(event)
+
+    summary = await run_engine(
+        feed_source=feed_source,
+        static_loader=static_loader,
+        predictors=predictors,
+        detectors=detectors,
+        storage=storage,
+        primary_method="shape_distance",
+        source_name="test",
+        on_tick=on_tick,
+    )
+
+    # One event per tick.
+    assert len(captured) == summary.ticks == len(snapshots)
+
+    # Tick numbers are 1-based and strictly increasing.
+    assert [e.tick for e in captured] == list(range(1, len(snapshots) + 1))
+
+    # Cumulative counts are monotonically non-decreasing.
+    for prev, curr in zip(captured, captured[1:], strict=False):
+        assert curr.samples_saved >= prev.samples_saved
+        assert curr.arrivals_saved >= prev.arrivals_saved
+        assert curr.results_saved >= prev.results_saved
+
+    # Final event's cumulative counts match the RunSummary totals.
+    last = captured[-1]
+    assert last.samples_saved == summary.samples_saved
+    assert last.arrivals_saved == summary.arrivals_saved
+    assert last.results_saved == summary.results_saved
+
+    # At least one tick carries new_results (this tick's scored results).
+    ticks_with_results = [e for e in captured if e.new_results]
+    assert len(ticks_with_results) > 0, "Expected at least one tick with ValidationResults"
+
+    # At least one tick has vehicle pings, and every ping has finite lat/lon.
+    ticks_with_vehicles = [e for e in captured if e.vehicles]
+    assert len(ticks_with_vehicles) > 0, "Expected at least one tick with vehicle pings"
+    for event in captured:
+        for ping in event.vehicles:
+            assert math.isfinite(ping.lat)
+            assert math.isfinite(ping.lon)
+            if ping.progress_m is not None:
+                assert math.isfinite(ping.progress_m)
+
+
+@pytest.mark.asyncio
+async def test_on_tick_none_is_backward_compatible() -> None:
+    """on_tick=None (default) produces the same behaviour as the old signature."""
+    static_loader = GtfsStaticLoader(_MINI_GTFS)
+    storage = SqliteStorage(":memory:")
+    predictors = [GtfsRtTripUpdatesPredictor(), ConstantSpeedPredictor()]
+    detectors = [ShapeDistanceDetector(shape_threshold_m=30.0)]
+
+    snapshots = _build_snapshots()
+
+    summary = await run_engine(
+        feed_source=ReplayFeedSource(snapshots),
+        static_loader=static_loader,
+        predictors=predictors,
+        detectors=detectors,
+        storage=storage,
+        primary_method="shape_distance",
+        source_name="test",
+        on_tick=None,
+    )
+
+    assert summary.ticks == len(snapshots)
+    assert summary.samples_saved > 0
+    assert summary.arrivals_saved > 0
+    assert summary.results_saved > 0
