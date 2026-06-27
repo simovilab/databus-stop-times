@@ -4,6 +4,8 @@ export default defineNuxtConfig({
 
   modules: ['@nuxt/ui'],
 
+  css: ['~/assets/css/main.css'],
+
   // Env: NUXT_PUBLIC_API_BASE overrides at runtime
   runtimeConfig: {
     public: {
