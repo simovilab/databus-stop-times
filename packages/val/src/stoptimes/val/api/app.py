@@ -27,6 +27,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from etaval.api.config import get_settings
 from etaval.api.runs import RunManager, RunState
 from etaval.api.schemas import MetricsResponse, ResultRow, RunInfo, RunRequest
+from etaval.api.ws import router as ws_router
 from etaval.engine.assembly import DEFAULT_PREDICTOR_IDS, PREDICTOR_REGISTRY, parse_duration
 from etaval.feeds.source_config import list_sources, load_named_source
 from etaval.scoring.metrics import compute_metrics
@@ -92,6 +93,9 @@ def create_app(run_manager: RunManager | None = None) -> FastAPI:
 
     # Expose on app.state so middleware / lifespan hooks can reach it.
     app.state.run_manager = run_manager
+
+    # ── WebSocket routes (Phase B) ─────────────────────────────────────────────
+    app.include_router(ws_router)
 
     # ── Routes ────────────────────────────────────────────────────────────────
 

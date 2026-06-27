@@ -154,6 +154,25 @@ class RunManager:
             except asyncio.QueueFull:
                 pass  # slow consumer — drop silently
 
+    def _signal_end(self, run_id: str) -> None:
+        """Put a ``None`` sentinel into every subscriber queue for *run_id*.
+
+        Called at the end of :meth:`_run_background` so WebSocket handlers
+        can detect run termination without relying solely on polling.  If a
+        queue is full (slow subscriber), one item is dropped to make room;
+        handlers also carry a timeout-based fallback for resilience.
+        """
+        for q in list(self._subscribers.get(run_id, [])):
+            if q.full():
+                try:
+                    q.get_nowait()
+                except asyncio.QueueEmpty:
+                    pass
+            try:
+                q.put_nowait(None)
+            except asyncio.QueueFull:
+                pass  # handler's timeout-based fallback detects terminal state
+
     # ── on_tick factory ────────────────────────────────────────────────────────
 
     def _make_on_tick(self, run_id: str) -> Callable:
@@ -273,6 +292,8 @@ class RunManager:
                 except OSError:
                     pass
             self._persist()
+            # Signal Phase B WebSocket subscribers that this run has ended.
+            self._signal_end(run_id)
 
     # ── Queries ────────────────────────────────────────────────────────────────
 
