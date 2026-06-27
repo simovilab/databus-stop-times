@@ -18,6 +18,10 @@ dependencies = [
 
 [project.scripts]
 etaval = "etaval.cli.main:app"
+etaval-api = "etaval.api.app:main"
+
+[project.optional-dependencies]
+api = ["fastapi>=0.115", "uvicorn[standard]>=0.30"]
 
 [dependency-groups]
 dev = [

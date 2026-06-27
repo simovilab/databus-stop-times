@@ -27,6 +27,9 @@ htmlcov/
 *.parquet
 !tests/fixtures/**
 
+# API run data (ETAVAL_DATA_DIR default)
+.etaval_data/
+
 # Editors
 .vscode/
 .idea/
