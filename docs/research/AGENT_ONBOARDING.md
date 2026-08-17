@@ -52,14 +52,14 @@ Siblings live at `~/Desktop/SIMOVI/git.no_sync/`:
 - **Both `.venv` directories in `gtfs-django` are empty shells** left over from a lost
   Linux machine, and system `python3` has no pandas. Run Python via
   `uv run --no-project --with pandas --with pyarrow --with duckdb --with pytest python ...`.
-  `uv` is at `/Users/dotj/.local/bin/uv` (not always on PATH).
+  `uv` is typically installed at `~/.local/bin/uv` (not always on PATH).
 - **`navsat-bridge` has a working `.venv`**, but `uv run --with X` sometimes breaks its
   editable install on Python 3.14. If imports fail with `No module named 'navsat_bridge'`,
   `rm -rf .venv && uv sync` fixes it, or use `PYTHONPATH=src .venv/bin/python -m pytest`.
 - **Pyright floods the session with `import could not be resolved`.** That's the empty
   venvs, not real errors. Ignore unless the error is about the code itself.
-- `mc` (MinIO client) is at `/Users/dotj/.local/bin/mc`, alias `simovilab`. Credentials are
-  already configured in `~/.mc/config.json` — never print or commit them.
+- `mc` (MinIO client) is typically installed at `~/.local/bin/mc`, alias `simovilab`.
+  Credentials are already configured in `~/.mc/config.json` — never print or commit them.
 - Two Django test modules (`rt_pipeline/tests.py`, `test_s3_sink.py`) can't be collected
   without a full Django env. Pre-existing, not something you broke.
 

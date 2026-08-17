@@ -61,11 +61,14 @@ STATIC_GTFS_SNAPSHOT_HOUR_UTC=4
 > against an empty database on the wrong worker and reported
 > `{'flushed': 0}` as success.
 
-Load creds into a shell for host-side tools without committing them:
+Load creds into a shell for host-side tools without committing them. Pull
+these from wherever you keep secrets (password manager, `pass`, a
+`chmod 600` `.env` sourced separately, etc.) — never from a plaintext file
+checked into or living alongside the repo:
 ```bash
 export AWS_ENDPOINT_URL=https://data.simovilab.org AWS_REGION=us-east-1
-export AWS_ACCESS_KEY_ID=$(grep '\*\*Access Key\*\*'  /home/jae/Desktop/SIMOVI/SIMOVILAB-S3.md | awk -F'|' '{print $3}' | tr -d ' ')
-export AWS_SECRET_ACCESS_KEY=$(grep '\*\*Secret Key\*\*' /home/jae/Desktop/SIMOVI/SIMOVILAB-S3.md | awk -F'|' '{print $3}' | tr -d ' ')
+export AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID:?set this from your secrets manager}
+export AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY:?set this from your secrets manager}
 ```
 
 ## Run — full Docker stack

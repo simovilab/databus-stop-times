@@ -11,13 +11,15 @@
 
 ## 0. Discovery preamble (paths examined)
 
-Host paths (the prompt's `/home/jae/git/...` paths do not exist on this host — these do):
+Host paths at audit time (the prompt's `.../git/...` paths did not exist on
+that host — these did; personal home-directory prefixes redacted below,
+paths shown relative to the `databus` and `gtfs-django` checkouts):
 
 **Reference — Databús (canonical static schema), app `feed/`:**
-- `/home/jae/Desktop/SIMOVI/git/databus/backend/feed/models.py` — concrete models subclassing `gtfs.models.Base*`
-- `/home/jae/Desktop/SIMOVI/git/databus/backend/gtfs-django/gtfs/models.py` — **abstract `Base*`** version of the package (the canonical pattern)
-- `/home/jae/Desktop/SIMOVI/git/databus/backend/feed/{realtime/runs.py, schedule/exporter.py, management/commands/export_gtfs.py, migrations/0001_initial.py}`
-- Knowledge graphs: `/home/jae/Desktop/SIMOVI/git/databus/{,backend/}graphify-out/graph.json`
+- `databus/backend/feed/models.py` — concrete models subclassing `gtfs.models.Base*`
+- `databus/backend/gtfs-django/gtfs/models.py` — **abstract `Base*`** version of the package (the canonical pattern)
+- `databus/backend/feed/{realtime/runs.py, schedule/exporter.py, management/commands/export_gtfs.py, migrations/0001_initial.py}`
+- Knowledge graphs: `databus/{,backend/}graphify-out/graph.json`
 
 **Target — gtfs-django (this repo):**
 - `gtfs/models.py` — **concrete** GTFS models (22 classes, `models.Model`), no `Base*` — out of date vs Databús's vendored copy
@@ -57,7 +59,7 @@ Host paths (the prompt's `/home/jae/git/...` paths do not exist on this host —
 - Tooling already on host: `duckdb`, `mc` (alias `simovilab`), `aws` profile `simovilab`, boto3/s3fs snippets.
 - **DuckDB reads Hive-partitioned Parquet on S3 with predicate/partition pushdown** → strong fit for the dataset-builder RT source (C1/C2): `read_parquet('s3://.../route_id=*/...')` filters partitions lazily. Reconsider whether C1 needs custom pandas readers or can lean on DuckDB.
 - **Open:** put MBTA vehicle positions under a prefix in `transit/` (e.g. `transit/mbta/vehicle_positions/...`) or provision a new bucket? Needs console/admin.
-- 🔒 **Security:** `SIMOVILAB-S3.md` holds **live access/secret keys in plaintext**. Never hardcode them in source or commit them — inject via env (`AWS_ACCESS_KEY_ID`/`AWS_SECRET_ACCESS_KEY`/`AWS_ENDPOINT_URL`) or the `simovilab` profile. Recommend rotating these keys since they now live in a shared file, and confirm `SIMOVILAB-S3.md` is git-ignored.
+- 🔒 **Security (historical incident note, not a live pointer):** at the time of this audit, a file named `SIMOVILAB-S3.md` outside this repo held **live access/secret keys in plaintext**. Recorded here as a reminder never to hardcode credentials in source or commit them — inject via env (`AWS_ACCESS_KEY_ID`/`AWS_SECRET_ACCESS_KEY`/`AWS_ENDPOINT_URL`) or a credentials profile, per `docs/RUNBOOK.md`. Those keys should be rotated if they haven't been; this note does not describe where that file lives today and should not be read as directions to go find it.
 
 ## 1. Findings
 
