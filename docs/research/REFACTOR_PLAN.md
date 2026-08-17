@@ -3,6 +3,14 @@
 > Planning artifact only. No implementation, no migrations, no commits.
 > Orchestrator: Opus. Implementers: Sonnet sub-agents on disjoint file manifests.
 >
+> Identity note: this planning pass predates the 2026-08-17 extraction of
+> `eta_prediction/` out of `gtfs-django` into its own repo,
+> `github.com/dotjae/gtfs-eta` (full history preserved across all three
+> branches that touched it). Paths below of the form `eta_prediction/...`
+> refer to that pre-extraction layout — in this repo they are simply the
+> repo root, e.g. `eta_prediction/eta_service/` is now `eta_service/`. Left
+> unrewritten below as an accurate record of what this audit examined.
+>
 > Historical note: `eta_prediction/bytewax/*`, referenced below as an
 > inference/serving path examined at the time of this audit, was retired
 > 2026-08-17 (roadmap 1.6) — Prefect works and two serving paths was one too

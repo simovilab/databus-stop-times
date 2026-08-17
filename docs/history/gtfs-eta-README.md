@@ -2,6 +2,11 @@
 
 Real-time arrival time prediction for transit vehicles using GTFS-Realtime feeds and machine learning.
 
+> Extracted 2026-08-17 from `gtfs-django/eta_prediction` into its own repo,
+> `github.com/dotjae/gtfs-eta`, preserving full history across all three
+> branches that touched it. This repo is intended to be the artifact any
+> paper(s) built on this work cite.
+
 ## Overview
 
 This system ingests live vehicle positions from GTFS-RT feeds, enriches them with temporal/spatial features, runs inference through trained ML models, and publishes predictions to Redis for downstream consumption.
@@ -42,8 +47,8 @@ The fastest way to get started on any machine.
 ### 1. Clone and Setup
 
 ```bash
-git clone https://github.com/simovilab/gtfs-django.git
-cd gtfs-django/eta_prediction
+git clone https://github.com/dotjae/gtfs-eta.git
+cd gtfs-eta
 
 # Copy environment configuration
 cp .env.example .env
@@ -127,8 +132,8 @@ For development without Docker.
 
 ```bash
 # Clone and install dependencies
-git clone https://github.com/simovilab/gtfs-django.git
-cd gtfs-django/eta_prediction
+git clone https://github.com/dotjae/gtfs-eta.git
+cd gtfs-eta
 uv sync
 ```
 
