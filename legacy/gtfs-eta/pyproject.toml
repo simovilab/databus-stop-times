@@ -9,23 +9,53 @@ license = { text = "MIT" }
 readme = "README.md"
 requires-python = ">=3.11"
 
+# Core inference dependencies only: what eta_service.estimator.estimate_stop_times
+# and its transitive imports (core/, feature_engineering/temporal.py,
+# models/common/registry.py, models/polyreg_distance/predict.py) genuinely need
+# to load a registered model and serve a prediction. Everything else (training,
+# the Django/celery collector, plotting) lives behind the extras below so that
+# installing the inference path doesn't drag in xgboost, matplotlib, Django, or
+# celery.
 dependencies = [
+  "numpy>=1.26",
+  "pandas>=2.3.3",
+  "scikit-learn>=1.7.2",
+  "holidays>=0.40",
+]
+
+[project.optional-dependencies]
+# Dataset builder (feature_engineering/dataset_builder.py, weather.py — both
+# need Django ORM access to the gtfs-rt-pipeline schema/settings) + model
+# training (models/*/train.py, models/train_all_models.py).
+train = [
+  "Django>=5.0",
+  "django-environ>=0.11",
+  "python-dotenv>=1.0",
+  "requests>=2.32",
+  "psycopg[binary,pool]>=3.2.11",
+  "fastparquet>=2024.11.0",
+  "xgboost>=3.1.2",
+]
+# The Django/celery GTFS-RT collector (gtfs-rt-pipeline/). That app also ships
+# its own standalone pyproject.toml (gtfs-rt-pipeline/pyproject.toml) for
+# running it in isolation; this extra exists so `uv sync --extra collect` at
+# the repo root can pull in the same stack without cd'ing into that directory.
+collect = [
   "Django>=5.0",
   "celery>=5.4",
   "redis>=5.0",
-  "psycopg[binary,pool]>=3.2",
+  "psycopg[binary,pool]>=3.2.11",
   "django-environ>=0.11",
   "python-dotenv>=1.0",
   "requests>=2.32",
   "gtfs-realtime-bindings>=1.0.0",
-  "numpy>=1.26",
-  "pandas>=2.3.3",
-  "fastparquet>=2024.11.0",
-  "psycopg>=3.2.11",
+]
+# models/evaluation/roll_validate.py plotting only.
+viz = [
   "matplotlib>=3.9.4",
-  "scikit-learn>=1.7.2",
-  "xgboost>=3.1.2",
-  "holidays>=0.40",
+]
+all = [
+  "eta_prediction[train,collect,viz]",
 ]
 
 [build-system]
@@ -38,8 +68,11 @@ include = ["core*", "eta_service*", "feature_engineering*", "models*"]
 [tool.uv]
 package = true
 
-[tool.uv.workspace]
-members = [
-    "feature_engineering/proj",
-    "feature_engineering",
-]
+# No [tool.uv.workspace] block: it previously listed "feature_engineering/proj"
+# (does not exist on disk) and "feature_engineering" (exists, but is already
+# part of this project's own package tree per [tool.setuptools.packages.find]
+# above — declaring it as a separate workspace member conflicted with that).
+# feature_engineering/pyproject.toml still exists on disk as a leftover,
+# differently-scoped package definition (geopandas/shapely/pyproj/scipy —
+# none of which anything under feature_engineering/*.py actually imports);
+# left in place but not wired up, since resolving that predates this pass.
