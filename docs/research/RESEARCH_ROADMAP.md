@@ -1,7 +1,17 @@
 # ETA Prediction — Research & System Roadmap
 
-> Status: draft v2, 2026-08-14. Supersedes nothing; complements `REFACTOR_PLAN.md`
+> Status: draft v3, 2026-08-17. Supersedes nothing; complements `REFACTOR_PLAN.md`
 > (which covered the completed schema-alignment + S3 migration, Phases A–E).
+>
+> **v3 (2026-08-17):** The ETA suite now lives in its own repository,
+> **`github.com/dotjae/gtfs-eta`**, extracted from `gtfs-django/eta_prediction` with full
+> history preserved across the three branches that touched it (89 / 52 / 77 commits).
+> This repo is intended to be the artifact the paper(s) cite. 1.6 done (Bytewax retired).
+> Adds **1.7 — reconcile the `gtfs_eta` fork in databus**, which is new scope and the most
+> consequential open correctness item: the inference half of this repo was vendored into
+> databus and has since diverged *in both directions*, so this repo is no longer canonical
+> despite that package's README saying so. Full analysis in `DRIFT_AUDIT.md`. Adds 1.8
+> (package restructure), deliberately sequenced after 1.7.
 >
 > **v2 (2026-08-14):** Phase 0.1, 0.2, 0.3, 0.4 and 0.4b done — both collectors rebuilt on
 > a spool → hourly staging → daily compaction architecture, weekly static-GTFS snapshots
@@ -337,7 +347,9 @@ flush wrote 59 776 rows in 3.9 s; a 23 157-row staging object held 0 duplicate k
 | 1.3 | Record the arrival-detection branch as a dataset column (`arrival_method` ∈ `within_50m`/`closest_approach_200m`/`stopped_at`); stamp `arrival_source` into dataset metadata and `ModelKey` | S |
 | 1.4 | ~~Deduplicate `(feed_name, vehicle_id, ts)` at write time~~ — **done 08-14** (spool `ON CONFLICT`, flush, and compaction), and the 28 historical days are now deduplicated at rest too (0.4b). Remaining, lower-stakes: make `dedup=True` the non-optional default on *read* rather than an opt-out, as defense in depth | S |
 | 1.5 | Make `backfill_s3` idempotent (delete-then-write per partition, or content-hash filenames) | S |
-| 1.6 | Fix or retire the Bytewax path. Retiring is defensible — Prefect works and two serving paths is one too many for a solo project | S |
+| 1.6 | ~~Fix or retire the Bytewax path. Retiring is defensible — Prefect works and two serving paths is one too many for a solo project.~~ **Done 08-17 — retired.** Removed `bytewax/`, `docker/Dockerfile.bytewax`, and its compose services. It was already dead in production: `pred2redis.py` called `estimate_stop_times(..., shape=...)`, but no `shape` parameter exists on this repo's estimator, so every prediction raised `TypeError` into a broad `except` and was silently swallowed. That is independent confirmation of the divergence in 1.7 — the `shape=` kwarg exists *only* in databus's vendored copy. The MQTT→Redis bridge (`subscriber/mqtt2redis.py`) is not Bytewax-specific and survives as `mqtt-subscriber/`; `cache-seeder` now runs `prefect/mock_stops_and_shapes.py` | S |
+| 1.7 | **Reconcile the `gtfs_eta` fork in databus.** The inference half of this repo (`core/`, `eta_service/`, `feature_engineering/`) was vendored into databus as `backend/gtfs-eta/gtfs_eta/` and has since diverged **in both directions** — this repo is *not* canonical, despite that package's README saying so. Vendored-only and load-bearing: **(a)** shape-aware distance/progress (`_progress_features_with_shape`, cross-track error, shape-projected distance); **(b)** a **precomputed-distance hook** — databus passes a loop-back-safe monotonic `shape_distance_to_stop` on every upcoming stop and the vendored estimator consumes it as authoritative. That branch runs on *every* production prediction and has no counterpart here, so substituting this repo's estimator would not error — it would silently ignore the field and fall back to haversine, which can *decrease* near a loop-back while the vehicle is still progressing; **(c)** a real bugfix — this repo resolves stop sequence via falsy `or`-coalescing, so a valid `stop_sequence == 0` is relabelled `1` and collides with a real stop 1. Held only here: bearing/speed/cyclical-time features that the vendored copy dropped. **Seam that must not break:** `estimate_stop_times(..., shape=)` plus the `gtfs_eta.feature_engineering.spatial.ShapePolyline` import path, called from databus `runs/domain/progression/stop_times.py`. **Blocking open question:** the `polyreg_time`/`xgb` branches pass *disjoint* feature schemas on the two sides (kinematic here, weather-augmented there) — dormant while only `polyreg_distance` is live, but not resolvable without reading `models/polyreg_time/predict.py` and `models/xgb/predict.py` to establish which schema the trained pickles actually expect. Also latent: `historical_mean`/`ewma`/`polyreg_time`/`xgb` have no `predict.py` in the vendored tree, so any non-`polyreg_distance` registry entry is a live `ModuleNotFoundError` in production. **Order:** unify the registry path scheme (adopt the vendored basename storage — it is the portable one) → line-diff `spatial.py`'s retained bodies → settle the feature-schema question → merge `estimator.py` → port the missing `predict.py` siblings. Full analysis: `docs/DRIFT_AUDIT.md` | **L** |
+| 1.8 | **Package restructure** — split into installable packages (inference / training / collector) under a `uv` workspace, namespaced `gtfs_eta.*` to match what databus already imports, and rename the distribution from `eta_prediction` to `gtfs-eta`. Dependency *metadata* was already split into `train`/`collect`/`viz` extras on 08-17, so nothing currently drags xgboost or Django into the inference path; what remains is moving modules and claiming the PyPI name. **Deliberately sequenced after 1.7** — the restructure moves exactly the files 1.7 has to merge, and doing both at once turns a two-way merge into a two-way merge across renamed paths | M |
 
 **Verification:** the temporal-parity test passes; a rebuilt dataset has an
 `arrival_method` column with a sane distribution; re-running `backfill_s3` over a date
@@ -442,6 +454,10 @@ Phase 0 ──┬─→ Phase 1 ──┬─→ Phase 2 ──┐
   consistent. What remains — 0.5 TripUpdates and the deferred 0.3b sub-item — is
   independent of everything downstream except the ablation grid (6.2).
 - Phase 1 blocks everything downstream.
+- **1.7 (databus reconciliation) is the long pole in Phase 1** and partly overlaps 1.2 — the
+  train/serve *geometry* skew 1.2 describes is the same skew the vendored copy already
+  solved with shape-awareness and the precomputed-distance hook. Do 1.7 first and 1.2 may
+  reduce to adopting what the merge brings back. 1.8 (restructure) is gated on 1.7.
 - Phases 2 and 4 are independent of each other and can interleave.
 - Phase 3 needs Phase 2 (bUCR data) only for the cross-agency arm; the MBTA arm can start as soon as Phase 1 lands.
 - Every phase runs twice: once against the 28-day rehearsal corpus, then again against the
