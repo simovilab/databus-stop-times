@@ -35,7 +35,7 @@ RUN uv pip install --system \
     redis>=7.0.0
 
 # Copy only the subscriber script
-COPY bytewax/subscriber/mqtt2redis.py /app/mqtt2redis.py
+COPY mqtt-subscriber/mqtt2redis.py /app/mqtt2redis.py
 
 # Default: run the MQTT to Redis bridge
 CMD ["python", "mqtt2redis.py"]

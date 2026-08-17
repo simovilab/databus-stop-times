@@ -147,7 +147,7 @@ MQTT Broker (raw vehicle data)
     ↓
 Redis Subscriber
     ↓
-Bytewax Stream Processor
+Prefect Flow
     ↓
 estimate_stop_times() ← YOU ARE HERE
     ↓
@@ -196,4 +196,4 @@ Configuration, logging, and validation are now provided by the `core/` module at
 - All timestamps are UTC
 - Distances in meters, speeds in km/h
 - Models must be trained and registered before use
-- Function is designed to be called from stream processors (Bytewax, Flink, etc.)
+- Function is designed to be called from stream processors (Prefect, Flink, etc.)

@@ -3,7 +3,6 @@
 # Supports running:
 #   - ETA estimator service
 #   - Prefect flows
-#   - Bytewax flows
 #   - Model training
 #   - Tests
 #

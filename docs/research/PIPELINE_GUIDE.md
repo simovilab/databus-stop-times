@@ -22,7 +22,7 @@ End-to-end guide from data ingestion to runtime inference using Docker.
 │  4. RUNTIME INFERENCE                                   ┌────────────────┐  │
 │  ┌─────────────────────────────────────────────────┐    │ Model Registry │  │
 │  │                                                 │    │ (models/trained)│  │
-│  │  MQTT ──▶ Redis ──▶ Prefect/Bytewax ──▶ Redis   │◀───└────────────────┘  │
+│  │  MQTT ──▶ Redis ──▶ Prefect       ──▶ Redis   │◀───└────────────────┘  │
 │  │  (live)   (cache)   (inference)        (preds)  │                        │
 │  │                                                 │                        │
 │  └─────────────────────────────────────────────────┘                        │
@@ -236,9 +236,11 @@ print(results)
 
 ### Phase 4: Runtime Inference
 
-Two options: Prefect (orchestrated) or Bytewax (low-latency).
+Prefect (orchestrated) is the serving path. A prior Bytewax (low-latency) path
+existed alongside it but was retired 2026-08-17 — Prefect worked, and running
+two serving paths was one too many for a solo project.
 
-#### Option A: Prefect Flow
+#### Prefect Flow
 
 ```bash
 # Start the full stack
@@ -258,19 +260,6 @@ The flow:
 2. Fetches `route_stops:<route_id>` for each vehicle
 3. Calls `estimate_stop_times()` for each vehicle
 4. Writes predictions to `predictions:<vehicle_id>`
-
-#### Option B: Bytewax Flow
-
-```bash
-cd bytewax
-docker compose up -d redis
-
-# Seed mock stops/shapes
-docker compose run --rm bytewax python mock_stops_and_shapes.py
-
-# Run the flow
-docker compose run --rm bytewax python -m bytewax.run pred2redis
-```
 
 #### Seeding Test Data
 

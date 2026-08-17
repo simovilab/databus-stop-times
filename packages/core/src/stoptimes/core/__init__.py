@@ -2,7 +2,7 @@
 Core utilities for the ETA prediction system.
 
 This module provides centralized configuration, logging, validation, and error handling
-to ensure consistency across all components (eta_service, models, prefect, bytewax).
+to ensure consistency across all components (eta_service, models, prefect).
 """
 
 from core.config import get_config, ProjectConfig

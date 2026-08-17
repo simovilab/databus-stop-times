@@ -127,11 +127,6 @@ class ProjectConfig:
         """Path to prefect/ directory."""
         return self.project_root / "prefect"
 
-    @property
-    def bytewax_dir(self) -> Path:
-        """Path to bytewax/ directory."""
-        return self.project_root / "bytewax"
-
     # =========================================================================
     # Default Values (eliminates magic numbers)
     # =========================================================================

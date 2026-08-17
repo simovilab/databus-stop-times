@@ -4,8 +4,8 @@ venv/
 env/
 */.venv/
 */venv/
-bytewax/.venv/
 prefect/.venv/
+mqtt-subscriber/.venv/
 
 # Python cache
 __pycache__/

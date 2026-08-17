@@ -9,7 +9,6 @@
 #   - ETA Service (feature engineering, training, inference)
 #   - MQTT Broker (vehicle telemetry transport)
 #   - MQTT Subscriber (bridges MQTT → Redis)
-#   - Bytewax (low-latency stream processing)
 #
 # Port Mappings (Host → Container):
 #   - PostgreSQL: 15432 → 5432
@@ -21,7 +20,7 @@
 #   # Start core services (postgres, redis, django, celery)
 #   docker compose -f docker-compose.full.yml up -d
 #
-#   # Start with stream processing (adds mqtt, bytewax)
+#   # Start with stream processing (adds mqtt, mqtt-subscriber)
 #   docker compose -f docker-compose.full.yml --profile streaming up -d
 #
 #   # Start with scheduled ingestion
@@ -185,7 +184,6 @@ services:
     volumes:
       - .:/app
       - /app/.venv
-      - /app/bytewax/.venv
       - /app/prefect/.venv
     depends_on:
       postgres:
@@ -273,46 +271,21 @@ services:
     restart: unless-stopped
 
   # ==========================================================================
-  # Bytewax - Low-Latency Stream Processing
-  # ==========================================================================
-  bytewax:
-    build:
-      context: .
-      dockerfile: docker/Dockerfile.bytewax
-    environment:
-      - REDIS_HOST=redis
-      - REDIS_PORT=6379
-      - MODEL_REGISTRY_DIR=/app/models/trained
-      - ETA_AGENCY=${ETA_AGENCY:-mbta}
-      - ETA_DEBUG=${ETA_DEBUG:-0}
-    volumes:
-      - ./models/trained:/app/models/trained
-      - ./datasets:/app/datasets
-      - ./profiling:/app/profiling
-    depends_on:
-      redis:
-        condition: service_healthy
-    profiles:
-      - streaming
-    restart: unless-stopped
-
-  # ==========================================================================
   # Cache Seeder - Populate Redis with Mock Stops/Shapes (one-shot)
   # ==========================================================================
   cache-seeder:
     build:
       context: .
-      dockerfile: docker/Dockerfile.bytewax
+      dockerfile: docker/Dockerfile.eta
     environment:
       - REDIS_HOST=redis
       - REDIS_PORT=6379
     volumes:
-      - ./bytewax:/app/bytewax
+      - ./prefect:/app/prefect
     depends_on:
       redis:
         condition: service_healthy
-    # Working dir is /app/bytewax from Dockerfile.bytewax
-    command: python mock_stops_and_shapes.py
+    command: python prefect/mock_stops_and_shapes.py
     profiles:
       - seed
 

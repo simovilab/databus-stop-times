@@ -300,7 +300,7 @@ if __name__ == "__main__":
         print("  • Route-3 (6 stops) → BUS-003 (East-West)")
         print("  • Route-4 (9 stops) → BUS-004 (Circular)")
         print("  • Route-5 (7 stops) → BUS-005 (Northwest)")
-        print("\nYour Bytewax flow can now fetch:")
+        print("\nYour Prefect flow can now fetch:")
         print("  • Stops from Redis: route_stops:{route_id}")
         print("  • Shapes from Redis: route_shape:{route_id}")
         print("="*70)

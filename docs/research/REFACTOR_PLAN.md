@@ -2,6 +2,12 @@
 
 > Planning artifact only. No implementation, no migrations, no commits.
 > Orchestrator: Opus. Implementers: Sonnet sub-agents on disjoint file manifests.
+>
+> Historical note: `eta_prediction/bytewax/*`, referenced below as an
+> inference/serving path examined at the time of this audit, was retired
+> 2026-08-17 (roadmap 1.6) — Prefect works and two serving paths was one too
+> many for a solo project. References to it below describe the pre-retirement
+> layout and are left as a record of what was analyzed, not current state.
 
 ## 0. Discovery preamble (paths examined)
 

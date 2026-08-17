@@ -8,7 +8,7 @@ This system ingests live vehicle positions from GTFS-RT feeds, enriches them wit
 
 ```
 GTFS-RT Feed → Redis Cache → Stream Processor → ML Models → Predictions → Redis
-                              (Bytewax/Prefect)   (XGBoost)
+                              (Prefect)          (XGBoost)
 ```
 
 ## Architecture
@@ -24,8 +24,7 @@ GTFS-RT Feed → Redis Cache → Stream Processor → ML Models → Predictions 
 │   ├── ewma/                # Exponential smoothing with online updates
 │   ├── xgb/                 # Gradient boosted trees
 │   └── trained/             # Model artifacts (.pkl + metadata)
-├── bytewax/                 # Low-latency stream processing
-├── prefect/                 # Orchestrated batch processing
+├── prefect/                 # Orchestrated batch processing (serving path)
 ├── gtfs-rt-pipeline/        # Django + Celery ingestion pipeline
 └── datasets/                # Training data (parquet)
 ```
@@ -55,13 +54,13 @@ docker compose -f docker-compose.full.yml build
 
 ### 2. Run the Full Pipeline
 
-The full pipeline includes: PostgreSQL, Redis, Django, Celery, ETA Service, MQTT, and Bytewax.
+The full pipeline includes: PostgreSQL, Redis, Django, Celery, ETA Service, and MQTT.
 
 ```bash
 # Start core services (database, cache, ingestion)
 docker compose -f docker-compose.full.yml up -d
 
-# Start with stream processing (adds MQTT broker + Bytewax)
+# Start with stream processing (adds MQTT broker + subscriber)
 docker compose -f docker-compose.full.yml --profile streaming up -d
 
 # Start with scheduled ingestion (adds Celery Beat)
@@ -102,7 +101,7 @@ docker compose -f docker-compose.full.yml --profile seed run cache-seeder
 |---------|---------------|----------|
 | (default) | postgres, redis, django, celery-worker | Core ingestion |
 | `ingestion` | + celery-beat | Scheduled feed polling |
-| `streaming` | + mqtt, mqtt-subscriber, bytewax | Real-time stream processing |
+| `streaming` | + mqtt, mqtt-subscriber | Real-time stream processing |
 | `runtime` | + prefect-flow | Prefect-orchestrated inference |
 | `seed` | cache-seeder (one-shot) | Populate Redis with test data |
 
@@ -159,13 +158,6 @@ for pred in result["predictions"]:
 ```
 
 ### Stream Processing
-
-**Bytewax (low-latency):**
-```bash
-cd bytewax
-uv sync
-uv run python -m bytewax.run pred2redis
-```
 
 **Prefect (orchestrated):**
 ```bash
@@ -227,9 +219,7 @@ python models/train_all_models.py --dataset sample_dataset --models xgboost
 
 ### Stream Processing
 
-**Bytewax** (`bytewax/`): Low-latency dataflow for real-time predictions.
-
-**Prefect** (`prefect/`): Orchestrated polling loop with profiling, notifications, and artifact management.
+**Prefect** (`prefect/`): Orchestrated polling loop with profiling, notifications, and artifact management. The sole serving path — a prior Bytewax low-latency path was retired 2026-08-17 (Prefect worked and two serving paths was one too many for a solo project).
 
 ### Data Ingestion (`gtfs-rt-pipeline/`)
 
