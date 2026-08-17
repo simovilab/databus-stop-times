@@ -9,6 +9,7 @@ from pathlib import Path
 
 from django.db import connection as django_connection
 from sch_pipeline.models import StopTime, Stop, Trip
+from core.config import AGENCY_TEMPORAL_DEFAULTS, DEFAULT_AGENCY
 from feature_engineering.rt_source import fetch_vehicle_positions
 from feature_engineering.temporal import extract_temporal_features
 from feature_engineering.spatial import calculate_distance_features_with_shape, load_shape_for_trip
@@ -139,7 +140,8 @@ def build_vp_training_dataset(
     max_stops_ahead: int = 5,
     attach_weather: bool = True,
     use_shapes: bool = True,
-    tz_for_temporal: str = "America/New_York",
+    agency: str = DEFAULT_AGENCY,
+    tz_for_temporal: Optional[str] = None,
     pg_conn: Optional[Any] = None,
     vp_source_uri: Optional[str] = None,
     arrival_source: str = "computed",
@@ -162,7 +164,12 @@ def build_vp_training_dataset(
         max_stops_ahead: Maximum number of future stops to include per VP
         attach_weather: Whether to fetch weather data
         use_shapes: Whether to use GTFS shapes for accurate progress calculation
-        tz_for_temporal: Timezone for temporal features
+        agency: Which agency's timezone + holiday region to use for temporal
+            features (see core.config.AGENCY_TEMPORAL_DEFAULTS) -- the same
+            table the live estimator resolves through, so training and
+            serving compute temporal features identically
+        tz_for_temporal: Explicit timezone override; defaults to `agency`'s
+            timezone if not given
         pg_conn: PostgreSQL connection for shape loading (defaults to Django connection)
         vp_source_uri: Override S3 base URI for the VP store
         arrival_source: Which arrival drives the canonical target —
@@ -188,7 +195,11 @@ def build_vp_training_dataset(
         raise ValueError(
             f"arrival_source must be 'computed' or 'stopped_at', got {arrival_source!r}"
         )
-    
+
+    agency_defaults = AGENCY_TEMPORAL_DEFAULTS[agency]
+    temporal_tz = tz_for_temporal or agency_defaults["timezone"]
+    temporal_region = agency_defaults["region"]
+
     _banner_lines = []
     if route_ids:
         _banner_lines.append(f"routes   {', '.join(route_ids)}")
@@ -495,7 +506,7 @@ def build_vp_training_dataset(
     temporal_data = []
     for ts in ui.track(df['vp_ts'], len(df), "Extract temporal features"):
         try:
-            feats = extract_temporal_features(ts, tz=tz_for_temporal, region="US_MA")
+            feats = extract_temporal_features(ts, tz=temporal_tz, region=temporal_region)
             temporal_data.append(feats)
         except Exception:
             temporal_data.append({})

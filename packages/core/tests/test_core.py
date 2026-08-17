@@ -41,14 +41,59 @@ class TestConfig:
         assert "trained" in str(config.model_registry_dir)
 
     def test_config_default_values(self):
-        """Config should have sensible defaults."""
-        from core.config import get_config
+        """Config should have sensible defaults.
 
+        Default agency is mbta (the agency the estimator actually serves),
+        so temporal defaults resolve to America/New_York / US_MA -- see
+        AGENCY_TEMPORAL_DEFAULTS. Regression test for the 2026-08-14 finding
+        that the estimator was silently defaulting to America/Costa_Rica / CR
+        while serving MBTA predictions, a train/serve skew from models
+        trained via dataset_builder's America/New_York / US_MA default.
+        """
+        from core.config import get_config, reset_config
+
+        reset_config()
+        for var in ("ETA_AGENCY", "ETA_TIMEZONE", "ETA_HOLIDAY_REGION"):
+            os.environ.pop(var, None)
         config = get_config()
-        assert config.default_timezone == "America/Costa_Rica"
-        assert config.default_region == "CR"
+        assert config.agency == "mbta"
+        assert config.default_timezone == "America/New_York"
+        assert config.default_region == "US_MA"
         assert config.redis_default_port == 6379
         assert config.predictions_ttl_seconds == 300
+
+    def test_config_agency_temporal_defaults_per_agency(self):
+        """Each agency's timezone/region resolves from one shared table."""
+        from core.config import AGENCY_TEMPORAL_DEFAULTS, get_config, reset_config
+
+        reset_config()
+        os.environ["ETA_AGENCY"] = "bucr"
+        for var in ("ETA_TIMEZONE", "ETA_HOLIDAY_REGION"):
+            os.environ.pop(var, None)
+        try:
+            config = get_config()
+            assert config.default_timezone == AGENCY_TEMPORAL_DEFAULTS["bucr"]["timezone"]
+            assert config.default_region == AGENCY_TEMPORAL_DEFAULTS["bucr"]["region"]
+        finally:
+            os.environ.pop("ETA_AGENCY", None)
+            reset_config()
+
+    def test_config_explicit_overrides_win_over_agency_default(self):
+        """ETA_TIMEZONE/ETA_HOLIDAY_REGION still override the agency default."""
+        from core.config import get_config, reset_config
+
+        reset_config()
+        os.environ["ETA_AGENCY"] = "mbta"
+        os.environ["ETA_TIMEZONE"] = "America/Chicago"
+        os.environ["ETA_HOLIDAY_REGION"] = "US"
+        try:
+            config = get_config()
+            assert config.default_timezone == "America/Chicago"
+            assert config.default_region == "US"
+        finally:
+            for var in ("ETA_AGENCY", "ETA_TIMEZONE", "ETA_HOLIDAY_REGION"):
+                os.environ.pop(var, None)
+            reset_config()
 
     def test_config_paths(self):
         """Config should provide valid paths."""
@@ -332,6 +377,78 @@ class TestIntegration:
         from feature_engineering.temporal import extract_temporal_features
 
         assert callable(extract_temporal_features)
+
+
+class TestAgencyTemporalParity:
+    """Roadmap Phase 1.1: builder (training) and estimator (serving) must
+    resolve timezone/holiday-region identically for a given agency, both
+    sourced from core.config.AGENCY_TEMPORAL_DEFAULTS -- not two independent
+    hardcoded defaults that can drift apart. Regression coverage for the
+    2026-08-14 finding: dataset_builder hardcoded America/New_York/US_MA
+    while the deployed estimator defaulted to America/Costa_Rica/CR.
+    """
+
+    def _reset_env(self):
+        for var in ("ETA_AGENCY", "ETA_TIMEZONE", "ETA_HOLIDAY_REGION"):
+            os.environ.pop(var, None)
+
+    def test_builder_default_matches_estimator_config_for_mbta(self):
+        # dataset_builder.build_vp_training_dataset's `agency` parameter
+        # defaults to core.config.DEFAULT_AGENCY itself (not a re-typed
+        # string literal), so this constant *is* what a caller gets if they
+        # don't pass `agency` -- import-checking it directly, rather than
+        # importing the (Django + sch_pipeline-coupled) builder module,
+        # keeps this test dependency-light while still exercising the real
+        # shared default.
+        from core.config import AGENCY_TEMPORAL_DEFAULTS, DEFAULT_AGENCY, get_config, reset_config
+
+        reset_config()
+        self._reset_env()
+        try:
+            builder_tz = AGENCY_TEMPORAL_DEFAULTS[DEFAULT_AGENCY]["timezone"]
+            builder_region = AGENCY_TEMPORAL_DEFAULTS[DEFAULT_AGENCY]["region"]
+
+            # The estimator's own resolution path (eta_service/estimator.py
+            # calls extract_temporal_features(tz=_config.default_timezone,
+            # region=_config.default_region)).
+            serving_config = get_config()
+            serving_tz = serving_config.default_timezone
+            serving_region = serving_config.default_region
+
+            assert builder_tz == serving_tz == "America/New_York"
+            assert builder_region == serving_region == "US_MA"
+        finally:
+            self._reset_env()
+            reset_config()
+
+    def test_same_timestamp_produces_identical_features_builder_vs_serving(self):
+        from datetime import datetime, timezone as dt_timezone
+        from core.config import get_config, reset_config
+        from feature_engineering.temporal import extract_temporal_features
+
+        reset_config()
+        self._reset_env()
+        try:
+            serving_config = get_config()
+
+            # A weekday morning-peak UTC timestamp and a US federal holiday,
+            # so a tz/region mismatch would actually flip is_peak_hour /
+            # is_holiday rather than passing by coincidence.
+            timestamps = [
+                datetime(2026, 3, 10, 12, 30, tzinfo=dt_timezone.utc),  # Tue 08:30 ET peak
+                datetime(2026, 7, 4, 15, 0, tzinfo=dt_timezone.utc),    # US Independence Day
+            ]
+            for ts in timestamps:
+                builder_feats = extract_temporal_features(
+                    ts, tz="America/New_York", region="US_MA"
+                )
+                serving_feats = extract_temporal_features(
+                    ts, tz=serving_config.default_timezone, region=serving_config.default_region
+                )
+                assert builder_feats == serving_feats
+        finally:
+            self._reset_env()
+            reset_config()
 
 
 if __name__ == "__main__":

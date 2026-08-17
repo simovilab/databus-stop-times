@@ -178,7 +178,7 @@ services:
       - REDIS_HOST=redis
       - REDIS_PORT=6379
       - MODEL_REGISTRY_DIR=/app/models/trained
-      - ETA_TIMEZONE=America/Costa_Rica
+      - ETA_AGENCY=mbta
       - ETA_DEBUG=${ETA_DEBUG:-0}
       - DJANGO_SETTINGS_MODULE=ingestproj.settings
       - PYTHONPATH=/app:/app/gtfs-rt-pipeline
@@ -207,7 +207,7 @@ services:
       - REDIS_HOST=redis
       - REDIS_PORT=6379
       - MODEL_REGISTRY_DIR=/app/models/trained
-      - ETA_TIMEZONE=America/Costa_Rica
+      - ETA_AGENCY=mbta
     volumes:
       - ./models/trained:/app/models/trained
       - ./datasets:/app/datasets
@@ -283,7 +283,7 @@ services:
       - REDIS_HOST=redis
       - REDIS_PORT=6379
       - MODEL_REGISTRY_DIR=/app/models/trained
-      - ETA_TIMEZONE=${ETA_TIMEZONE:-America/Costa_Rica}
+      - ETA_AGENCY=${ETA_AGENCY:-mbta}
       - ETA_DEBUG=${ETA_DEBUG:-0}
     volumes:
       - ./models/trained:/app/models/trained

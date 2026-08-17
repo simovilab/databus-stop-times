@@ -37,7 +37,7 @@ services:
       - REDIS_HOST=redis
       - REDIS_PORT=6379
       - MODEL_REGISTRY_DIR=/app/models/trained
-      - ETA_TIMEZONE=America/Costa_Rica
+      - ETA_AGENCY=mbta
       - ETA_DEBUG=${ETA_DEBUG:-0}
       - ETA_LOG_JSON=${ETA_LOG_JSON:-0}
     volumes:
@@ -62,7 +62,7 @@ services:
       - REDIS_HOST=redis
       - REDIS_PORT=6379
       - MODEL_REGISTRY_DIR=/app/models/trained
-      - ETA_TIMEZONE=America/Costa_Rica
+      - ETA_AGENCY=mbta
     volumes:
       - ./models/trained:/app/models/trained
       - ./datasets:/app/datasets
@@ -90,7 +90,7 @@ services:
       - REDIS_HOST=redis
       - REDIS_PORT=6379
       - MODEL_REGISTRY_DIR=/app/models/trained
-      - ETA_TIMEZONE=America/Costa_Rica
+      - ETA_AGENCY=mbta
       - ETA_DEBUG=1
     volumes:
       # Mount entire source for development

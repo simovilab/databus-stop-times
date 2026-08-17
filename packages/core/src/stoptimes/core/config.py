@@ -14,6 +14,18 @@ from pathlib import Path
 from typing import Optional
 
 
+# Per-agency timezone + holiday-calendar region. Single source of truth for
+# temporal feature extraction -- the dataset builder (training) and the
+# estimator (serving) must both resolve through this table so a given
+# timestamp produces identical hour/is_weekend/is_holiday/is_peak_hour
+# features whether it's being trained on or predicted against.
+AGENCY_TEMPORAL_DEFAULTS: dict[str, dict[str, str]] = {
+    "mbta": {"timezone": "America/New_York", "region": "US_MA"},
+    "bucr": {"timezone": "America/Costa_Rica", "region": "CR"},
+}
+DEFAULT_AGENCY = "mbta"
+
+
 def _find_project_root() -> Path:
     """
     Find the project root by looking for pyproject.toml or .git directory.
@@ -54,12 +66,16 @@ class ProjectConfig:
 
     # Environment overrides (populated from env vars)
     _model_registry_override: Optional[str] = field(default=None, repr=False)
+    _agency_override: Optional[str] = field(default=None, repr=False)
     _timezone_override: Optional[str] = field(default=None, repr=False)
+    _region_override: Optional[str] = field(default=None, repr=False)
 
     def __post_init__(self):
         """Load environment variable overrides."""
         self._model_registry_override = os.environ.get("MODEL_REGISTRY_DIR")
+        self._agency_override = os.environ.get("ETA_AGENCY")
         self._timezone_override = os.environ.get("ETA_TIMEZONE")
+        self._region_override = os.environ.get("ETA_HOLIDAY_REGION")
 
         # Ensure project root is on sys.path for imports
         root_str = str(self.project_root)
@@ -121,14 +137,19 @@ class ProjectConfig:
     # =========================================================================
 
     @property
+    def agency(self) -> str:
+        """Which agency this deployment serves. See AGENCY_TEMPORAL_DEFAULTS."""
+        return self._agency_override or DEFAULT_AGENCY
+
+    @property
     def default_timezone(self) -> str:
-        """Default timezone for temporal features."""
-        return self._timezone_override or "America/Costa_Rica"
+        """Default timezone for temporal features, per `agency`."""
+        return self._timezone_override or AGENCY_TEMPORAL_DEFAULTS[self.agency]["timezone"]
 
     @property
     def default_region(self) -> str:
-        """Default region for holiday calendar."""
-        return "CR"
+        """Default holiday-calendar region for temporal features, per `agency`."""
+        return self._region_override or AGENCY_TEMPORAL_DEFAULTS[self.agency]["region"]
 
     # Redis defaults
     redis_default_host: str = "localhost"
