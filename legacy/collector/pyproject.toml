@@ -26,8 +26,14 @@ dev = ["ipython", "black", "pytest", "pytest-django", "mypy"]
 # The ETA suite consumes the reusable gtfs-django package's abstract Base*
 # models (see sch_pipeline/models.py). Kept as an editable path source so the
 # suite stays decoupled but tracks the package in-repo.
+#
+# Post-extraction (this package now lives at gtfs-eta/gtfs-rt-pipeline/, one
+# level shallower than the pre-extraction gtfs-django/eta_prediction/gtfs-rt-pipeline/
+# nesting this path was written for), gtfs-django is a true sibling repo
+# rather than an ancestor — ../../gtfs-django, not ../... See docker-compose.yml
+# / Dockerfile for how this same relative depth is mirrored inside the image.
 [tool.uv.sources]
-gtfs-django = { path = "../..", editable = true }
+gtfs-django = { path = "../../gtfs-django", editable = true }
 
 [tool.black]
 line-length = 100

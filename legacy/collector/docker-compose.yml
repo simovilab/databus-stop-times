@@ -29,16 +29,17 @@ services:
 
   web:
     build:
-      # Context is the repo root so the gtfs-django package + feature_engineering
-      # are available; Dockerfile path is relative to that context.
+      # Context is git.no_sync/, the common parent of the gtfs-eta and
+      # gtfs-django sibling repos — gtfs-rt-pipeline still needs gtfs-django's
+      # gtfs/ package (Base* GTFS models) at build time. See Dockerfile.
       context: ../..
-      dockerfile: eta_prediction/gtfs-rt-pipeline/Dockerfile
+      dockerfile: gtfs-eta/gtfs-rt-pipeline/Dockerfile
     env_file: .env
-    working_dir: /app/eta_prediction/gtfs-rt-pipeline
+    working_dir: /app/gtfs-eta/gtfs-rt-pipeline
     volumes:
-      - .:/app/eta_prediction/gtfs-rt-pipeline
-      - ../feature_engineering:/app/eta_prediction/feature_engineering
-      - ../datasets:/app/eta_prediction/datasets
+      - .:/app/gtfs-eta/gtfs-rt-pipeline
+      - ../feature_engineering:/app/gtfs-eta/feature_engineering
+      - ../datasets:/app/gtfs-eta/datasets
     depends_on:
       postgres:
         condition: service_healthy
@@ -58,13 +59,13 @@ services:
   celery-worker:
     build:
       context: ../..
-      dockerfile: eta_prediction/gtfs-rt-pipeline/Dockerfile
+      dockerfile: gtfs-eta/gtfs-rt-pipeline/Dockerfile
     env_file: .env
-    working_dir: /app/eta_prediction/gtfs-rt-pipeline
+    working_dir: /app/gtfs-eta/gtfs-rt-pipeline
     volumes:
-      - .:/app/eta_prediction/gtfs-rt-pipeline
-      - ../feature_engineering:/app/eta_prediction/feature_engineering
-      - ../datasets:/app/eta_prediction/datasets
+      - .:/app/gtfs-eta/gtfs-rt-pipeline
+      - ../feature_engineering:/app/gtfs-eta/feature_engineering
+      - ../datasets:/app/gtfs-eta/datasets
       - vp_spool:/data/spool
       - /var/lib/simovi/status:/var/lib/simovi/status
     depends_on:
@@ -88,12 +89,12 @@ services:
   celery-maint:
     build:
       context: ../..
-      dockerfile: eta_prediction/gtfs-rt-pipeline/Dockerfile
+      dockerfile: gtfs-eta/gtfs-rt-pipeline/Dockerfile
     env_file: .env
-    working_dir: /app/eta_prediction/gtfs-rt-pipeline
+    working_dir: /app/gtfs-eta/gtfs-rt-pipeline
     volumes:
-      - .:/app/eta_prediction/gtfs-rt-pipeline
-      - ../feature_engineering:/app/eta_prediction/feature_engineering
+      - .:/app/gtfs-eta/gtfs-rt-pipeline
+      - ../feature_engineering:/app/gtfs-eta/feature_engineering
       - /var/lib/simovi/status:/var/lib/simovi/status
     depends_on:
       redis:
@@ -112,12 +113,12 @@ services:
   celery-beat:
     build:
       context: ../..
-      dockerfile: eta_prediction/gtfs-rt-pipeline/Dockerfile
+      dockerfile: gtfs-eta/gtfs-rt-pipeline/Dockerfile
     env_file: .env
-    working_dir: /app/eta_prediction/gtfs-rt-pipeline
+    working_dir: /app/gtfs-eta/gtfs-rt-pipeline
     volumes:
-      - .:/app/eta_prediction/gtfs-rt-pipeline
-      - ../feature_engineering:/app/eta_prediction/feature_engineering
+      - .:/app/gtfs-eta/gtfs-rt-pipeline
+      - ../feature_engineering:/app/gtfs-eta/feature_engineering
     depends_on:
       celery-worker:
         condition: service_started
