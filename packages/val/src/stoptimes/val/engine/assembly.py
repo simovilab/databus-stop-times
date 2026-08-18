@@ -37,13 +37,22 @@ from etaval.groundtruth.position_radius import PositionRadiusDetector
 from etaval.groundtruth.shape_distance import ShapeDistanceDetector
 from etaval.groundtruth.stop_status import StopStatusDetector
 from etaval.predictors.constant_speed import ConstantSpeedPredictor
+from etaval.predictors.gtfs_eta_models import GtfsEtaModelPredictor
 from etaval.predictors.gtfsrt_tripupdates import GtfsRtTripUpdatesPredictor
 
 # ── Predictor registry ────────────────────────────────────────────────────────
+#
+# Values are zero-arg factories rather than bare types so the gtfs_eta:* entries
+# can close over which trained model_type to request (see GtfsEtaModelPredictor).
 
-PREDICTOR_REGISTRY: dict[str, type] = {
+PREDICTOR_REGISTRY: dict[str, Any] = {
     "gtfsrt": GtfsRtTripUpdatesPredictor,
     "baseline:constant_speed": ConstantSpeedPredictor,
+    "gtfs_eta:historical_mean": lambda: GtfsEtaModelPredictor("historical_mean"),
+    "gtfs_eta:ewma": lambda: GtfsEtaModelPredictor("ewma"),
+    "gtfs_eta:polyreg_distance": lambda: GtfsEtaModelPredictor("polyreg_distance"),
+    "gtfs_eta:polyreg_time": lambda: GtfsEtaModelPredictor("polyreg_time"),
+    "gtfs_eta:xgboost": lambda: GtfsEtaModelPredictor("xgboost"),
 }
 DEFAULT_PREDICTOR_IDS: list[str] = ["gtfsrt", "baseline:constant_speed"]
 

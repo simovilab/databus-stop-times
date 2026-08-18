@@ -14,6 +14,14 @@ dependencies = [
     "typer>=0.12",
     "rich>=13.7",
     "pyyaml>=6.0",
+    # gtfs-eta's inference-only package (eta_service, models.common.registry,
+    # feature_engineering.temporal, core) — see etaval/predictors/gtfs_eta_models.py.
+    "eta_prediction",
+    # eta_prediction's base dependencies deliberately exclude xgboost (see the
+    # comment in gtfs-eta/pyproject.toml — it's a training-only extra there),
+    # but unpickling a trained models.xgb.train.XGBTimeModel needs the real
+    # xgboost.XGBRegressor class available, so it's a direct dependency here.
+    "xgboost>=3.1.2",
 ]
 
 [project.scripts]
@@ -30,6 +38,9 @@ dev = [
     "respx>=0.21",
     "ruff>=0.5",
 ]
+
+[tool.uv.sources]
+eta_prediction = { path = "../gtfs-eta", editable = true }
 
 [build-system]
 requires = ["hatchling"]
