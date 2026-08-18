@@ -238,6 +238,55 @@ At real scale (multi-day, high-frequency routes), `build_eta_sample` can run lon
 that made this previously non-terminating at 28-day/Green-line scale. Run it detached for
 anything beyond a day or two, same caution as the compaction note above.
 
+## Train models
+
+**Verified working end-to-end 2026-08-18** — first real training run (20 models: 5 families
+× 4 dataset sizes) against `datasets/mbta_bus_222_15_37_{1,7,15,28}d.parquet`. Runs on the
+**host**, not in Docker — training needs `sklearn`/`xgboost`/`matplotlib`, which are behind
+the `train`/`viz` extras, not the collector container's dependency set.
+
+```bash
+# One-time: sync the host venv with training deps (sklearn/xgboost/Django/etc. — the
+# collector container doesn't have these, and `models/` doesn't need Django at all).
+uv sync --all-extras
+
+uv run python models/train_all_models.py --dataset mbta_bus_222_15_37_28d --models all
+# global models only by default; add --by-route to also train one model per route
+# (prints a trips/observations-vs-MAE correlation table — not yet done for any dataset
+# built this session, see RESEARCH_ROADMAP.md's "What's next").
+```
+
+`--dataset <name>` looks up `datasets/<name>.parquet` — no path, no extension. Models save
+to `models/trained/{model_key}.pkl` + `_meta.json`, and register in
+`models/trained/registry.json`; `model_key` embeds the dataset name, so training the same
+model type against multiple dataset sizes doesn't collide.
+
+`uv run pytest` and `uv run python -m pytest` **silently fall back to a global interpreter**
+if `pytest` isn't itself a project dependency — `uv run pytest` on this repo picks up
+`/usr/local/bin/pytest` (wrong Python, missing `sklearn`) rather than erroring. Use
+`uv run --with pytest python -m pytest models/tests/ core/tests/` instead, which forces the
+project venv.
+
+## Validate trained models with etaval
+
+`etaval` (sibling repo, `github.com/dotjae/etaval`) can score any model trained above
+against real live traffic — see its own `README.md` for the full picture, but in short:
+
+```bash
+cd ../etaval
+export MODEL_REGISTRY_DIR=$(pwd)/../gtfs-eta/models/trained   # see etaval README for why
+uv sync --no-editable                                          # see etaval README for why
+uv run --no-editable etaval run --source mbta \
+  --predictor gtfsrt --predictor gtfs_eta:xgboost --predictor gtfs_eta:polyreg_time \
+  --route 222 --route 15 --route 37 --duration 10m --out r.parquet
+uv run --no-editable etaval report r.parquet
+```
+
+`--predictor gtfs_eta:{historical_mean,ewma,polyreg_distance,polyreg_time,xgboost}` all work
+— `estimate_stop_times`'s smart model selection (route-specific model preferred over
+global, ranked by `test_mae_seconds`) picks the best registered model automatically; no
+`model_key` needs specifying by hand.
+
 ## Backfill existing Postgres VPs -> S3
 ```bash
 docker compose exec web python manage.py backfill_s3 --start 2026-06-01 --end 2026-06-29 [--route-ids Green-D,Green-E] [--dry-run]

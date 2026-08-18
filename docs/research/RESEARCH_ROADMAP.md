@@ -24,6 +24,16 @@
 > databus reconciliation, which is untouched — see *What's next* at the bottom of this
 > file for where a fresh agent should pick up.
 >
+> **v3.2 (2026-08-18, same day):** First complete pipeline pass — four real datasets built
+> (1/7/15/28-day windows, routes 222/15/37) and all five model families trained on each
+> (20 models total, in the registry now). xgboost is the clear winner throughout (28-day:
+> 1.83m MAE, R² 0.803); `ewma` looks cuttable (negative R² at 3 of 4 sizes). Wired `etaval`
+> (separate repo, `main` branch) to serve predictions from these trained models via a new
+> `GtfsEtaModelPredictor`, verified against real MBTA traffic — found and fixed two real
+> bugs along the way (one here, one in etaval) plus documented an environment-specific
+> `--no-editable`/`MODEL_REGISTRY_DIR` workaround. See *First real dataset builds + model
+> training + etaval wiring*, below, for the full writeup.
+>
 > **v2 (2026-08-14):** Phase 0.1, 0.2, 0.3, 0.4 and 0.4b done — both collectors rebuilt on
 > a spool → hourly staging → daily compaction architecture, weekly static-GTFS snapshots
 > for both agencies, and the 28 historical MBTA days re-compacted with dedup, all running
@@ -296,6 +306,75 @@ stands alone as `gtfs-eta/`. Two distinct problems, both fixed without touching 
   (root `.gitignore`), covering `.env*`, `__pycache__/`, `.venv/`, `*.egg-info/`,
   `celerybeat-schedule`, trained-model artifacts (`*.pkl`, `models/trained/`), and generated
   datasets (`datasets/*.parquet`, excluding the tracked `datasets/sample.parquet`).
+
+**First real dataset builds + model training + etaval wiring — 2026-08-18**
+
+With the Docker build and both perf fixes above validated, ran the first real,
+complete pipeline pass: four datasets at 1/7/15/28-day windows (all anchored at
+2026-07-01, the start of the continuous 28-day corpus), routes 222/15/37 (MBTA
+buses — deliberately not Green-D/E, to keep iteration cheap), built via
+`build_eta_sample --no-weather` and saved as
+`datasets/mbta_bus_222_15_37_{1,7,15,28}d.parquet` (128K / 558K / 1.08M / 2.03M
+rows). All five model families trained globally (not per-route) on each dataset
+size via `models/train_all_models.py`; all 20 resulting models are in
+`models/trained/registry.json`.
+
+| Days | xgboost MAE | xgboost R² | polyreg_time MAE | polyreg_time R² |
+|---|---|---|---|---|
+| 1  | 3.00m | 0.542 | 6.35m | 0.257 |
+| 7  | 2.08m | 0.801 | 2.71m | 0.689 |
+| 15 | 1.94m | 0.863 | 2.85m | 0.730 |
+| 28 | 1.83m | 0.803 | 2.46m | 0.698 |
+
+xgboost wins outright at every size; both peak in R² at 15 days then dip
+slightly at 28 (MAE still improves) — read as ordinary week-to-week variance in
+real data, not a regression. `historical_mean` is weak-but-positive (R² 0.206–
+0.324, needs no live kinematic features — the one model still useful as a
+cold-start fallback). `ewma` has negative R² at 3 of 4 sizes and is strictly
+worse than `historical_mean` everywhere — no scenario found where it wins;
+candidate for cutting entirely rather than carrying forward.
+
+**Data-quality finding:** `current_speed_kmh` is uniformly `0.0` for all three
+bus routes, confirmed at the raw MBTA VehiclePosition feed level (`speed=0.0`
+even while `current_status=IN_TRANSIT_TO`) — not a builder bug. The "kinematic"
+feature group these models actually learn from is position/bearing/distance
+only; speed contributes nothing for MBTA buses specifically. Unknown whether
+this holds for MBTA subway (Green-D/E) or is bus-specific — worth checking
+before trusting `current_speed_kmh` on any other route class.
+
+**etaval wiring (on `etaval`'s `main` branch — not the older, unmerged
+`feat/model-validation` branch mentioned below):** added
+`etaval/predictors/gtfs_eta_models.py`, a `GtfsEtaModelPredictor` wrapping this
+repo's `eta_service.estimator.estimate_stop_times`, registered in
+`etaval/engine/assembly.py`'s `PREDICTOR_REGISTRY` as
+`gtfs_eta:{historical_mean,ewma,polyreg_distance,polyreg_time,xgboost}`.
+Verified end-to-end against real MBTA traffic (`etaval run --predictor
+gtfs_eta:xgboost --predictor gtfs_eta:polyreg_time ...`; `etaval report` shows
+both scored alongside `gtfsrt`/`baseline:constant_speed` in the same table).
+Two bugs found and fixed along the way, both in `etaval` (not this repo):
+- `models/common/registry.py:39` here (this repo) — default model path was
+  cwd-relative (`"models/trained"`), silently wrong for any out-of-tree
+  consumer. Fixed to fall back through `core.config.get_config().model_registry_dir`
+  instead. Still not sufficient on its own for etaval specifically — see below.
+- `etaval/spatial/polyline.py`'s `build_polyline` crashed on real MBTA shapes
+  where `shape_dist_traveled` is blank for a subset of points within an
+  otherwise-populated shape (checked only the first point, assumed the rest
+  matched). Pre-existing, blocked *all* live etaval runs against MBTA, not just
+  this work. Fixed to fall back to cumulative haversine when any point lacks it.
+- **Environment quirk, not a code bug, still requires a documented workaround:**
+  on at least one dev machine (Python 3.14 + uv-managed venv), `.pth`-based
+  editable-install activation silently never fires at interpreter startup —
+  reproduced independent of `uv` by invoking the venv's `python` binary
+  directly with a stripped env. This breaks etaval's own console-script
+  entrypoint unless installed with `uv sync --no-editable`, which in turn
+  means this repo's packages get physically copied into etaval's venv, which
+  breaks `core.config._find_project_root()`'s walk-up-for-pyproject.toml
+  heuristic (finds etaval's own pyproject.toml first, not this repo's). Net
+  effect: etaval requires both `--no-editable` *and* an explicit
+  `export MODEL_REGISTRY_DIR=.../gtfs-eta/models/trained` — see etaval's
+  `README.md` for the full writeup and exact commands. Nothing here to fix on
+  this repo's side; `models/common/registry.py`'s fix above is still correct
+  and worth keeping for the in-tree/editable case.
 
 ### Assets already built and unused
 
@@ -578,42 +657,62 @@ Phase 0 ──┬─→ Phase 1 ──┬─→ Phase 2 ──┐
    path carries the token and account id). Redacted 08-14 and never pushed, but it lived
    on the VPS unprotected.
 
-## What's next (2026-08-18)
+## What's next (2026-08-18, updated same day)
 
-For a fresh agent picking this up: the state above (through v3.1) is current as of this
-commit. Nothing in 1.1–1.8 changed this session — the work was infrastructure (Docker now
-actually builds) and performance (the dataset builder now finishes at real scale) that
-those items depend on but don't advance. In priority order:
+For a fresh agent picking this up: the state above (through v3.2) is current as of this
+commit. 1.1–1.8's status is still unchanged by today's work — datasets, training, and
+etaval wiring were groundwork those items depend on, not progress on them directly. The
+one exception is a small piece of new evidence for 1.7 (etaval's `main` branch now has an
+independent, correctly-schema'd model predictor — see below). In priority order:
 
-1. **Re-run `build_eta_sample` at full 28-day scale**, both to confirm the perf fixes hold
-   at that size and because no full-corpus dataset has ever actually been built end-to-end.
-   Two variants worth doing: the original failing case (Green-D/E, subway-density VPs — the
-   real stress test) and/or a bus-route mix like 15/37/222 (already validated at 1-day/7-day,
-   cheaper to iterate on). Extrapolating from the 7-day bus numbers, budget on the order of
-   30–60+ minutes; run it as a background/detached job (see `RUNBOOK.md`'s note on long
-   compaction runs — the same "don't run it in a foreground SSH session" caution applies to
-   any multi-minute `docker compose exec` command).
-2. **1.7 (databus reconciliation) is still the long pole** — untouched this session, and
-   now has one more piece of evidence gathered but not acted on: `etaval`'s unmerged
-   `feat/model-validation` branch needs the same schema adaptation databus does (see
-   *Assets already built and unused*, above). The 1.7 entry's own "first action" — delete
-   databus's vendored `backend/gtfs-eta/` and replace with a real dependency on this repo —
-   has not been started; **do not start it without the user's explicit go-ahead**, it touches
-   a separate live-production repo.
-3. **1.2 (train/serve geometry skew)** likely shrinks once 1.7 lands (see 1.7's note on the
+1. **1.7 (databus reconciliation) is still the long pole** — untouched this session, and
+   now has one more piece of evidence: `etaval`'s unmerged `feat/model-validation` branch
+   (weather-augmented, wrong schema — see *Assets already built and unused*) is no longer
+   the only or best reference for "what should etaval's model predictor look like" — this
+   session added a working one on `main` (`etaval/predictors/gtfs_eta_models.py`, kinematic
+   schema, verified against real MBTA traffic) that could inform or replace it. The 1.7
+   entry's own "first action" — delete databus's vendored `backend/gtfs-eta/` and replace
+   with a real dependency on this repo — has not been started; **do not start it without
+   the user's explicit go-ahead**, it touches a separate live-production repo.
+2. **Decide on `ewma` and `historical_mean`.** `ewma` has negative R² at 3 of 4 dataset
+   sizes trained this session and is strictly dominated by `historical_mean` everywhere —
+   no dataset size or metric found where it wins. Recommend cutting it from
+   `train_all_models.py`'s default model list and `eta_service/estimator.py`'s
+   `_predict_with_model` dispatch. `historical_mean` is weak (R² 0.206–0.324) but the only
+   model needing no live kinematic features, so worth keeping *only* as a cold-start/
+   degraded-feature fallback — not as a serving candidate on its own. This is a judgment
+   call for the user, not yet made.
+3. **Per-route models, not just global.** Everything trained this session
+   (`mbta_bus_222_15_37_{1,7,15,28}d`) was global-only (`train_all_models.py` without
+   `--by-route`); route-specific models (one xgboost per route instead of one shared across
+   222/15/37) were never compared. `train_all_models.py --by-route` already supports this
+   and prints a trips/observations-vs-MAE correlation table for free — worth running once,
+   cheap, before assuming global is good enough.
+4. **Full 90-day / all-routes runs remain undone.** Everything so far is 3 bus routes,
+   28 days max, global models. The subway stress case (Green-D/E, the original failing
+   case pre-perf-fix) has still never been run end-to-end even after the fixes were
+   validated on buses — worth doing once as a scale check, separate from the paper's actual
+   90-day replication window (**2026-08-14 → 2026-11-12**, not yet started).
+5. **`current_speed_kmh=0.0` for MBTA buses** (see *First real dataset builds...* above) —
+   worth a quick check on whether this also holds for Green-D/E or is bus-specific, since it
+   affects how much the "kinematic" feature group is actually contributing vs. just
+   position/bearing/distance doing all the work.
+6. **1.2 (train/serve geometry skew)** likely shrinks once 1.7 lands (see 1.7's note on the
    overlap) — don't start it first.
-4. **1.8 (package restructure)** is the real fix for the Docker cross-repo coupling
+7. **1.8 (package restructure)** is the real fix for the Docker cross-repo coupling
    documented above under *Docker / cross-repo build* — the stopgap there works but a
    standalone `gtfs-eta` shouldn't need a sibling `gtfs-django` checkout to build at all.
    Still deliberately sequenced after 1.7 per the existing plan.
-5. **Lower priority, pick up opportunistically:** 0.5 (TripUpdates archival), 1.3
+8. **Lower priority, pick up opportunistically:** 0.5 (TripUpdates archival), 1.3
    (`arrival_method` column), the `roll_validate.py`-and-elsewhere O(n²) audit noted above.
 
-Housekeeping worth knowing about: this session also created the repo's first `.gitignore`
-(none existed before — `.env` was unprotected) and confirmed the local Docker dev stack
-(`gtfs-rt-pipeline/docker compose up`) now builds and runs correctly, including a real
-static-GTFS import and two successful real-data dataset builds. If `docker compose` fails
-with a path-resolution error again, check whether `.env`/`gtfs-rt-pipeline/.env` still hold
-valid `AWS_ACCESS_KEY_ID`/`AWS_SECRET_ACCESS_KEY` for `data.simovilab.org` before assuming
-it's a code regression — that exact failure mode (silent empty results, not a raised error)
-cost real time this session.
+Housekeeping worth knowing about: 08-18 also created the repo's first `.gitignore` (none
+existed before — `.env` was unprotected), confirmed the local Docker dev stack
+(`gtfs-rt-pipeline/docker compose up`) builds and runs correctly, and — same day, second
+pass — built the first four complete real datasets and trained the first 20 real models
+(see above). If `docker compose` fails with a path-resolution error again, check whether
+`.env`/`gtfs-rt-pipeline/.env` still hold valid `AWS_ACCESS_KEY_ID`/`AWS_SECRET_ACCESS_KEY`
+for `data.simovilab.org` before assuming it's a code regression — that exact failure mode
+(silent empty results, not a raised error) cost real time this session. For anything
+involving `etaval`, see its own `README.md` first — it now documents a required
+`--no-editable` + `MODEL_REGISTRY_DIR` workaround that isn't obvious from this repo alone.

@@ -11,6 +11,7 @@ from typing import Dict, Any, Optional, List
 from datetime import datetime
 import pandas as pd
 
+from core.config import get_config
 from core.logging import get_logger
 
 _logger = get_logger("registry")
@@ -35,7 +36,12 @@ class ModelRegistry:
         Args:
             base_dir: Base directory for model storage
         """
-        resolved_base = base_dir or os.getenv("MODEL_REGISTRY_DIR") or "models/trained"
+        # get_config().model_registry_dir already resolves MODEL_REGISTRY_DIR (if
+        # set) or falls back to <project_root>/models/trained -- anchored on
+        # core.config._find_project_root(), not the caller's cwd. That matters
+        # for out-of-tree consumers (e.g. etaval, which imports this package as
+        # an editable dependency and runs from its own directory).
+        resolved_base = base_dir or os.getenv("MODEL_REGISTRY_DIR") or get_config().model_registry_dir
         self.base_dir = Path(resolved_base).expanduser().resolve()
         self.base_dir.mkdir(parents=True, exist_ok=True)
         
