@@ -13,6 +13,17 @@
 > despite that package's README saying so. Full analysis in `DRIFT_AUDIT.md`. Adds 1.8
 > (package restructure), deliberately sequenced after 1.7.
 >
+> **v3.1 (2026-08-18):** First real end-to-end run of the pipeline this repo was
+> extracted with — `docker compose up --build` had never actually succeeded post-extraction,
+> and `build_eta_sample` had never been run to completion against the real S3 corpus. Both
+> now work. Found and fixed two severe, previously-invisible performance bugs in
+> `feature_engineering/` (see *Known defects*) — one made the dataset builder
+> non-terminating in practice at any real scale, the other became the new bottleneck once
+> the first was fixed. Also fixed the Docker build's stale pre-extraction paths (see
+> *Docker / cross-repo build*, below). None of this changes 1.1–1.8's status or the
+> databus reconciliation, which is untouched — see *What's next* at the bottom of this
+> file for where a fresh agent should pick up.
+>
 > **v2 (2026-08-14):** Phase 0.1, 0.2, 0.3, 0.4 and 0.4b done — both collectors rebuilt on
 > a spool → hourly staging → daily compaction architecture, weekly static-GTFS snapshots
 > for both agencies, and the 28 historical MBTA days re-compacted with dedup, all running
@@ -215,12 +226,93 @@ data-poor regime the paper is about.
   the arms aren't comparable. Cheap to add; do it before the ablation grid (Phase 6.2),
   not urgently.
 
+**Performance defects — found and fixed 2026-08-18**
+
+Discovered while running `build_eta_sample` end-to-end against real S3 data for the first
+time since extraction (never previously exercised past unit-test scale). Both were silent —
+correct output, just unboundedly slow — so offline metrics or code review wouldn't have
+caught them; only running at real volume did.
+
+- **`feature_engineering/dataset_builder.py` STEP 4 was O(V²) per trip, not O(V).** For
+  every VP in a trip, for each of up to 5 upcoming stops, it re-sliced and re-scanned the
+  *entire remaining VP history of that trip* from scratch (`future_vps = trip_vps[trip_vps['ts']
+  > vp_ts]` recomputed on every (VP, stop) pair, each requiring a fresh row-wise
+  `.apply(haversine)` pass). A Green Line trip at 5 s cadence over a 30–45 min run is
+  ~300–500 VPs; the old code needed ~5×V² row-wise Python calls per trip — for the original
+  28-day/Green-D+E rehearsal build (1,794 trips) this never completed even 1 trip in 25+
+  minutes before being killed. Fixed by sorting each trip's VPs by `ts` once, then
+  precomputing (a) a vectorized numpy VP×stop haversine distance matrix, and (b) an O(n)
+  "index of the next match after position i" helper (`_next_true_after`, backward-fill based)
+  used once per stop instead of once per (VP, stop) pair. `find_actual_arrival_time` /
+  `find_stopped_at_arrival` themselves are untouched (still unit-tested, still usable
+  standalone) — only the STEP 4 caller changed. Validated against 400+ randomized
+  brute-force-reference trials plus the existing test suite (all pass) before re-running.
+- **`feature_engineering/spatial.py`'s `ShapePolyline.project_point` was O(shape_points) per
+  call, called ~2–3× per (VP, stop) pair.** Invisible before because the STEP 4 bug above was
+  orders of magnitude worse; once that was fixed this became the dominant cost. Fixed by
+  precomputing the shape's per-segment planar-projection arrays once in `__init__` and
+  vectorizing the "closest segment" search across all segments with numpy instead of a
+  Python loop calling `_project_onto_segment` per segment (now-dead code, removed). Validated
+  against 600 randomized brute-force-reference trials (shapes up to 400 points, including
+  degenerate/duplicate-point segments) plus the existing test suite.
+- **Combined effect, measured on real S3 data** (bus routes 15/37/222, chosen for low VP
+  volume relative to the Green Line): 1-day build **5m10s → 1m21s** total (3.8×), byte-identical
+  output (65,889 rows, same stats) confirming pure perf, no behavior change. 7-day build:
+  previously never finished (still 0/1,130 trips after 21+ min); after both fixes,
+  **10m9s total**, 641,459 rows, 1,130 trips — the "Match VPs" step itself was 5m51s for
+  757,915 (VP, stop) pairs. The original failing case (28-day, Green-D/E, subway-density VPs)
+  was not re-attempted this session — extrapolating from the bus-route numbers, expect it to
+  be substantially slower than the bus case (denser VPs per trip) but now a *finite, tractable*
+  run rather than the previous effectively-unbounded blowup.
+- **Not fixed / out of scope this pass:** `models/evaluation/roll_validate.py` and other
+  per-row Python loops elsewhere in the codebase were not audited for the same O(n²) pattern;
+  worth a targeted look before the ablation grid (Phase 6.2) runs at full 90-day scale.
+
+**Docker / cross-repo build — fixed 2026-08-18**
+
+`docker compose up --build` in `gtfs-rt-pipeline/` had never actually succeeded since the
+extraction — it still assumed the pre-extraction nesting
+(`gtfs-django/eta_prediction/gtfs-rt-pipeline/`), which no longer exists now that this repo
+stands alone as `gtfs-eta/`. Two distinct problems, both fixed without touching the read-only
+`gtfs-django` repo itself:
+- `gtfs-rt-pipeline/sch_pipeline/models.py` does `from gtfs.models import (...)` — a real,
+  load-bearing runtime dependency on `gtfs-django`'s `gtfs` app (the abstract `Base*` GTFS
+  models), not just a training-time one. `gtfs-rt-pipeline/pyproject.toml`'s editable-path
+  source for the `gtfs-django` dependency (`{ path = "../.." }`) assumed the old two-levels-up
+  nesting; it's a true sibling now, so the path must be `../../gtfs-django`.
+- `docker-compose.yml` / `Dockerfile` hardcoded `eta_prediction/...` paths throughout (build
+  context, `COPY` sources, container working dirs). Fixed by mirroring the two repos as true
+  siblings inside the image (`/app/gtfs-django`, `/app/gtfs-eta/...`), matching how they sit
+  on the host, so the same relative-path convention (`../../gtfs-django`) resolves identically
+  in both places. `feature_engineering/dataset_builder.py:12`'s `from core.config import ...`
+  also needed `core/` added to the image's `COPY` list — it wasn't there before either
+  (pre-existing gap, not a regression).
+- This is a stopgap, not a structural fix — 1.8's package restructure is still the right place
+  to actually remove the `gtfs-django` runtime dependency (vendor or reimplement the `Base*`
+  models this repo actually needs) so `gtfs-eta` is genuinely standalone. Until then, anyone
+  building this image needs a local checkout of `gtfs-django` as a sibling directory.
+- **Also found: no `.gitignore` existed anywhere in this repo's history.** `.env` (real AWS
+  S3 credentials) had zero protection against an accidental `git add -A`. Added one
+  (root `.gitignore`), covering `.env*`, `__pycache__/`, `.venv/`, `*.egg-info/`,
+  `celerybeat-schedule`, trained-model artifacts (`*.pkl`, `models/trained/`), and generated
+  datasets (`datasets/*.parquet`, excluding the tracked `datasets/sample.parquet`).
+
 ### Assets already built and unused
 
 - **`etaval` branch `origin/feat/model-validation`** (8 commits, +3 914 lines, unmerged):
   `MLModelPredictor` wrapping `estimate_stop_times`, feeding etaval's authoritative
   along-shape distances into the estimator so models and baselines share identical
-  geometry; stops-ahead bucketing; ground-truth detector as a run parameter.
+  geometry; stops-ahead bucketing; ground-truth detector as a run parameter. **Confirmed
+  2026-08-17: this branch's vendored `gtfs_eta` copy (`vendor/gtfs-eta/`) matches databus's
+  design, not this repo's** — same precomputed-distance hook, same `progress_on_segment`/
+  weather-augmented schema, same basename-only registry paths. It also ships a `_compat.py`
+  pickle shim for loading models trained on a third gtfs-django lineage
+  (`feature/eta-prediction/core`), which genuinely has its own `weather` `FEATURE_GROUPS`
+  entry — but the one real trained pickle found from that lineage (in a separate,
+  previously-untracked repo, `github.com/simovilab/gtfs-rt-db`) has `include_weather: false`
+  in its own metadata, so weather was never actually used by any known trained model on any
+  lineage. See 1.7's entry above for the full chain of evidence. Relevant to 1.7's merge:
+  etaval is a *second* thing that will need to adapt to this repo's schema, not just databus.
 - **`models/evaluation/roll_validate.py`**: a correct calendar-windowed walk-forward
   backtester reporting `mean ± std` across windows — the only dispersion estimate in the
   repo. Orphaned (no `__init__.py`, no caller, no test).
@@ -348,7 +440,7 @@ flush wrote 59 776 rows in 3.9 s; a 23 157-row staging object held 0 duplicate k
 | 1.4 | ~~Deduplicate `(feed_name, vehicle_id, ts)` at write time~~ — **done 08-14** (spool `ON CONFLICT`, flush, and compaction), and the 28 historical days are now deduplicated at rest too (0.4b). Remaining, lower-stakes: make `dedup=True` the non-optional default on *read* rather than an opt-out, as defense in depth | S |
 | 1.5 | Make `backfill_s3` idempotent (delete-then-write per partition, or content-hash filenames) | S |
 | 1.6 | ~~Fix or retire the Bytewax path. Retiring is defensible — Prefect works and two serving paths is one too many for a solo project.~~ **Done 08-17 — retired.** Removed `bytewax/`, `docker/Dockerfile.bytewax`, and its compose services. It was already dead in production: `pred2redis.py` called `estimate_stop_times(..., shape=...)`, but no `shape` parameter exists on this repo's estimator, so every prediction raised `TypeError` into a broad `except` and was silently swallowed. That is independent confirmation of the divergence in 1.7 — the `shape=` kwarg exists *only* in databus's vendored copy. The MQTT→Redis bridge (`subscriber/mqtt2redis.py`) is not Bytewax-specific and survives as `mqtt-subscriber/`; `cache-seeder` now runs `prefect/mock_stops_and_shapes.py` | S |
-| 1.7 | **Reconcile the `gtfs_eta` fork in databus.** The inference half of this repo (`core/`, `eta_service/`, `feature_engineering/`) was vendored into databus as `backend/gtfs-eta/gtfs_eta/` and has since diverged **in both directions** — this repo is *not* canonical, despite that package's README saying so. Vendored-only and load-bearing: **(a)** shape-aware distance/progress (`_progress_features_with_shape`, cross-track error, shape-projected distance); **(b)** a **precomputed-distance hook** — databus passes a loop-back-safe monotonic `shape_distance_to_stop` on every upcoming stop and the vendored estimator consumes it as authoritative. That branch runs on *every* production prediction and has no counterpart here, so substituting this repo's estimator would not error — it would silently ignore the field and fall back to haversine, which can *decrease* near a loop-back while the vehicle is still progressing; **(c)** a real bugfix — this repo resolves stop sequence via falsy `or`-coalescing, so a valid `stop_sequence == 0` is relabelled `1` and collides with a real stop 1. Held only here: bearing/speed/cyclical-time features that the vendored copy dropped. **Seam that must not break:** `estimate_stop_times(..., shape=)` plus the `gtfs_eta.feature_engineering.spatial.ShapePolyline` import path, called from databus `runs/domain/progression/stop_times.py`. **Blocking open question:** the `polyreg_time`/`xgb` branches pass *disjoint* feature schemas on the two sides (kinematic here, weather-augmented there) — dormant while only `polyreg_distance` is live, but not resolvable without reading `models/polyreg_time/predict.py` and `models/xgb/predict.py` to establish which schema the trained pickles actually expect. Also latent: `historical_mean`/`ewma`/`polyreg_time`/`xgb` have no `predict.py` in the vendored tree, so any non-`polyreg_distance` registry entry is a live `ModuleNotFoundError` in production. **Direction (decided 08-17): harvest databus's implementation, but `gtfs-eta` holds design authority — databus adapts to it, not the reverse.** Two separable questions. *Whose code is the better starting point:* databus's, for the serving surface — adopt its `eta_service/estimator.py`, its `models/common/registry.py` path scheme, and the `polyreg_distance` `model.py`/`predict.py` split. The estimator's three-tier distance design (precomputed override → `ShapePolyline` projection → haversine fallback) is genuinely general, not a databus quirk, and the middle tier is what keeps the library usable standalone by a replicator. *Who governs the API going forward:* this repo, because it is the published library and the artifact the paper cites, and because databus already consumes it as a workspace dependency whose own README keeps the seam narrow so extraction "stays mechanical". Two things a wholesale adopt would get wrong: **`core/*` stays this repo's** — databus's `config.py` hardcodes `DEFAULT_TIMEZONE = "America/Costa_Rica"` / `DEFAULT_REGION = "CR"` at module level, which is right *for databus* (it serves bUCR) and wrong for a library; the 1.1 agency abstraction is the correct design and databus resolves it by setting `ETA_AGENCY=bucr`. Adopting it verbatim reverts `f074949`. **`feature_engineering/spatial.py` stays this repo's superset** — databus dropped `load_shape_from_gtfs`/`load_shape_for_trip`, which `dataset_builder.py:15,267` imports; adopt the vendored *bodies* of the retained functions inside this file. Note the precomputed-distance hook is *not* databus internals leaking into the library: databus owns run progression (`project_point_to_polyline` plus per-stop `progress_m`, `stop_times.py:122–144`) as a core responsibility, so passing the derived distance in is a clean split — the library only has to keep working without it. **First action, before any module-level merge: delete databus's vendored `backend/gtfs-eta/` and replace it with a real dependency on this repo.** The copy is the drift generator; every day it survives, the reconciliation grows. The adaptation surface in databus is genuinely small — `runs/domain/progression/stop_times.py` (two lazy imports, one call), three patch targets in `tests/test_stop_times_producer.py`, and two `pyproject.toml` entries. **Order:** unify the registry path scheme (adopt the vendored basename storage — it is the portable one) → line-diff `spatial.py`'s retained bodies → settle the feature-schema question → merge `estimator.py` → port the missing `predict.py` siblings. Full analysis: `docs/DRIFT_AUDIT.md` | **L** |
+| 1.7 | **Reconcile the `gtfs_eta` fork in databus.** The inference half of this repo (`core/`, `eta_service/`, `feature_engineering/`) was vendored into databus as `backend/gtfs-eta/gtfs_eta/` and has since diverged **in both directions** — this repo is *not* canonical, despite that package's README saying so. Vendored-only and load-bearing: **(a)** shape-aware distance/progress (`_progress_features_with_shape`, cross-track error, shape-projected distance); **(b)** a **precomputed-distance hook** — databus passes a loop-back-safe monotonic `shape_distance_to_stop` on every upcoming stop and the vendored estimator consumes it as authoritative. That branch runs on *every* production prediction and has no counterpart here, so substituting this repo's estimator would not error — it would silently ignore the field and fall back to haversine, which can *decrease* near a loop-back while the vehicle is still progressing; **(c)** a real bugfix — this repo resolves stop sequence via falsy `or`-coalescing, so a valid `stop_sequence == 0` is relabelled `1` and collides with a real stop 1. Held only here: bearing/speed/cyclical-time features that the vendored copy dropped. **Seam that must not break:** `estimate_stop_times(..., shape=)` plus the `gtfs_eta.feature_engineering.spatial.ShapePolyline` import path, called from databus `runs/domain/progression/stop_times.py`. ~~**Blocking open question:** the `polyreg_time`/`xgb` branches pass *disjoint* feature schemas on the two sides (kinematic here, weather-augmented there) — dormant while only `polyreg_distance` is live, but not resolvable without reading `models/polyreg_time/predict.py` and `models/xgb/predict.py` to establish which schema the trained pickles actually expect.~~ **Settled 08-17: this repo's kinematic/bearing/cyclical schema is correct; databus's weather-augmented branch was speculative and never matched a trained pickle.** `models/polyreg_time/predict.py` and `models/xgb/predict.py` have byte-identical signatures — `distance_to_stop`, `distance_to_next_stop`, `shape_distance_to_stop`, `shape_progress`, `cross_track_error`, `progress_ratio`, `stops_ahead`, `current_speed_kmh`, `bearing_to_stop`, `bearing_diff`, `is_at_stop`, `hour`, `day_of_week`, `is_peak_hour`, `is_weekend`, `is_holiday`, `hour_sin/cos`, `dow_sin/cos` — with no `temperature_c`/`precipitation_mm`/`wind_speed_kmh` anywhere. `models/common/data.py::ETADataset.FEATURE_GROUPS` (what `train.py` on both model families actually fits against, via `_get_feature_groups`) has no `weather` group at all. `feature_engineering/dataset_builder.py:542–548` confirms why: weather columns are a dated, explicit stub — "Weather features — STUB (intentionally disabled)... needs rethinking (source, caching, leakage) and is out of scope. Re-add ... when ready, then register them in `FEATURE_GROUPS`." `fetch_weather()` in `weather.py` exists and is unit-tested, but its output has never reached a trained model. So databus's weather branch would both feed a model columns it never saw in training and omit several it was trained on (`distance_to_next_stop`, `bearing_to_stop`, `bearing_diff`, `is_at_stop`, `stops_ahead`, `hour_sin/cos`, `dow_sin/cos`, `cross_track_error`, `shape_progress`) — confirming it was written against a schema that was never deployed. **Consequence for the estimator merge:** when `_predict_with_model`'s `polyreg_time`/`xgboost` branches are merged, keep this repo's kinematic schema; drop vendored's hardcoded weather placeholders (`25.0`/`0.0`/`None` literals in `estimator.py`) rather than reconciling them — they don't correspond to anything a model was ever fit on. **Corroborated 08-17 via `etaval` and a third, previously-untracked repo:** `etaval`'s unmerged `origin/feat/model-validation` branch vendors its own `gtfs_eta` copy (`vendor/gtfs-eta/`) that matches *databus's* design exactly — same precomputed-distance hook (nearly verbatim comment), same `progress_on_segment`/weather-augmented `_predict_with_model` schema, same basename-only registry paths — not this repo's. Its `models/_compat.py` documents *why*: it's a pickle-compat shim for models trained on gtfs-django branch `feature/eta-prediction/core` (a third lineage, distinct from the branches this repo was extracted from), which really does define a `weather` `FEATURE_GROUPS` entry. That could have overturned the "never matched a trained pickle" claim above — but checking the one real artifact that exists, `github.com/simovilab/gtfs-rt-db` (a separate, previously-unmentioned repo with actual trained `.pkl`s from 2025-10/11 on MBTA Green Line data), the real `polyreg_time` model's own metadata records `"include_weather": false` and a 6-feature set (`distance_to_stop`, `hour`, `day_of_week`, `is_weekend`, `is_peak_hour`, `current_speed_kmh`) — a strict subset of this repo's schema, and weather-free. No `xgb` pickle exists there either. So: three schemas now on record (this repo's 19-feature kinematic/shape/cyclical, databus/etaval's 11-param weather/`progress_on_segment`, and `gtfs-rt-db`'s 6-feature bare-bones one), but every artifact anyone has actually trained uses a weather-free schema, and this repo's superset schema is the only one of the three that could directly load and serve the one real `polyreg_time` pickle found so far (its 6 features are all valid optional kwargs in this repo's `predict_eta`) — *modulo* pickle module-path compatibility, not verified. Also latent: `historical_mean`/`ewma`/`polyreg_time`/`xgb` have no `predict.py` in the vendored tree, so any non-`polyreg_distance` registry entry is a live `ModuleNotFoundError` in production. **Direction (decided 08-17): harvest databus's implementation, but `gtfs-eta` holds design authority — databus adapts to it, not the reverse.** Two separable questions. *Whose code is the better starting point:* databus's, for the serving surface — adopt its `eta_service/estimator.py`, its `models/common/registry.py` path scheme, and the `polyreg_distance` `model.py`/`predict.py` split. The estimator's three-tier distance design (precomputed override → `ShapePolyline` projection → haversine fallback) is genuinely general, not a databus quirk, and the middle tier is what keeps the library usable standalone by a replicator. *Who governs the API going forward:* this repo, because it is the published library and the artifact the paper cites, and because databus already consumes it as a workspace dependency whose own README keeps the seam narrow so extraction "stays mechanical". Two things a wholesale adopt would get wrong: **`core/*` stays this repo's** — databus's `config.py` hardcodes `DEFAULT_TIMEZONE = "America/Costa_Rica"` / `DEFAULT_REGION = "CR"` at module level, which is right *for databus* (it serves bUCR) and wrong for a library; the 1.1 agency abstraction is the correct design and databus resolves it by setting `ETA_AGENCY=bucr`. Adopting it verbatim reverts `f074949`. **`feature_engineering/spatial.py` stays this repo's superset** — databus dropped `load_shape_from_gtfs`/`load_shape_for_trip`, which `dataset_builder.py:15,267` imports; adopt the vendored *bodies* of the retained functions inside this file. Note the precomputed-distance hook is *not* databus internals leaking into the library: databus owns run progression (`project_point_to_polyline` plus per-stop `progress_m`, `stop_times.py:122–144`) as a core responsibility, so passing the derived distance in is a clean split — the library only has to keep working without it. **First action, before any module-level merge: delete databus's vendored `backend/gtfs-eta/` and replace it with a real dependency on this repo.** The copy is the drift generator; every day it survives, the reconciliation grows. The adaptation surface in databus is genuinely small — `runs/domain/progression/stop_times.py` (two lazy imports, one call), three patch targets in `tests/test_stop_times_producer.py`, and two `pyproject.toml` entries. **Order:** unify the registry path scheme (adopt the vendored basename storage — it is the portable one) → line-diff `spatial.py`'s retained bodies → settle the feature-schema question → merge `estimator.py` → port the missing `predict.py` siblings. Full analysis: `docs/DRIFT_AUDIT.md` | **L** |
 | 1.8 | **Package restructure** — split into installable packages under a `uv` workspace, namespaced `gtfs_eta.*` to match what databus already imports, and rename the distribution from `eta_prediction` to `gtfs-eta` (confirmed available on PyPI 08-17, unclaimed). Dependency *metadata* was already split into `train`/`collect`/`viz` extras on 08-17 — base install verified at 12 packages with no Django, celery, xgboost, matplotlib or psycopg — so what remains is moving modules. **The dependency direction is already acyclic and correct**: collector imports nothing from training/inference, and the only cross-package edges are 5 sites in `feature_engineering/` reaching into the collector. Work, in order: **(a)** `dataset_builder.py:11` `from sch_pipeline.models import StopTime, Stop, Trip` (+ `:10` `django.db.connection`) — the substantive one. Training reaches into the collector's Django ORM for static GTFS, so no dataset can be built without Django + Postgres standing up, which is exactly what makes a paper artifact unreproducible. Fix by reading the weekly S3 static-GTFS snapshots the collector already writes (0.2, done 08-14); overlaps Phase 2. **(b)** Promote `rt_pipeline/storage/` (and `compaction/`) out of the collector's Django app into a shared data-access package — it is already 100% framework-free (~2,100 lines, zero Django references), so `rt_source.py:17`'s import of it is a mislabelled seam rather than a leak; this likely makes the split four packages (`storage` / `collect` / `train` / `infer`) rather than three. **(c)** `weather.py:3` `django.core.cache` → `functools.lru_cache` or a small protocol; trivial. **(d)** The split cuts *through* `models/`: `*/predict.py` + `common/registry.py` + `common/utils.py` are inference, while `*/train.py` + `train_all_models.py` + `common/{data,keys,metrics}.py` + `evaluation/` are training — mechanical, but touches all five model families. **(e)** Adopt a `src/` layout; nothing is namespaced `gtfs_eta.*` yet. **Deliberately sequenced after 1.7** — the restructure moves exactly the files 1.7 has to merge, and doing both at once turns a two-way merge into a two-way merge across renamed paths | M |
 
 **Verification:** the temporal-parity test passes; a rebuilt dataset has an
@@ -485,3 +577,43 @@ Phase 0 ──┬─→ Phase 1 ──┬─→ Phase 2 ──┐
 6. **Rotate the NavSat API token?** It sat in `.env.example` in plaintext (the endpoint
    path carries the token and account id). Redacted 08-14 and never pushed, but it lived
    on the VPS unprotected.
+
+## What's next (2026-08-18)
+
+For a fresh agent picking this up: the state above (through v3.1) is current as of this
+commit. Nothing in 1.1–1.8 changed this session — the work was infrastructure (Docker now
+actually builds) and performance (the dataset builder now finishes at real scale) that
+those items depend on but don't advance. In priority order:
+
+1. **Re-run `build_eta_sample` at full 28-day scale**, both to confirm the perf fixes hold
+   at that size and because no full-corpus dataset has ever actually been built end-to-end.
+   Two variants worth doing: the original failing case (Green-D/E, subway-density VPs — the
+   real stress test) and/or a bus-route mix like 15/37/222 (already validated at 1-day/7-day,
+   cheaper to iterate on). Extrapolating from the 7-day bus numbers, budget on the order of
+   30–60+ minutes; run it as a background/detached job (see `RUNBOOK.md`'s note on long
+   compaction runs — the same "don't run it in a foreground SSH session" caution applies to
+   any multi-minute `docker compose exec` command).
+2. **1.7 (databus reconciliation) is still the long pole** — untouched this session, and
+   now has one more piece of evidence gathered but not acted on: `etaval`'s unmerged
+   `feat/model-validation` branch needs the same schema adaptation databus does (see
+   *Assets already built and unused*, above). The 1.7 entry's own "first action" — delete
+   databus's vendored `backend/gtfs-eta/` and replace with a real dependency on this repo —
+   has not been started; **do not start it without the user's explicit go-ahead**, it touches
+   a separate live-production repo.
+3. **1.2 (train/serve geometry skew)** likely shrinks once 1.7 lands (see 1.7's note on the
+   overlap) — don't start it first.
+4. **1.8 (package restructure)** is the real fix for the Docker cross-repo coupling
+   documented above under *Docker / cross-repo build* — the stopgap there works but a
+   standalone `gtfs-eta` shouldn't need a sibling `gtfs-django` checkout to build at all.
+   Still deliberately sequenced after 1.7 per the existing plan.
+5. **Lower priority, pick up opportunistically:** 0.5 (TripUpdates archival), 1.3
+   (`arrival_method` column), the `roll_validate.py`-and-elsewhere O(n²) audit noted above.
+
+Housekeeping worth knowing about: this session also created the repo's first `.gitignore`
+(none existed before — `.env` was unprotected) and confirmed the local Docker dev stack
+(`gtfs-rt-pipeline/docker compose up`) now builds and runs correctly, including a real
+static-GTFS import and two successful real-data dataset builds. If `docker compose` fails
+with a path-resolution error again, check whether `.env`/`gtfs-rt-pipeline/.env` still hold
+valid `AWS_ACCESS_KEY_ID`/`AWS_SECRET_ACCESS_KEY` for `data.simovilab.org` before assuming
+it's a code regression — that exact failure mode (silent empty results, not a raised error)
+cost real time this session.

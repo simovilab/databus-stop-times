@@ -1,14 +1,35 @@
 # ETA Pipeline — Runbook
 
 Useful commands for running, inspecting, and testing the GTFS-RT ingestion +
-S3 ETA pipeline. Paths assume the ingest project at
-`eta_prediction/gtfs-rt-pipeline/` unless noted.
+S3 ETA pipeline. Paths assume the ingest project at `gtfs-rt-pipeline/`,
+relative to the repo root (`gtfs-eta/`), unless noted.
 
 > Rebuilt 2026-08-14 (roadmap Phase 0). The pipeline described below —
 > spool → hourly staging → daily compaction, both collectors — replaced a
 > design that wrote to S3/Postgres per poll and OOM-killed itself on
 > 2026-07-29. See `RESEARCH_ROADMAP.md` for the incident writeup and
 > `S3_LAYOUT.md` for the storage contract this runbook operates against.
+>
+> **Updated 2026-08-18:** paths below corrected from `eta_prediction/gtfs-rt-pipeline/`
+> to `gtfs-rt-pipeline/` — this doc predated the 2026-08-17 extraction into a standalone
+> `gtfs-eta` repo and still assumed the old nesting under a `gtfs-django/eta_prediction/`
+> checkout. The Docker build itself had the same stale-path bug (now fixed — see
+> `RESEARCH_ROADMAP.md`'s *Docker / cross-repo build* note) and had never actually been
+> run successfully post-extraction until this pass. `docker compose exec web` commands in
+> this doc also gained a couple of undocumented prerequisite steps that were only
+> discovered by actually running them — see the *Build a training dataset* section below.
+
+## Prerequisite: a sibling `gtfs-django` checkout
+
+The Docker build (`gtfs-rt-pipeline/docker-compose.yml` / `Dockerfile`) requires a local
+checkout of `github.com/simovilab/gtfs-django` at `../gtfs-django` relative to this repo
+(i.e. both repos as siblings under the same parent directory) — `gtfs-rt-pipeline`'s
+`sch_pipeline` app imports `gtfs.models` (the abstract `Base*` GTFS models) from it at
+runtime, a real dependency, not just a training-time one. Without it, `docker compose build`
+fails resolving the `gtfs-django` editable-path dependency. This is a stopgap (see
+`RESEARCH_ROADMAP.md`'s *Docker / cross-repo build* note under v3.1) — `gtfs-django` is
+read-only from this repo's perspective; never modify it to unblock a build here. 1.8's
+package restructure is the eventual real fix (removing this dependency entirely).
 
 ## Components
 - **`gtfs-rt-pipeline/`** — Django + Celery. `poll_vehicle_positions_s3`
@@ -73,7 +94,7 @@ export AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY:?set this from your secrets
 
 ## Run — full Docker stack
 ```bash
-cd eta_prediction/gtfs-rt-pipeline
+cd gtfs-rt-pipeline
 docker compose up -d --build
 docker compose ps
 ssh jae@hetzner simovi-status   # one-screen health check, both collectors — see below
@@ -87,7 +108,7 @@ above), `redis`.
 
 ## Run — local app + Docker infra (use if container DNS is flaky)
 ```bash
-cd eta_prediction/gtfs-rt-pipeline
+cd gtfs-rt-pipeline
 docker compose up -d postgres redis
 set -a; source .env; set +a
 export DATABASE_URL=postgresql://gtfs:gtfs@localhost:15432/gtfs   # host-mapped ports
@@ -106,9 +127,12 @@ One screen, both collectors: last poll age, spool size, next/last flush,
 last static-GTFS snapshot, MinIO disk/inode/object counts with a runway
 projection, staging build-up (a nightly-compaction health signal), VPS
 resources. Exits 1 if a collector has stalled. Source:
-`eta_prediction/gtfs-rt-pipeline/ops/simovi-status` — install a change with
+`gtfs-rt-pipeline/ops/simovi-status` — install a change with
 `sudo cp ops/simovi-status /usr/local/bin/simovi-status` on the VPS after
-syncing the repo (it is not run from the repo checkout directly).
+syncing the repo (it is not run from the repo checkout directly). **Unverified
+2026-08-18:** this path was written pre-extraction as `eta_prediction/gtfs-rt-pipeline/...`;
+corrected here to match this repo's current layout, but the actual VPS checkout's path
+was not confirmed via SSH this pass — check `ssh jae@hetzner` before trusting it blindly.
 
 Per-collector status files, atomic + `cat`/`tail -f`-able, at
 `$STATUS_DIR` (`/var/lib/simovi/status` in prod): `mbta.json`/`.txt`,
@@ -126,7 +150,7 @@ flushes/compactions/errors (`tail -f`).
 ~/.local/bin/mc du simovilab/transit/feeds/mbta/vehicle_positions/
 
 # project helpers (partition index + routes); needs AWS_* exported
-cd eta_prediction/gtfs-rt-pipeline
+cd gtfs-rt-pipeline
 PYTHONPATH="$(pwd)" uv run python -c "from rt_pipeline.storage import list_partitions, available_routes; print(available_routes()); print(list_partitions().to_string(index=False))"
 ```
 DuckDB query (footer-only, no data scan — use `parquet_file_metadata`, not
@@ -142,7 +166,7 @@ FROM parquet_file_metadata('s3://transit/feeds/mbta/vehicle_positions/**/*.parqu
 
 ## Compaction — manual / backfill runs
 ```bash
-cd eta_prediction/gtfs-rt-pipeline
+cd gtfs-rt-pipeline
 python -m rt_pipeline.compaction.cli --dry-run                      # what would happen, today
 python -m rt_pipeline.compaction.cli --since 2026-07-01 --until 2026-07-31
 python -m rt_pipeline.compaction.cli --feed bucr_navsat
@@ -163,11 +187,56 @@ Prefer `nohup ... > /path/inside/the/bind-mounted/repo/log 2>&1 & disown`
 detached `tmux` session.
 
 ## Build a training dataset (reads RT from S3)
+
+**Verified working end-to-end 2026-08-18** (first time since extraction — see
+`RESEARCH_ROADMAP.md`'s v3.1 note). Two one-time setup steps below were previously
+undocumented; without them `import_gtfs` fails immediately and `build_eta_sample` silently
+returns 0 records with no error (looks identical to a real "no data" condition — see the
+credentials gotcha further down).
+
 ```bash
-docker compose exec web python manage.py import_gtfs --provider-id 1   # static GTFS -> Postgres
-docker compose exec web python manage.py build_eta_sample --route-ids Green-D,Green-E
-# success log: "Step 1: Fetching VehiclePositions (S3 Hive-partitioned Parquet)..." / "Retrieved N ... from S3"
+# One-time: a GTFSProvider row must exist before import_gtfs can attach a Feed to it.
+# provider_id is a BigAutoField — the first row created gets id=1.
+docker compose exec web python manage.py shell -c "
+from sch_pipeline.models import GTFSProvider
+GTFSProvider.objects.create(code='MBTA', name='Massachusetts Bay Transportation Authority')
+"
+
+# import_gtfs needs --url explicitly (GTFS_SCHEDULE_ZIP_URL isn't set by default,
+# and the command silently prints 'No GTFS URL provided' and returns — no exception).
+docker compose exec web python manage.py import_gtfs --url https://cdn.mbta.com/MBTA_GTFS.zip --provider-id 1
+
+# --end-date is a half-open [start, end) boundary on `ts` — it does NOT include
+# the end date itself. For a genuine single day, end-date must be the day AFTER.
+docker compose exec web python manage.py build_eta_sample --route-ids Green-D,Green-E \
+  --start-date 2026-07-01 --end-date 2026-07-02
+# success log: "Fetch VehiclePositions from S3 ... N records" then a step-by-step
+# progress trace ending in a "Dataset ready" summary box.
 ```
+
+**Credentials gotcha:** an invalid/expired `AWS_ACCESS_KEY_ID` does **not** raise — every S3
+read (`list_partitions`, `fetch_vehicle_positions`, `build_eta_sample`) just silently
+returns empty/0 rows, indistinguishable from "no data for this filter." Verify credentials
+work *before* debugging route/date filters:
+```bash
+docker compose exec web python -c "
+import duckdb, os
+con = duckdb.connect(); con.execute('INSTALL httpfs; LOAD httpfs;')
+con.execute(f\"SET s3_endpoint='{os.environ['AWS_ENDPOINT_URL'].replace('https://','').replace('http://','')}'\")
+con.execute(f\"SET s3_access_key_id='{os.environ['AWS_ACCESS_KEY_ID']}'\")
+con.execute(f\"SET s3_secret_access_key='{os.environ['AWS_SECRET_ACCESS_KEY']}'\")
+con.execute(\"SET s3_region='us-east-1'; SET s3_url_style='path';\")
+print(len(con.execute(\"SELECT * FROM glob('s3://transit/feeds/mbta/vehicle_positions/year=2026/month=7/day=15/**')\").fetchall()), 'objects found')
+"
+```
+A `403 InvalidAccessKeyId` here means the key itself is stale — fix `.env` /
+`gtfs-rt-pipeline/.env` and `docker compose up -d --force-recreate web celery-worker
+celery-maint celery-beat` (env vars are read at container start, not live-reloaded).
+
+At real scale (multi-day, high-frequency routes), `build_eta_sample` can run long — see
+*Performance defects* in `RESEARCH_ROADMAP.md` for two bugs found and fixed 2026-08-18
+that made this previously non-terminating at 28-day/Green-line scale. Run it detached for
+anything beyond a day or two, same caution as the compaction note above.
 
 ## Backfill existing Postgres VPs -> S3
 ```bash
@@ -180,6 +249,10 @@ re-deduplicating already-curated S3 data.)
 ## Tests
 ```bash
 # package (Base* models) — repo root
+# BROKEN as of 2026-08-18: tests/ does not exist at repo root (verified via `ls`).
+# Either this was never carried over by the extraction or the directory was
+# planned but never added — not determined this pass. Don't trust this command
+# until someone locates/recreates the actual Base*-model tests it's meant to run.
 uv run pytest tests/ -q
 
 # storage (spool, s3_writer, static_gtfs) + compaction — from gtfs-rt-pipeline,
@@ -195,9 +268,31 @@ DJANGO_SETTINGS_MODULE=ingestproj.settings PYTHONPATH="..:$(pwd)" \
 # django system check — from gtfs-rt-pipeline
 uv run python manage.py check
 
-# ETA wiring — from eta_prediction
+# ETA wiring — from gtfs-eta (repo root)
 PYTHONPATH="$(pwd)" uv run --with pytest python -m pytest models/tests/test_eta_wiring.py -q
 ```
+
+**Running `feature_engineering/tests/` inside the running Docker container** (verified
+2026-08-18 — 38 tests, all passing after the perf fixes above; this is the fastest way to
+exercise `dataset_builder.py`/`spatial.py` against a real Django-loaded environment without
+a full local `uv sync --extra train`). The image doesn't ship `pytest` — install it once per
+container lifetime — and anything importing `dataset_builder.py` needs Django apps loaded
+first (`sch_pipeline.models` pulls in `gtfs.models` transitively, which needs `django.setup()`
+called before import, not just `DJANGO_SETTINGS_MODULE` set):
+```bash
+cd gtfs-rt-pipeline
+docker compose exec web pip install -q pytest
+docker compose exec web bash -c "cd /app/gtfs-eta && DJANGO_SETTINGS_MODULE=ingestproj.settings PYTHONPATH=/app/gtfs-eta:/app/gtfs-eta/gtfs-rt-pipeline python -c \"
+import django; django.setup()
+import pytest
+raise SystemExit(pytest.main(['feature_engineering/tests/', '-q']))
+\""
+```
+`feature_engineering/` and `core/` are bind-mounted into the `web`/`celery-worker`
+containers (see `docker-compose.yml`), so edits to those files on the host are live inside
+the container immediately — no rebuild needed to re-run tests after a change. A full image
+rebuild (`docker compose build web`) is only needed for `gtfs-rt-pipeline/` changes
+(Dockerfile `COPY`s that directory, not bind-mounts it) or dependency changes.
 
 ## Troubleshooting (issues seen in practice)
 - **`Temporary failure in name resolution` (Error -3)** for `redis`/`postgres`
