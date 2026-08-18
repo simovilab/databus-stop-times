@@ -1,0 +1,63 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Distribution / packaging
+build/
+dist/
+*.egg-info/
+*.egg
+MANIFEST
+
+# Environments — never commit real credentials (AWS keys, DJANGO_SECRET_KEY, etc.)
+.env
+.env.local
+.env.*.local
+.venv/
+venv/
+ENV/
+
+# Unit test / coverage reports
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+.nox/
+.hypothesis/
+
+# Celery
+celerybeat-schedule
+celerybeat.pid
+
+# Django
+*.log
+local_settings.py
+db.sqlite3
+db.sqlite3-journal
+staticfiles/
+media/
+
+# Trained model artifacts and generated datasets — reproducible from source
+# data + code, not meant to be tracked (see docs/RUNBOOK.md's registry
+# contract and RESEARCH_ROADMAP.md's rehearsal/replication corpora).
+models/trained/
+*.pkl
+datasets/*.parquet
+!datasets/sample.parquet
+
+# Editors / OS
+.idea/
+.vscode/
+.DS_Store
+*.swp
+*.swo
+
+# Jupyter
+.ipynb_checkpoints
+
+# mypy / type checkers
+.mypy_cache/
+.pyre/
+.pytype/
