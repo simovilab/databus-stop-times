@@ -105,8 +105,17 @@ def build_polyline(
     n = len(lats)
 
     # Resolve raw distances: explicit argument wins, then embedded third element.
+    # Real-world shapes.txt sometimes leaves shape_dist_traveled blank for a subset
+    # of points within an otherwise-populated shape, so every point must actually
+    # have a usable value -- checking only shape_pts[0] and assuming the rest match
+    # crashes on `float(None)` when a later point is missing it. Falls through to
+    # cumulative haversine below when any point in the shape lacks it.
     raw_dists: list[float] | None = shape_dist_traveled
-    if raw_dists is None and n > 0 and len(shape_pts[0]) >= 3:
+    if (
+        raw_dists is None
+        and n > 0
+        and all(len(p) >= 3 and p[2] is not None for p in shape_pts)
+    ):
         raw_dists = [float(p[2]) for p in shape_pts]
 
     if raw_dists is not None:

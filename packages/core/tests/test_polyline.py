@@ -138,6 +138,17 @@ class TestBuildPolyline:
         assert pts[1].lat == pytest.approx(11.0)
         assert pts[1].lon == pytest.approx(21.0)
 
+    def test_embedded_third_element_partially_none_falls_back_to_haversine(self) -> None:
+        """Real shapes.txt sometimes leaves shape_dist_traveled blank for a subset of
+        points within an otherwise-populated shape. The first point having a distance
+        must not be trusted as a promise that every point does -- this used to raise
+        `TypeError: float() argument must be a string or a real number, not 'NoneType'`.
+        """
+        shape_pts = [(0.0, 0.0, 0.0), (0.0, 1.0, None), (0.0, 2.0, 200.0)]
+        pts = build_polyline(shape_pts)
+        expected = haversine_m(0.0, 0.0, 0.0, 1.0) + haversine_m(0.0, 1.0, 0.0, 2.0)
+        assert pts[2].cum_m == pytest.approx(expected, rel=1e-9)
+
 
 # ---------------------------------------------------------------------------
 # project_point_to_polyline
