@@ -34,6 +34,61 @@ def haversine_distance(lat1, lon1, lat2, lon2):
     return c * r
 
 
+def _haversine_matrix(lat1: np.ndarray, lon1: np.ndarray, lat2: np.ndarray, lon2: np.ndarray) -> np.ndarray:
+    """Vectorized haversine distance (meters) between every (lat1,lon1) x (lat2,lon2)
+    pair, via numpy broadcasting. Returns an (len(lat1), len(lat2)) matrix.
+    """
+    lat1r = np.radians(lat1)[:, None]
+    lon1r = np.radians(lon1)[:, None]
+    lat2r = np.radians(lat2)[None, :]
+    lon2r = np.radians(lon2)[None, :]
+    dlat = lat2r - lat1r
+    dlon = lon2r - lon1r
+    a = np.sin(dlat / 2) ** 2 + np.cos(lat1r) * np.cos(lat2r) * np.sin(dlon / 2) ** 2
+    c = 2 * np.arcsin(np.sqrt(np.clip(a, 0.0, 1.0)))
+    return c * 6371000.0
+
+
+def _next_true_after(mask: np.ndarray) -> np.ndarray:
+    """For each position i, the index of the first True strictly after i, or -1.
+
+    O(n) via a backward fill, replacing an O(n) rescan done once per (VP, stop)
+    pair (i.e. O(n^2) overall) in the loop this backs — see dataset_builder
+    STEP 4. `mask` must be in the same order (by vp_ts ascending) as the
+    positions callers index into.
+    """
+    n = len(mask)
+    if n == 0:
+        return np.empty(0, dtype=np.int64)
+    idx_or_nan = np.where(mask, np.arange(n), np.nan)
+    at_or_after = pd.Series(idx_or_nan).bfill().to_numpy()
+    result = np.full(n, -1, dtype=np.int64)
+    if n > 1:
+        tail = at_or_after[1:]
+        valid = ~np.isnan(tail)
+        result[:-1][valid] = tail[valid].astype(np.int64)
+    return result
+
+
+def _suffix_closest_after(distances: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    """For each position i, the (min distance, index) over positions strictly
+    after i, first occurrence on ties (matching pandas .idxmin() semantics
+    over the same left-to-right order). O(n) single backward pass.
+    """
+    n = len(distances)
+    min_after = np.full(n, np.inf)
+    idx_after = np.full(n, -1, dtype=np.int64)
+    running_min = np.inf
+    running_idx = -1
+    for k in range(n - 1, -1, -1):
+        min_after[k] = running_min
+        idx_after[k] = running_idx
+        if distances[k] <= running_min:
+            running_min = distances[k]
+            running_idx = k
+    return min_after, idx_after
+
+
 def find_actual_arrival_time(vp_df_for_trip, stop_lat, stop_lon, distance_threshold=50):
     """
     Find the ts when a vehicle arrived at a stop.
@@ -343,57 +398,120 @@ def build_vp_training_dataset(
         # Get shape for this trip (if available)
         trip_shape = shape_cache.get(trip_id)
         
+        # Sort this trip's VPs by ts once, up front — everything below indexes
+        # positionally into this order, and "future" per VP means "later
+        # position in this array", not a re-filter of the whole trip. Note:
+        # this makes "future" strictly-later-position rather than strictly-
+        # later-ts, so a duplicate-ts VP pair within one trip (the archive's
+        # documented ~0.0032% residual dedup gap) can differ at the margin
+        # from the old ts-filter behavior — sort_values is stable, so ties
+        # keep their original relative order either way.
+        trip_vps = trip_vps.sort_values('ts', kind='stable').reset_index(drop=True)
+        n_vps = len(trip_vps)
+        if n_vps == 0:
+            continue
+
+        vp_lat_arr = trip_vps['lat'].to_numpy(dtype=float)
+        vp_lon_arr = trip_vps['lon'].to_numpy(dtype=float)
+        vp_ts_arr = trip_vps['ts'].to_numpy()
+        vp_bearing_arr = trip_vps['bearing'].to_numpy() if 'bearing' in trip_vps.columns else np.full(n_vps, None)
+        vp_speed_arr = trip_vps['speed'].to_numpy() if 'speed' in trip_vps.columns else np.full(n_vps, None)
+        vp_route_id_arr = trip_vps['route_id'].to_numpy()
+        vp_vehicle_id_arr = trip_vps['vehicle_id'].to_numpy()
+        vp_status_arr = trip_vps['current_status'].to_numpy() if 'current_status' in trip_vps.columns else None
+        vp_cur_stop_id_arr = (
+            trip_vps['stop_id'].astype('string').to_numpy() if 'stop_id' in trip_vps.columns else None
+        )
+        vp_cur_stop_seq_arr = (
+            trip_vps['current_stop_sequence'].to_numpy() if 'current_stop_sequence' in trip_vps.columns else None
+        )
+
+        stop_id_arr = trip_stops['stop_id'].to_numpy()
+        stop_seq_arr = trip_stops['stop_sequence'].to_numpy()
+        stop_lat_arr = trip_stops['stop_lat'].to_numpy(dtype=float)
+        stop_lon_arr = trip_stops['stop_lon'].to_numpy(dtype=float)
+        stop_order_arr = trip_stops['stop_order'].to_numpy()
+        next_stop_id_arr = trip_stops['next_stop_id'].to_numpy()
+        next_stop_lat_arr = trip_stops['next_stop_lat'].to_numpy()
+        next_stop_lon_arr = trip_stops['next_stop_lon'].to_numpy()
+        n_stops = len(trip_stops)
+
+        # --- Vectorized precompute, once per trip (was: once per VP-x-stop pair) ---
+        # (n_vps, n_stops) haversine distance matrix.
+        dist_matrix = _haversine_matrix(vp_lat_arr, vp_lon_arr, stop_lat_arr, stop_lon_arr)
+        closest_stop_idx_per_vp = dist_matrix.argmin(axis=1)
+
+        # Per stop j: for each VP position i, the index of the arrival VP
+        # strictly after i (within threshold, else closest approach <=200m),
+        # and — if arrival_source needs it — the GTFS-RT STOPPED_AT arrival.
+        # O(n_vps) per stop via _next_true_after / _suffix_closest_after,
+        # instead of re-scanning the remaining trip per (VP, stop) pair.
+        arrival_idx_computed = np.full((n_vps, n_stops), -1, dtype=np.int64)
+        arrival_idx_stopped = np.full((n_vps, n_stops), -1, dtype=np.int64)
+        for j in range(n_stops):
+            col = dist_matrix[:, j]
+            within_mask = col <= distance_threshold
+            next_within = _next_true_after(within_mask)
+            min_after, idx_after = _suffix_closest_after(col)
+            fallback = np.where(min_after <= 200.0, idx_after, -1)
+            arrival_idx_computed[:, j] = np.where(next_within != -1, next_within, fallback)
+
+            if vp_status_arr is not None:
+                stopped_mask = vp_status_arr == "STOPPED_AT"
+                byid_next = np.full(n_vps, -1, dtype=np.int64)
+                if vp_cur_stop_id_arr is not None:
+                    byid_mask = stopped_mask & (vp_cur_stop_id_arr == str(stop_id_arr[j]))
+                    byid_next = _next_true_after(byid_mask)
+                byseq_next = np.full(n_vps, -1, dtype=np.int64)
+                if vp_cur_stop_seq_arr is not None:
+                    byseq_mask = stopped_mask & (vp_cur_stop_seq_arr == stop_seq_arr[j])
+                    byseq_next = _next_true_after(byseq_mask)
+                arrival_idx_stopped[:, j] = np.where(byid_next != -1, byid_next, byseq_next)
+
+        # Get shape for this trip (if available)
+        trip_shape = shape_cache.get(trip_id)
+
         # For each VP in this trip
-        for vp_idx, vp_row in trip_vps.iterrows():
-            vp_lat = vp_row['lat']
-            vp_lon = vp_row['lon']
-            vp_ts = vp_row['ts']
-            vp_position = {
-                'lat': float(vp_lat),
-                'lon': float(vp_lon),
-                'bearing': vp_row.get('bearing'),
-            }
-            
-            # Find which stops are ahead of this VP
-            # Strategy: Calculate distance to all stops, take the closest N
-            distances_to_stops = trip_stops.apply(
-                lambda stop: haversine_distance(vp_lat, vp_lon, stop['stop_lat'], stop['stop_lon']),
-                axis=1
-            )
-            
-            trip_stops_with_dist = trip_stops.copy()
-            trip_stops_with_dist['distance_to_stop'] = distances_to_stops
-            
-            # Sort by stop_sequence and take upcoming stops
-            # A stop is "upcoming" if it hasn't been passed yet
-            # Simple heuristic: stops that are ahead in sequence from the closest stop
-            closest_stop_idx = distances_to_stops.idxmin()
-            closest_stop_seq = trip_stops.loc[closest_stop_idx, 'stop_sequence']
-            closest_stop_order = trip_stops.loc[closest_stop_idx, 'stop_order']
-            
-            # Get stops with sequence >= closest (upcoming stops)
-            upcoming_stops = trip_stops_with_dist[
-                trip_stops_with_dist['stop_sequence'] >= closest_stop_seq
-            ].head(max_stops_ahead)
-            
-            # For each upcoming stop, find actual arrival time
-            for stop_idx, stop_row in upcoming_stops.iterrows():
-                # Future VPs of this trip (used to detect arrival both ways)
-                future_vps = trip_vps[trip_vps['ts'] > vp_ts]
+        for i in range(n_vps):
+            vp_lat = vp_lat_arr[i]
+            vp_lon = vp_lon_arr[i]
+            vp_ts = vp_ts_arr[i]
+            vp_bearing = vp_bearing_arr[i]
+            vp_position = {'lat': float(vp_lat), 'lon': float(vp_lon), 'bearing': vp_bearing}
+
+            closest_idx = int(closest_stop_idx_per_vp[i])
+            closest_stop_order = stop_order_arr[closest_idx]
+
+            # Upcoming stops = the next max_stops_ahead stops from the closest
+            # one onward (stops are sorted ascending by stop_sequence, and
+            # stop_order == positional index, so this is a plain slice).
+            end = min(closest_idx + max_stops_ahead, n_stops)
+            for j in range(closest_idx, end):
+                arrival_computed_idx = int(arrival_idx_computed[i, j])
+                arrival_stopped_idx = int(arrival_idx_stopped[i, j])
+                actual_arrival_computed = vp_ts_arr[arrival_computed_idx] if arrival_computed_idx != -1 else None
+                actual_arrival_stopped_at = vp_ts_arr[arrival_stopped_idx] if arrival_stopped_idx != -1 else None
+                primary_arrival = (
+                    actual_arrival_computed if arrival_source == "computed"
+                    else actual_arrival_stopped_at
+                )
+                # Keep the row only when the chosen primary arrival exists.
+                if primary_arrival is None:
+                    continue
 
                 stop_payload = {
-                    'stop_id': stop_row['stop_id'],
-                    'lat': stop_row['stop_lat'],
-                    'lon': stop_row['stop_lon'],
-                    'stop_order': stop_row.get('stop_order'),
+                    'stop_id': stop_id_arr[j],
+                    'lat': stop_lat_arr[j],
+                    'lon': stop_lon_arr[j],
+                    'stop_order': stop_order_arr[j],
                     'total_segments': trip_total_segments,
                 }
                 next_stop_payload = None
-                if pd.notna(stop_row['next_stop_id']):
+                if pd.notna(next_stop_id_arr[j]):
                     next_stop_payload = {
-                        'stop_id': stop_row['next_stop_id'],
-                        'lat': stop_row['next_stop_lat'],
-                        'lon': stop_row['next_stop_lon'],
+                        'stop_id': next_stop_id_arr[j],
+                        'lat': next_stop_lat_arr[j],
+                        'lon': next_stop_lon_arr[j],
                     }
 
                 # Spatial features (shape-aware when a shape is available).
@@ -406,47 +524,26 @@ def build_vp_training_dataset(
                     total_segments=trip_total_segments
                 )
 
-                # --- Dual arrival target -------------------------------------
-                actual_arrival_computed = find_actual_arrival_time(
-                    future_vps,
-                    stop_row['stop_lat'],
-                    stop_row['stop_lon'],
-                    distance_threshold=distance_threshold,
-                )
-                actual_arrival_stopped_at = find_stopped_at_arrival(
-                    future_vps,
-                    stop_row['stop_id'],
-                    stop_row['stop_sequence'],
-                )
-                primary_arrival = (
-                    actual_arrival_computed if arrival_source == "computed"
-                    else actual_arrival_stopped_at
-                )
-                # Keep the row only when the chosen primary arrival exists.
-                if primary_arrival is None:
-                    continue
-
                 # --- Derived features ----------------------------------------
                 bearing_to_stop = _initial_bearing(
                     float(vp_lat), float(vp_lon),
-                    float(stop_row['stop_lat']), float(stop_row['stop_lon']),
+                    float(stop_lat_arr[j]), float(stop_lon_arr[j]),
                 )
-                vp_bearing = vp_row.get('bearing')
-                stops_ahead = int(stop_row['stop_order'] - closest_stop_order)
+                stops_ahead = int(stop_order_arr[j] - closest_stop_order)
 
                 training_rows.append({
                     'trip_id': trip_id,
-                    'route_id': vp_row['route_id'],
-                    'vehicle_id': vp_row['vehicle_id'],
+                    'route_id': vp_route_id_arr[i],
+                    'vehicle_id': vp_vehicle_id_arr[i],
                     'vp_ts': vp_ts,
                     'vp_lat': vp_lat,
                     'vp_lon': vp_lon,
                     'vp_bearing': vp_bearing,
-                    'vp_speed': vp_row.get('speed'),
-                    'stop_id': stop_row['stop_id'],
-                    'stop_sequence': stop_row['stop_sequence'],
-                    'stop_lat': stop_row['stop_lat'],
-                    'stop_lon': stop_row['stop_lon'],
+                    'vp_speed': vp_speed_arr[i],
+                    'stop_id': stop_id_arr[j],
+                    'stop_sequence': stop_seq_arr[j],
+                    'stop_lat': stop_lat_arr[j],
+                    'stop_lon': stop_lon_arr[j],
                     # spatial
                     'distance_to_stop': spatial_feats.get('distance_to_stop'),
                     'distance_to_next_stop': spatial_feats.get('distance_to_next_stop'),
@@ -459,7 +556,7 @@ def build_vp_training_dataset(
                     'bearing_to_stop': bearing_to_stop,
                     'bearing_diff': _angle_diff(vp_bearing, bearing_to_stop),
                     # status
-                    'is_at_stop': bool(vp_row.get('current_status') == "STOPPED_AT"),
+                    'is_at_stop': bool(vp_status_arr[i] == "STOPPED_AT") if vp_status_arr is not None else False,
                     # target (both sources + canonical primary)
                     'actual_arrival_computed': actual_arrival_computed,
                     'actual_arrival_stopped_at': actual_arrival_stopped_at,

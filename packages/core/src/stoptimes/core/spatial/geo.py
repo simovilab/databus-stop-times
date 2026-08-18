@@ -3,6 +3,8 @@ from __future__ import annotations
 import math
 from typing import Dict, List, Tuple, Optional
 
+import numpy as np
+
 EARTH_RADIUS_M = 6_371_000.0
 
 def _deg2rad(x: float) -> float:
@@ -15,6 +17,17 @@ def _haversine_m(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
     dλ = _deg2rad(lon2 - lon1)
     a = math.sin(dφ / 2) ** 2 + math.cos(φ1) * math.cos(φ2) * math.sin(dλ / 2) ** 2
     c = 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
+    return EARTH_RADIUS_M * c
+
+
+def _haversine_vec(lat1: float, lon1: float, lat2: np.ndarray, lon2: np.ndarray) -> np.ndarray:
+    """Great-circle distance (meters) from one point to an array of points."""
+    phi1 = math.radians(lat1)
+    phi2 = np.radians(lat2)
+    dphi = phi2 - phi1
+    dlambda = np.radians(lon2 - lon1)
+    a = np.sin(dphi / 2) ** 2 + math.cos(phi1) * np.cos(phi2) * np.sin(dlambda / 2) ** 2
+    c = 2 * np.arctan2(np.sqrt(a), np.sqrt(np.clip(1 - a, 0.0, None)))
     return EARTH_RADIUS_M * c
 
 
@@ -37,6 +50,24 @@ class ShapePolyline:
         self._segment_lengths = self._compute_segment_lengths()
         self._cumulative_distances = self._compute_cumulative_distances()
         self.total_length = self._cumulative_distances[-1]
+
+        # Precomputed per-segment planar-projection arrays (numpy), reused by
+        # every project_point() call — was previously O(shape_points) worth
+        # of Python-loop trig work recomputed from scratch on every call
+        # (x2-3 calls per (VP, stop) pair in calculate_distance_features_with_shape),
+        # which dominates runtime once the STEP-4 O(V^2) arrival-scan is fixed.
+        pts = np.asarray(self.points, dtype=float)
+        self._lat1_arr = pts[:-1, 0]
+        self._lon1_arr = pts[:-1, 1]
+        self._lat2_arr = pts[1:, 0]
+        self._lon2_arr = pts[1:, 1]
+        avg_lat = (self._lat1_arr + self._lat2_arr) / 2.0
+        self._meters_per_deg_lon_arr = 111320.0 * np.cos(np.radians(avg_lat))
+        self._seg_x_arr = (self._lon2_arr - self._lon1_arr) * self._meters_per_deg_lon_arr
+        self._seg_y_arr = (self._lat2_arr - self._lat1_arr) * 111320.0
+        self._seg_length_sq_arr = self._seg_x_arr ** 2 + self._seg_y_arr ** 2
+        self._degenerate_arr = self._seg_length_sq_arr < 1e-6
+        self._cumulative_arr = np.asarray(self._cumulative_distances, dtype=float)
     
     def _compute_segment_lengths(self) -> List[float]:
         """Compute distance for each segment between consecutive points."""
@@ -69,89 +100,42 @@ class ShapePolyline:
                 'progress': normalized progress [0, 1]
             }
         """
-        min_dist = float('inf')
-        best_segment_idx = 0
-        best_projection_dist = 0.0
-        
-        # Check each segment
-        for i in range(len(self.points) - 1):
-            lat1, lon1 = self.points[i]
-            lat2, lon2 = self.points[i + 1]
-            
-            # Project point onto this segment
-            proj_info = self._project_onto_segment(
-                lat, lon, lat1, lon1, lat2, lon2
-            )
-            
-            if proj_info['distance'] < min_dist:
-                min_dist = proj_info['distance']
-                best_segment_idx = i
-                best_projection_dist = proj_info['distance_along_segment']
-        
+        # Vectorized over all segments at once (was: a Python loop calling
+        # _project_onto_segment once per segment — see __init__ for the
+        # precomputed arrays this reuses).
+        with np.errstate(invalid='ignore', divide='ignore'):
+            dx = (lon - self._lon1_arr) * self._meters_per_deg_lon_arr
+            dy = (lat - self._lat1_arr) * 111320.0
+            t = (dx * self._seg_x_arr + dy * self._seg_y_arr) / self._seg_length_sq_arr
+        t = np.clip(t, 0.0, 1.0)
+
+        proj_lon = self._lon1_arr + t * (self._lon2_arr - self._lon1_arr)
+        proj_lat = self._lat1_arr + t * (self._lat2_arr - self._lat1_arr)
+        dist = _haversine_vec(lat, lon, proj_lat, proj_lon)
+
+        if self._degenerate_arr.any():
+            dist_degenerate = _haversine_vec(lat, lon, self._lat1_arr, self._lon1_arr)
+            dist = np.where(self._degenerate_arr, dist_degenerate, dist)
+            t = np.where(self._degenerate_arr, 0.0, t)
+
+        best_segment_idx = int(np.argmin(dist))
+        min_dist = float(dist[best_segment_idx])
+        seg_length = math.sqrt(float(self._seg_length_sq_arr[best_segment_idx]))
+        best_projection_dist = float(t[best_segment_idx]) * seg_length
+
         # Calculate total distance along shape to projection point
         distance_along_shape = (
             self._cumulative_distances[best_segment_idx] + best_projection_dist
         )
-        
+
         # Normalized progress
         progress = distance_along_shape / self.total_length if self.total_length > 0 else 0.0
-        
+
         return {
             'distance_along_shape': distance_along_shape,
             'cross_track_distance': min_dist,
             'closest_segment_idx': best_segment_idx,
             'progress': min(1.0, max(0.0, progress))
-        }
-    
-    def _project_onto_segment(
-        self, 
-        lat: float, lon: float,
-        lat1: float, lon1: float,
-        lat2: float, lon2: float
-    ) -> Dict:
-        """
-        Project point onto a single segment, finding perpendicular distance
-        and position along segment.
-        
-        Uses simplified planar approximation (accurate for segments < 10km).
-        """
-        # Convert to approximate planar coordinates (meters from segment start)
-        # This is accurate enough for typical transit segment lengths
-        avg_lat = (lat1 + lat2) / 2
-        meters_per_deg_lat = 111320.0
-        meters_per_deg_lon = 111320.0 * math.cos(_deg2rad(avg_lat))
-        
-        # Segment vector in meters
-        seg_x = (lon2 - lon1) * meters_per_deg_lon
-        seg_y = (lat2 - lat1) * meters_per_deg_lat
-        seg_length_sq = seg_x**2 + seg_y**2
-        
-        if seg_length_sq < 1e-6:  # Degenerate segment
-            dist = _haversine_m(lat, lon, lat1, lon1)
-            return {'distance': dist, 'distance_along_segment': 0.0}
-        
-        # Vector from segment start to point
-        dx = (lon - lon1) * meters_per_deg_lon
-        dy = (lat - lat1) * meters_per_deg_lat
-        
-        # Project onto segment: dot product / length^2
-        t = (dx * seg_x + dy * seg_y) / seg_length_sq
-        t = max(0.0, min(1.0, t))  # Clamp to segment
-        
-        # Closest point on segment
-        proj_x = lon1 + t * (lon2 - lon1)
-        proj_y = lat1 + t * (lat2 - lat1)
-        
-        # Distance from point to projection
-        dist = _haversine_m(lat, lon, proj_y, proj_x)
-        
-        # Distance along segment to projection
-        seg_length = math.sqrt(seg_length_sq)
-        distance_along_segment = t * seg_length
-        
-        return {
-            'distance': dist,
-            'distance_along_segment': distance_along_segment
         }
     
     def get_distance_between_stops(
