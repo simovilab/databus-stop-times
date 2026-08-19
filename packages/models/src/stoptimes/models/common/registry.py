@@ -80,27 +80,32 @@ class ModelRegistry:
         """
         model_path = self.base_dir / f"{model_key}.pkl"
         meta_path = self.base_dir / f"{model_key}_meta.json"
-        
+
         if model_path.exists() and not overwrite:
             raise FileExistsError(f"Model {model_key} already exists. Set overwrite=True to replace.")
-        
+
         # Save model artifact
         with open(model_path, 'wb') as f:
             pickle.dump(model, f)
-        
-        # Enrich metadata
+
+        # Enrich metadata. model_path is stored relative to base_dir (bare
+        # filename) rather than absolute, so the registry directory stays
+        # relocatable -- the same registry.json/*.pkl contents work no
+        # matter where the directory itself is mounted or copied (e.g. a
+        # host path at save time vs. a different bind-mount path inside a
+        # container at load time). See load_model/_resolve_artifact_path.
         metadata['model_key'] = model_key
         metadata['saved_at'] = datetime.now().isoformat()
-        metadata['model_path'] = str(model_path)
-        
+        metadata['model_path'] = model_path.name
+
         # Save metadata
         with open(meta_path, 'w') as f:
             json.dump(metadata, f, indent=2)
-        
+
         # Update registry
         self.registry[model_key] = {
-            'model_path': str(model_path),
-            'meta_path': str(meta_path),
+            'model_path': model_path.name,
+            'meta_path': meta_path.name,
             'saved_at': metadata['saved_at'],
             'model_type': metadata.get('model_type', 'unknown'),
             'route_id': metadata.get('route_id'),  # Track route scope
@@ -113,48 +118,73 @@ class ModelRegistry:
         _logger.info("Model saved", model_key=model_key, scope=scope, route_id=route_id)
         return model_path
     
+    def _resolve_artifact_path(self, stored_path: str) -> Path:
+        """
+        Resolve a model_path/meta_path registry entry against this
+        registry's base_dir.
+
+        Entries written by the current save_model are relative (a bare
+        filename), so they're simply joined onto base_dir -- MODEL_REGISTRY_DIR
+        (via base_dir) is what's authoritative for locating the registry,
+        never the entry itself. This is what makes a registry directory
+        relocatable: the same registry.json/*.pkl contents work regardless
+        of where the directory is mounted or copied (e.g. a host path at
+        save time vs. a different container bind-mount path at load time).
+
+        Legacy entries (written before this fix) may still be absolute
+        paths from wherever the registry was originally saved. Those are
+        tried as-is first -- covers the registry not having moved -- and if
+        that path doesn't exist, fall back to resolving the entry's
+        basename against base_dir -- covers the relocated case, so long as
+        the artifact files sit next to registry.json.
+        """
+        path = Path(stored_path)
+        if not path.is_absolute():
+            return self.base_dir / path
+
+        if path.exists():
+            return path
+
+        return self.base_dir / path.name
+
     def load_model(self, model_key: str) -> Any:
         """
         Load model from registry.
-        
+
         Args:
             model_key: Unique model identifier
-            
+
         Returns:
             Loaded model object
         """
         if model_key not in self.registry:
             raise KeyError(f"Model {model_key} not found in registry")
-        
-        model_path = Path(self.registry[model_key]['model_path'])
-        if not model_path.is_absolute():
-            model_path = self.base_dir / model_path.name
-        
+
+        model_path = self._resolve_artifact_path(self.registry[model_key]['model_path'])
+
         with open(model_path, 'rb') as f:
             model = pickle.load(f)
-        
+
         return model
-    
+
     def load_metadata(self, model_key: str) -> Dict[str, Any]:
         """
         Load model metadata.
-        
+
         Args:
             model_key: Unique model identifier
-            
+
         Returns:
             Metadata dictionary
         """
         if model_key not in self.registry:
             raise KeyError(f"Model {model_key} not found in registry")
-        
-        meta_path = Path(self.registry[model_key]['meta_path'])
-        if not meta_path.is_absolute():
-            meta_path = self.base_dir / meta_path.name
-        
+
+        meta_path = self._resolve_artifact_path(self.registry[model_key]['meta_path'])
+
         with open(meta_path, 'r') as f:
             metadata = json.load(f)
-        
+
         return metadata
     
     def list_models(self, 
@@ -229,11 +259,11 @@ class ModelRegistry:
         """
         if model_key not in self.registry:
             raise KeyError(f"Model {model_key} not found in registry")
-        
+
         # Delete files
-        model_path = Path(self.registry[model_key]['model_path'])
-        meta_path = Path(self.registry[model_key]['meta_path'])
-        
+        model_path = self._resolve_artifact_path(self.registry[model_key]['model_path'])
+        meta_path = self._resolve_artifact_path(self.registry[model_key]['meta_path'])
+
         if model_path.exists():
             model_path.unlink()
         if meta_path.exists():
