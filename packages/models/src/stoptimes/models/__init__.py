@@ -48,7 +48,16 @@ from .evaluation.roll_validate import RollingValidator, quick_rolling_validate
 
 # Main training pipeline
 # from .train_all_models import train_all_baselines, train_advanced_configurations
-from .train_all_models import train_all_models
+#
+# train_all_models is deliberately NOT imported eagerly here: it pulls in
+# xgb.train -> xgboost, a heavy training-only dependency (the `train` extra
+# in pyproject.toml). Importing it at package-import time would force every
+# inference-only consumer (e.g. the live gtfs-rt-pipeline collector, or a
+# downstream project that only calls models.common.registry /
+# models.*.predict) to install xgboost even though they never train models.
+# See __getattr__ below for the lazy PEP 562 accessor that keeps
+# `from models import train_all_models` / `models.train_all_models(...)`
+# working unchanged for training users.
 
 
 __all__ = [
@@ -172,6 +181,27 @@ def quick_start_guide():
     For more details, see models/README.md
     """
     print(guide)
+
+
+# Training-only symbols, imported lazily (PEP 562) so `import models` never
+# pulls in xgboost. See the comment above `__all__` for why.
+_LAZY_TRAINING_ATTRS = {"train_all_models"}
+
+
+def __getattr__(name: str):
+    if name in _LAZY_TRAINING_ATTRS:
+        # importlib.import_module (not `from . import train_all_models`)
+        # deliberately: `from`-import syntax resolves via _handle_fromlist,
+        # which probes the package with hasattr() before importing the
+        # submodule -- and hasattr() on this module re-enters __getattr__
+        # for the very name we're resolving, recursing infinitely. Direct
+        # module-path import skips that probe.
+        import importlib
+        _train_all_models_module = importlib.import_module(f"{__name__}.train_all_models")
+        value = getattr(_train_all_models_module, name)
+        globals()[name] = value  # cache: subsequent access skips __getattr__
+        return value
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
 # Auto-create directories
