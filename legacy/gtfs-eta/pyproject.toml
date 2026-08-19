@@ -1,5 +1,5 @@
 [project]
-name = "eta_prediction"
+name = "gtfs-eta"
 version = "0.1.0"
 description = "Utilities for exploring GTFS-Realtime feeds (Vehicle Positions, Trip Updates, Alerts)."
 authors = [
@@ -55,7 +55,7 @@ viz = [
   "matplotlib>=3.9.4",
 ]
 all = [
-  "eta_prediction[train,collect,viz]",
+  "gtfs-eta[train,collect,viz]",
 ]
 
 [build-system]
@@ -63,7 +63,10 @@ requires = ["setuptools>=61.0"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
-include = ["core*", "eta_service*", "feature_engineering*", "models*"]
+# gtfs_eta* is the transitional alias namespace (gtfs_eta/__init__.py +
+# gtfs_eta/seed_baseline_model.py) — see gtfs_eta/__init__.py for why it's a
+# sys.modules alias onto the four packages below rather than their new home.
+include = ["core*", "eta_service*", "feature_engineering*", "models*", "gtfs_eta*"]
 
 [tool.uv]
 package = true

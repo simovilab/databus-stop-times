@@ -25,6 +25,7 @@ _config = get_config()
 _logger = get_logger("estimator")
 
 from feature_engineering.temporal import extract_temporal_features
+from feature_engineering.spatial import calculate_distance_features_with_shape
 from models.common.registry import get_registry
 
 
@@ -178,7 +179,20 @@ def estimate_stop_times(
     model_type: str = None,
     prefer_route_model: bool = True,
     max_stops: int = 3,
+    shape: object = None,
 ) -> dict:
+    """Estimate arrival times for upcoming stops from a live vehicle position.
+
+    ``shape`` is an optional pre-loaded ``ShapePolyline`` (see
+    ``feature_engineering.spatial``) for the vehicle's current trip. When
+    provided, it's used to compute shape-projected distance/progress
+    features instead of the haversine proxy. Per-stop, an even more
+    authoritative signal wins over both: if an ``upcoming_stops`` entry
+    carries a non-None ``shape_distance_to_stop`` key, that precomputed
+    distance is used directly (see the SHAPE HOOK block below) — this is
+    the path the databus caller exercises, since it precomputes a
+    loop-back-safe monotonic distance along the shape itself.
+    """
 
     # Validate inputs
     if not vehicle_position or not upcoming_stops:
@@ -301,6 +315,13 @@ def estimate_stop_times(
     for idx, stop in enumerate(stops_to_predict):
         next_stop = stops_to_predict[idx + 1] if idx + 1 < len(stops_to_predict) else None
 
+        stop_sequence_value = (
+            stop.get('stop_sequence')
+            or stop.get('sequence')
+            or stop.get('stop_order')
+            or idx + 1
+        )
+
         distance_m, distance_to_next, progress_ratio = _progress_features(
             vehicle_position,
             stop,
@@ -308,12 +329,40 @@ def estimate_stop_times(
             approx_total_segments,
         )
 
-        stop_sequence_value = (
-            stop.get('stop_sequence')
-            or stop.get('sequence')
-            or stop.get('stop_order')
-            or idx + 1
-        )
+        # ------------------------------------------------------------------
+        # SHAPE HOOK: precomputed distance (from the stop dict) beats
+        # ShapePolyline projection, which beats the haversine proxy above.
+        # Defaults below preserve today's proxy behavior when neither a
+        # per-stop precomputed distance nor a shape object is supplied.
+        # ------------------------------------------------------------------
+        shape_distance_to_stop = distance_m
+        shape_progress = progress_ratio
+        cross_track_error = 0.0
+
+        precomputed_dist = stop.get('shape_distance_to_stop')
+        if precomputed_dist is not None:
+            # Databus pre-computes a loop-back-safe monotonic distance along
+            # the shape for each upcoming stop; use it directly as the
+            # authoritative distance_m, bypassing both ShapePolyline
+            # projection and the haversine fallback for this stop.
+            distance_m = float(precomputed_dist)
+            shape_distance_to_stop = distance_m
+        elif shape is not None:
+            shape_features = calculate_distance_features_with_shape(
+                vehicle_position,
+                stop,
+                next_stop,
+                shape=shape,
+                vehicle_stop_order=stop_sequence_value,
+                total_segments=approx_total_segments,
+            )
+            if shape_features.get('shape_distance_to_stop') is not None:
+                distance_m = shape_features['shape_distance_to_stop']
+                shape_distance_to_stop = distance_m
+            if shape_features.get('cross_track_error') is not None:
+                cross_track_error = shape_features['cross_track_error']
+            if shape_features.get('shape_progress') is not None:
+                shape_progress = shape_features['shape_progress']
 
         # Kinematic / status features straight off the live VehiclePosition.
         bearing_to_stop = _initial_bearing(
@@ -336,17 +385,18 @@ def estimate_stop_times(
         hour = temporal_features['hour']
         dow = temporal_features['day_of_week']
 
-        # Build features. Shape-derived features need the route geometry, which is
-        # not available online; use geometric proxies so the served input matches
-        # the trained schema (distance_to_stop is haversine in the builder too).
+        # Build features. Shape-derived features use real shape projections when
+        # the SHAPE HOOK above resolved one (precomputed distance or a
+        # ShapePolyline); otherwise they fall back to the geometric proxies
+        # they've always used so the served input matches the trained schema.
         features = {
             'route_id': route_id,
             'stop_sequence': stop_sequence_value,
             'distance_to_stop': distance_m,
             'distance_to_next_stop': distance_to_next,
-            'shape_distance_to_stop': distance_m,       # proxy: no shape online
-            'shape_progress': progress_ratio,           # proxy: no shape online
-            'cross_track_error': 0.0,                   # proxy: assume on-route
+            'shape_distance_to_stop': shape_distance_to_stop,
+            'shape_progress': shape_progress,
+            'cross_track_error': cross_track_error,
             'progress_ratio': progress_ratio,
             'stops_ahead': idx + 1,
             'current_speed_kmh': current_speed_kmh,

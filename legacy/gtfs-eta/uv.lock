@@ -408,80 +408,6 @@ wheels = [
 ]
 
 [[package]]
-name = "eta-prediction"
-version = "0.1.0"
-source = { editable = "." }
-dependencies = [
-    { name = "holidays" },
-    { name = "numpy" },
-    { name = "pandas" },
-    { name = "scikit-learn" },
-]
-
-[package.optional-dependencies]
-all = [
-    { name = "celery" },
-    { name = "django" },
-    { name = "django-environ" },
-    { name = "fastparquet" },
-    { name = "gtfs-realtime-bindings" },
-    { name = "matplotlib" },
-    { name = "psycopg", extra = ["binary", "pool"] },
-    { name = "python-dotenv" },
-    { name = "redis" },
-    { name = "requests" },
-    { name = "xgboost" },
-]
-collect = [
-    { name = "celery" },
-    { name = "django" },
-    { name = "django-environ" },
-    { name = "gtfs-realtime-bindings" },
-    { name = "psycopg", extra = ["binary", "pool"] },
-    { name = "python-dotenv" },
-    { name = "redis" },
-    { name = "requests" },
-]
-train = [
-    { name = "django" },
-    { name = "django-environ" },
-    { name = "fastparquet" },
-    { name = "psycopg", extra = ["binary", "pool"] },
-    { name = "python-dotenv" },
-    { name = "requests" },
-    { name = "xgboost" },
-]
-viz = [
-    { name = "matplotlib" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "celery", marker = "extra == 'collect'", specifier = ">=5.4" },
-    { name = "django", marker = "extra == 'collect'", specifier = ">=5.0" },
-    { name = "django", marker = "extra == 'train'", specifier = ">=5.0" },
-    { name = "django-environ", marker = "extra == 'collect'", specifier = ">=0.11" },
-    { name = "django-environ", marker = "extra == 'train'", specifier = ">=0.11" },
-    { name = "eta-prediction", extras = ["train", "collect", "viz"], marker = "extra == 'all'" },
-    { name = "fastparquet", marker = "extra == 'train'", specifier = ">=2024.11.0" },
-    { name = "gtfs-realtime-bindings", marker = "extra == 'collect'", specifier = ">=1.0.0" },
-    { name = "holidays", specifier = ">=0.40" },
-    { name = "matplotlib", marker = "extra == 'viz'", specifier = ">=3.9.4" },
-    { name = "numpy", specifier = ">=1.26" },
-    { name = "pandas", specifier = ">=2.3.3" },
-    { name = "psycopg", extras = ["binary", "pool"], marker = "extra == 'collect'", specifier = ">=3.2.11" },
-    { name = "psycopg", extras = ["binary", "pool"], marker = "extra == 'train'", specifier = ">=3.2.11" },
-    { name = "python-dotenv", marker = "extra == 'collect'", specifier = ">=1.0" },
-    { name = "python-dotenv", marker = "extra == 'train'", specifier = ">=1.0" },
-    { name = "redis", marker = "extra == 'collect'", specifier = ">=5.0" },
-    { name = "requests", marker = "extra == 'collect'", specifier = ">=2.32" },
-    { name = "requests", marker = "extra == 'train'", specifier = ">=2.32" },
-    { name = "scikit-learn", specifier = ">=1.7.2" },
-    { name = "xgboost", marker = "extra == 'train'", specifier = ">=3.1.2" },
-]
-provides-extras = ["train", "collect", "viz", "all"]
-
-[[package]]
 name = "fastparquet"
 version = "2024.11.0"
 source = { registry = "https://pypi.org/simple" }
@@ -577,6 +503,80 @@ sdist = { url = "https://files.pythonhosted.org/packages/de/e0/bab50af11c2d75c9c
 wheels = [
     { url = "https://files.pythonhosted.org/packages/47/71/70db47e4f6ce3e5c37a607355f80da8860a33226be640226ac52cb05ef2e/fsspec-2025.9.0-py3-none-any.whl", hash = "sha256:530dc2a2af60a414a832059574df4a6e10cce927f6f4a78209390fe38955cfb7", size = 199289, upload-time = "2025-09-02T19:10:47.708Z" },
 ]
+
+[[package]]
+name = "gtfs-eta"
+version = "0.1.0"
+source = { editable = "." }
+dependencies = [
+    { name = "holidays" },
+    { name = "numpy" },
+    { name = "pandas" },
+    { name = "scikit-learn" },
+]
+
+[package.optional-dependencies]
+all = [
+    { name = "celery" },
+    { name = "django" },
+    { name = "django-environ" },
+    { name = "fastparquet" },
+    { name = "gtfs-realtime-bindings" },
+    { name = "matplotlib" },
+    { name = "psycopg", extra = ["binary", "pool"] },
+    { name = "python-dotenv" },
+    { name = "redis" },
+    { name = "requests" },
+    { name = "xgboost" },
+]
+collect = [
+    { name = "celery" },
+    { name = "django" },
+    { name = "django-environ" },
+    { name = "gtfs-realtime-bindings" },
+    { name = "psycopg", extra = ["binary", "pool"] },
+    { name = "python-dotenv" },
+    { name = "redis" },
+    { name = "requests" },
+]
+train = [
+    { name = "django" },
+    { name = "django-environ" },
+    { name = "fastparquet" },
+    { name = "psycopg", extra = ["binary", "pool"] },
+    { name = "python-dotenv" },
+    { name = "requests" },
+    { name = "xgboost" },
+]
+viz = [
+    { name = "matplotlib" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "celery", marker = "extra == 'collect'", specifier = ">=5.4" },
+    { name = "django", marker = "extra == 'collect'", specifier = ">=5.0" },
+    { name = "django", marker = "extra == 'train'", specifier = ">=5.0" },
+    { name = "django-environ", marker = "extra == 'collect'", specifier = ">=0.11" },
+    { name = "django-environ", marker = "extra == 'train'", specifier = ">=0.11" },
+    { name = "fastparquet", marker = "extra == 'train'", specifier = ">=2024.11.0" },
+    { name = "gtfs-eta", extras = ["train", "collect", "viz"], marker = "extra == 'all'" },
+    { name = "gtfs-realtime-bindings", marker = "extra == 'collect'", specifier = ">=1.0.0" },
+    { name = "holidays", specifier = ">=0.40" },
+    { name = "matplotlib", marker = "extra == 'viz'", specifier = ">=3.9.4" },
+    { name = "numpy", specifier = ">=1.26" },
+    { name = "pandas", specifier = ">=2.3.3" },
+    { name = "psycopg", extras = ["binary", "pool"], marker = "extra == 'collect'", specifier = ">=3.2.11" },
+    { name = "psycopg", extras = ["binary", "pool"], marker = "extra == 'train'", specifier = ">=3.2.11" },
+    { name = "python-dotenv", marker = "extra == 'collect'", specifier = ">=1.0" },
+    { name = "python-dotenv", marker = "extra == 'train'", specifier = ">=1.0" },
+    { name = "redis", marker = "extra == 'collect'", specifier = ">=5.0" },
+    { name = "requests", marker = "extra == 'collect'", specifier = ">=2.32" },
+    { name = "requests", marker = "extra == 'train'", specifier = ">=2.32" },
+    { name = "scikit-learn", specifier = ">=1.7.2" },
+    { name = "xgboost", marker = "extra == 'train'", specifier = ">=3.1.2" },
+]
+provides-extras = ["train", "collect", "viz", "all"]
 
 [[package]]
 name = "gtfs-realtime-bindings"
