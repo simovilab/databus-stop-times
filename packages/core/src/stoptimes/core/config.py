@@ -25,6 +25,30 @@ AGENCY_TEMPORAL_DEFAULTS: dict[str, dict[str, str]] = {
 }
 DEFAULT_AGENCY = "mbta"
 
+# Per-agency served-model pin: the registry key the databus path (via
+# eta_service.estimator.estimate_stop_times) uses when the caller doesn't
+# pass an explicit model_key, plus a fallback key tried if the primary is
+# missing from the registry. This is what keeps registry.get_best_model()'s
+# metric-only ranking (which has no dataset/agency awareness and would
+# happily rank an MBTA model above a BUCR one) from ever being consulted for
+# an agency that has a pinned model -- see estimate_stop_times's smart model
+# selection block. Update these when a newer/better BUCR model is trained
+# and promoted, or override per-deployment with ETA_MODEL_KEY /
+# ETA_MODEL_FALLBACK_KEY.
+AGENCY_MODEL_DEFAULTS: dict[str, dict[str, Optional[str]]] = {
+    "bucr": {
+        "primary": (
+            "xgboost_bucr_segments_corpus_spatial-temporal_global_20260824_215905"
+            "_handle_nan=drop_learning_rate=0.05_max_depth=5_n_estimators=200"
+        ),
+        "fallback": (
+            "polyreg_distance_bucr_segments_corpus_distance_global_20260824_215904"
+            "_degree=2_route_specific=no"
+        ),
+    },
+    "mbta": {"primary": None, "fallback": None},
+}
+
 
 def _find_project_root() -> Path:
     """
@@ -69,6 +93,8 @@ class ProjectConfig:
     _agency_override: Optional[str] = field(default=None, repr=False)
     _timezone_override: Optional[str] = field(default=None, repr=False)
     _region_override: Optional[str] = field(default=None, repr=False)
+    _served_model_key_override: Optional[str] = field(default=None, repr=False)
+    _served_model_fallback_override: Optional[str] = field(default=None, repr=False)
 
     def __post_init__(self):
         """Load environment variable overrides."""
@@ -76,6 +102,8 @@ class ProjectConfig:
         self._agency_override = os.environ.get("ETA_AGENCY")
         self._timezone_override = os.environ.get("ETA_TIMEZONE")
         self._region_override = os.environ.get("ETA_HOLIDAY_REGION")
+        self._served_model_key_override = os.environ.get("ETA_MODEL_KEY")
+        self._served_model_fallback_override = os.environ.get("ETA_MODEL_FALLBACK_KEY")
 
         # Ensure project root is on sys.path for imports
         root_str = str(self.project_root)
@@ -145,6 +173,22 @@ class ProjectConfig:
     def default_region(self) -> str:
         """Default holiday-calendar region for temporal features, per `agency`."""
         return self._region_override or AGENCY_TEMPORAL_DEFAULTS[self.agency]["region"]
+
+    @property
+    def served_model_key(self) -> Optional[str]:
+        """Registry key the databus path should serve by default.
+
+        ETA_MODEL_KEY overrides this per-deployment; otherwise it's the
+        `agency`'s entry in AGENCY_MODEL_DEFAULTS (None for agencies with no
+        pin, e.g. mbta, which keeps the pre-existing get_best_model ranking
+        behavior).
+        """
+        return self._served_model_key_override or AGENCY_MODEL_DEFAULTS.get(self.agency, {}).get("primary")
+
+    @property
+    def served_model_fallback_key(self) -> Optional[str]:
+        """Registry key to try if `served_model_key` isn't in the registry."""
+        return self._served_model_fallback_override or AGENCY_MODEL_DEFAULTS.get(self.agency, {}).get("fallback")
 
     # Redis defaults
     redis_default_host: str = "localhost"

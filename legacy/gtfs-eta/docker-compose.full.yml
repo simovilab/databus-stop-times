@@ -205,7 +205,10 @@ services:
       - REDIS_HOST=redis
       - REDIS_PORT=6379
       - MODEL_REGISTRY_DIR=/app/models/trained
-      - ETA_AGENCY=mbta
+      # bucr pins the served model to the BUCR corpus XGBoost (falling back
+      # to the corpus PolyReg-distance model) -- see
+      # core/config.py:AGENCY_MODEL_DEFAULTS and .env's ETA_AGENCY comment.
+      - ETA_AGENCY=bucr
     volumes:
       - ./models/trained:/app/models/trained
       - ./datasets:/app/datasets
