@@ -71,6 +71,30 @@ include = ["core*", "eta_service*", "feature_engineering*", "models*", "gtfs_eta
 [tool.uv]
 package = true
 
+[dependency-groups]
+# etaval (map-matching library; sibling repo, not on PyPI) -- needed only by
+# feature_engineering/bucr_gtfs.py for etaval.spatial.polyline /
+# etaval.domain.models. Kept out of base `dependencies` (and out of any
+# extra that base installs pull in) because etaval's own base dependencies
+# hard-require xgboost>=3.1.2 -- see the comment on `train` above for why
+# this repo's inference-only base must stay xgboost-free. etaval in turn
+# depends back on this repo (`gtfs-eta`, path = "../gtfs-eta", editable) --
+# uv resolves that path cycle natively, no [tool.uv.workspace] needed.
+bucr = [
+    "etaval",
+]
+
+[tool.uv.sources]
+# Non-editable: real installed files under .venv/site-packages, immune to
+# the macOS-hidden-flag / iCloud .pth bug documented in
+# feature_engineering/bucr_gtfs.py's former _bootstrap_etaval_path docstring
+# (iCloud re-applies the hidden flag to files under ~/Desktop, and
+# Python 3.14's site.py silently skips hidden .pth files -- editable
+# installs rely on a .pth pointing back at the source tree). A non-editable
+# install here means picking up etaval source changes requires re-running
+# `uv sync`/`uv add`, which is an acceptable tradeoff for durability.
+etaval = { path = "../etaval" }
+
 # No [tool.uv.workspace] block: it previously listed "feature_engineering/proj"
 # (does not exist on disk) and "feature_engineering" (exists, but is already
 # part of this project's own package tree per [tool.setuptools.packages.find]
