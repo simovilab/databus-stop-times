@@ -267,6 +267,63 @@ if `pytest` isn't itself a project dependency — `uv run pytest` on this repo p
 `uv run --with pytest python -m pytest models/tests/ core/tests/` instead, which forces the
 project venv.
 
+## DEFERRED TASK: re-export served models to match the deploy target's lib versions
+
+**Status: known, intentionally deferred (2026-08-30). Not a live bug — hygiene.** Do this at
+the *real* production deploy (dedicated server + domain), not on the current dev VPS.
+
+**Symptom.** Loading the served bUCR artifacts in the databus container logs an sklearn
+`InconsistentVersionWarning` plus an xgboost "re-export this model" nudge. They still load and
+predict correct, monotonic ETAs (verified in-container 2026-08-24/25) — so serving works today;
+the warnings are the only effect.
+
+**Root cause.** The served artifact is a `pickle` of an `XGBTimeModel` that bundles **both** an
+xgboost `XGBRegressor` **and** a sklearn `ColumnTransformer`/`OneHotEncoder`
+(`models/xgb/train.py`). It was pickled in the *training* env — **sklearn 1.7.2 / xgboost
+3.1.2** — while the databus container runs **sklearn 1.9.0 / xgboost 3.4.1**. Cross-version
+unpickling is what warns.
+
+**Why it can't just be re-pickled here.** The training host's versions *are* 1.7.2 / 3.1.2, so
+re-pickling locally re-saves under the same versions the artifact already has — a no-op. The
+fix must run under versions matching the deploy target, and the re-exported file only reaches
+the server via a databus redeploy (it lives in `databus/backend/eta_models/`, rsync'd there —
+see the deploy notes in `databus/docs/VPS_DEPLOYMENT.md`). Both conditions point to "do it at
+the real deploy", not now.
+
+**Affected registry keys** (both are the bUCR serving pin in `core/config.py`
+`AGENCY_MODEL_DEFAULTS` — the keys MUST stay byte-identical on re-export or the pin breaks):
+- primary  `xgboost_bucr_segments_corpus_..._20260824_215905_...`
+- fallback  `polyreg_distance_bucr_segments_corpus_..._20260824_215904_...`
+
+**How, when pertinent** (pick one; recommended first):
+```bash
+# --- Recommended: retrain in an env pinned to the DEPLOY TARGET's versions ---
+# (cleanest: the sklearn preprocessor is re-fit natively, no cross-version unpickle at all)
+#   1. stand up a venv / container with the production sklearn+xgboost versions
+#   2. rebuild the corpus + retrain exactly as the 2026-08-24 session did:
+#        PYTHONPATH=. uv run --group bucr python scratchpad/build_corpus.py
+#        PYTHONPATH=. uv run --group bucr python scratchpad/baseline_compare_corpus.py
+#   3. update the two keys in core/config.py AGENCY_MODEL_DEFAULTS to the new timestamps,
+#      or re-use ETA_MODEL_KEY / ETA_MODEL_FALLBACK_KEY env overrides.
+#
+# --- Quick alternative: load-and-resave under the target versions ---
+# (normalizes the pickle to the new versions WITHOUT retraining; keeps the same keys.
+#  Slightly riskier for the sklearn half — a cross-version unpickle can silently drop an
+#  attr, which is exactly what the warning guards against, so verify predictions after.)
+#   in an env with the target sklearn/xgboost, for each key:
+#     from models.common.registry import get_registry
+#     r = get_registry(); m = r.load_model(KEY)          # one-time warning here is expected
+#     r.save_model(KEY, m, r.load_metadata(KEY))          # re-dumps native to target versions
+```
+**Acceptance:** loading the artifact under the deploy versions emits no
+`InconsistentVersionWarning` / xgboost nudge, and `estimate_stop_times` returns the same
+monotonic ETAs it does today (spot-check ~27 s @ ~300 m, ~49 s @ ~600 m for bUCR). Longer term,
+consider moving the registry off `pickle` to xgboost's native `save_model` (version-portable)
+for the xgboost half — but that is a `registry.py`/`xgb` refactor, tracked loosely under
+roadmap 1.8, not part of this task.
+
+See also: `RESEARCH_ROADMAP.md` v3.3 note + "What's next" item 2.
+
 ## Validate trained models with etaval
 
 `etaval` (sibling repo, `github.com/dotjae/etaval`) can score any model trained above
@@ -282,10 +339,14 @@ uv run --no-editable etaval run --source mbta \
 uv run --no-editable etaval report r.parquet
 ```
 
-`--predictor gtfs_eta:{historical_mean,ewma,polyreg_distance,polyreg_time,xgboost}` all work
+`--predictor gtfs_eta:{historical_mean,polyreg_distance,polyreg_time,xgboost}` all work
 — `estimate_stop_times`'s smart model selection (route-specific model preferred over
 global, ranked by `test_mae_seconds`) picks the best registered model automatically; no
-`model_key` needs specifying by hand.
+`model_key` needs specifying by hand. **`gtfs_eta:ewma` no longer serves** — ewma was
+retired as a serving candidate 2026-08-30 (the estimator dispatch raises for it); it is kept
+only for offline ablation via `train_all_models.py --models ewma`. etaval's own
+`PREDICTOR_REGISTRY` may still list `gtfs_eta:ewma`; requesting it will now raise — drop it
+there when etaval is next touched.
 
 ## Backfill existing Postgres VPs -> S3
 ```bash
