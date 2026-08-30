@@ -72,12 +72,15 @@ def train_all_models(dataset_name: str,
     """
     
     if model_types is None:
+        # ewma is deliberately excluded from the default set (retired
+        # 2026-08-30: negative R^2 at 3 of 4 MBTA dataset sizes, strictly
+        # dominated by historical_mean everywhere). Still trainable on request
+        # via --models ewma for offline ablation.
         model_types = [
             'historical_mean',
             'polyreg_distance',
             'polyreg_time',
-            'ewma',
-            'xgboost',   # NEW
+            'xgboost',
         ]
     
     ui.banner(
@@ -387,12 +390,14 @@ def main():
     
     # Parse model types
     if 'all' in args.models:
+        # 'all' expands to the default serving candidates; ewma is excluded
+        # (retired 2026-08-30) but can still be requested explicitly with
+        # --models ewma.
         model_types = [
             'historical_mean',
             'polyreg_distance',
             'polyreg_time',
-            'ewma',
-            'xgboost',   # NEW
+            'xgboost',
         ]
     else:
         model_types = args.models

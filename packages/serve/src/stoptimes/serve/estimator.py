@@ -121,12 +121,16 @@ def _predict_with_model(model_key, model_type, features, distance_m):
         )
 
     elif model_type == 'ewma':
-        from models.ewma.predict import predict_eta
-        return predict_eta(
-            model_key=model_key,
-            route_id=features.get('route_id', 'unknown'),
-            stop_sequence=features.get('stop_sequence', 0),
-            hour=features.get('hour', 0)
+        # EWMA is retired as a serving candidate (2026-08-30): negative R^2 at
+        # 3 of 4 MBTA dataset sizes and strictly dominated by historical_mean
+        # everywhere. The module is kept for offline ablation
+        # (train_all_models.py --models ewma) but is no longer served, so a
+        # pinned or auto-selected ewma key fails loudly rather than silently
+        # serving a dominated model.
+        raise ValueError(
+            "ewma is retired as a serving candidate and is kept only for "
+            "offline ablation. Serve xgboost (primary) or "
+            "polyreg_distance/historical_mean (fallbacks) instead."
         )
 
     elif model_type == 'polyreg_distance':
