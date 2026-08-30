@@ -233,7 +233,42 @@ def estimate_stop_times(
     #    SMART MODEL SELECTION
     # ============================================================
     if model_key is None:
-        if prefer_route_model and route_id and route_id != 'unknown':
+        # Served-model pin (core.config.AGENCY_MODEL_DEFAULTS / ETA_MODEL_KEY):
+        # when the active agency has one, it wins outright. This is what
+        # guarantees the databus path serves the BUCR corpus model rather
+        # than registry.get_best_model()'s metric-only ranking, which has no
+        # dataset/agency awareness and would happily pick an MBTA model
+        # (e.g. lower test_mae_seconds) over a BUCR one. An agency with no
+        # pin configured (e.g. mbta) falls straight through to that ranking,
+        # unchanged from prior behavior.
+        pinned_key = _config.served_model_key
+        if pinned_key is not None:
+            pinned_fallback_key = _config.served_model_fallback_key
+            if pinned_key in registry.registry:
+                model_key = pinned_key
+                model_scope = 'pinned'
+            elif pinned_fallback_key is not None and pinned_fallback_key in registry.registry:
+                model_key = pinned_fallback_key
+                model_scope = 'pinned_fallback'
+                _logger.warning(
+                    "Pinned served model missing from registry, using fallback",
+                    pinned_key=pinned_key,
+                    fallback_key=pinned_fallback_key,
+                )
+            else:
+                return {
+                    'vehicle_id': vehicle_position['vehicle_id'],
+                    'route_id': route_id,
+                    'trip_id': trip_id,
+                    'computed_at': datetime.now(timezone.utc).isoformat(),
+                    'model_key': None,
+                    'predictions': [],
+                    'error': (
+                        f'Pinned served model {pinned_key!r} and fallback '
+                        f'{pinned_fallback_key!r} are both missing from the registry'
+                    ),
+                }
+        elif prefer_route_model and route_id and route_id != 'unknown':
             model_key = registry.get_best_model(
                 model_type=model_type,
                 route_id=route_id,
