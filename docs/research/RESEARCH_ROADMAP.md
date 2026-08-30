@@ -1,7 +1,27 @@
 # ETA Prediction — Research & System Roadmap
 
-> Status: draft v3, 2026-08-17. Supersedes nothing; complements `REFACTOR_PLAN.md`
+> Status: draft v3.3, 2026-08-30. Supersedes nothing; complements `REFACTOR_PLAN.md`
 > (which covered the completed schema-alignment + S3 migration, Phases A–E).
+>
+> **v3.3 (2026-08-30):** The bUCR vertical slice built on 2026-08-24 (segment ETA models
+> beating the offset schedule 35–39%, deployed as the databus served model — full writeup in
+> `SESSION_2026-08-24_BUCR_ETA_MODELS.md`) is now **merged to `main`** (was on
+> `feat/bucr-eta-models`, merged and pushed this session). That work delivered a
+> *bUCR-specific* path through **Phases 2 and 3** — the navsat→canonical adapter (2.2), trip/
+> route inference via etaval map-matching (2.3), the trip-quality report (2.4), stale-fix
+> dropping (2.5), and the segment dataset builder (3.1) — plus a position-derived schedule
+> baseline (3.4, bUCR). **Status columns are now on the Phase 2/3 tables** to record this
+> precisely: it is a bUCR slice, *not* the agency-agnostic generalization. Still open: 2.1's
+> unified `AgencyConfig`, the MBTA segment reformulation (Phase 3 for MBTA), and the formal
+> purge/embargo split + provenance of 3.2/3.3. Also this session: **ewma retired** as a
+> serving/default candidate (negative R² at 3 of 4 MBTA sizes, strictly dominated by
+> `historical_mean` — kept only for offline ablation via `--models ewma`; the estimator now
+> rejects a pinned/selected ewma key rather than silently serving a dominated model).
+> **Hygiene item surfaced but not yet done:** the served XGBoost artifact bundles a sklearn
+> `ColumnTransformer` + xgboost regressor pickled under sklearn 1.7.2/xgboost 3.1.2, while the
+> databus container runs 1.9.0/3.4.1 → version warnings on load (predicts sanely). A clean
+> re-export must run under container-matching versions and only lands via a databus redeploy,
+> so it is **deferred with the databus work**. 1.7 and 1.8 remain untouched.
 >
 > **v3 (2026-08-17):** The ETA suite now lives in its own repository,
 > **`github.com/dotjae/gtfs-eta`**, extracted from `gtfs-django/eta_prediction` with full
@@ -530,13 +550,13 @@ range leaves row counts unchanged.
 
 *Unblocks bUCR, and is the system deliverable in its own right.*
 
-| # | Task | Size |
-|---|---|---|
-| 2.1 | Introduce an `AgencyConfig` (feed name, S3 prefix, timezone, holiday region, feed protocol, static GTFS source). Remove hardcoded `feeds/mbta/...` from `storage/schema.py` and `region="US_MA"` from `dataset_builder.py:498` | M |
-| 2.2 | `navsat` → canonical VP adapter: parse `cr_datetime` with explicit CR tz, map `plate_number` → `vehicle_id`, `speed_kmh` → m/s, `estado` → `current_status`, retain `odometer_km`. Emit the canonical 12-column frame `write_vehicle_positions()` expects | M |
-| 2.3 | **bUCR trip/route inference.** Load bUCR static GTFS; map-match each plate's trace onto route shapes using `assign_stops_monotonic`; segment traces into trip instances; derive `route_id`, `trip_id`, `current_stop_sequence`, `stop_id`. Port or import `etaval/spatial/polyline.py` rather than reimplementing | **L** |
-| 2.4 | Quality report for inferred bUCR trips: match rate, ambiguous assignments, dropped traces. This becomes a paper table | S |
-| 2.5 | Drop stale device fixes (`cr_datetime` far from `ingested_at_utc`) with a recorded threshold and drop-rate | S |
+| # | Task | Size | Status |
+|---|---|---|---|
+| 2.1 | Introduce an `AgencyConfig` (feed name, S3 prefix, timezone, holiday region, feed protocol, static GTFS source). Remove hardcoded `feeds/mbta/...` from `storage/schema.py` and `region="US_MA"` from `dataset_builder.py:498` | M | **Partial.** Per-agency *temporal* and *served-model* defaults live in `core/config.py` (`AGENCY_TEMPORAL_DEFAULTS`, `AGENCY_MODEL_DEFAULTS`, resolved via `ETA_AGENCY`); the unified `AgencyConfig` (feed name, S3 prefix, feed protocol, static-GTFS source) and removing the hardcoded `feeds/mbta/...`/`region="US_MA"` are **not** done — bUCR currently runs through dedicated `navsat_*`/`bucr_*` modules rather than a shared config |
+| 2.2 | `navsat` → canonical VP adapter: parse `cr_datetime` with explicit CR tz, map `plate_number` → `vehicle_id`, `speed_kmh` → m/s, `estado` → `current_status`, retain `odometer_km`. Emit the canonical 12-column frame `write_vehicle_positions()` expects | M | **Done (bUCR), 08-24.** `feature_engineering/navsat_adapter.py` + `navsat_normalize.py` (+ tests) |
+| 2.3 | **bUCR trip/route inference.** Load bUCR static GTFS; map-match each plate's trace onto route shapes using `assign_stops_monotonic`; segment traces into trip instances; derive `route_id`, `trip_id`, `current_stop_sequence`, `stop_id`. Port or import `etaval/spatial/polyline.py` rather than reimplementing | **L** | **Done (bUCR), 08-24.** `bucr_gtfs.py` + `bucr_trip_inference.py` map-match via etaval polyline; 48.5% of points assigned → 3,094 trips (+ tests) |
+| 2.4 | Quality report for inferred bUCR trips: match rate, ambiguous assignments, dropped traces. This becomes a paper table | S | **Done (bUCR), 08-24.** `bucr_quality_report.py` + `bucr_trip_scoring.py` (+ tests) |
+| 2.5 | Drop stale device fixes (`cr_datetime` far from `ingested_at_utc`) with a recorded threshold and drop-rate | S | **Done (bUCR), 08-24.** `navsat_cleaning.py`; ~0.1% of rows dropped |
 
 **Verification:** `build_eta_sample --agency bucr` produces a dataset with the same 37-column
 schema as MBTA; trip-inference match rate is reported and defensible; a spot-check of
@@ -559,12 +579,12 @@ This is not just a modeling preference — it structurally fixes the leakage in 
 state: one observation per segment traversal instead of five correlated rows per VP, and a
 natural sequence for a recurrent model to consume.
 
-| # | Task | Size |
-|---|---|---|
-| 3.1 | Segment dataset builder: one row per (trip instance × segment), target = observed traversal seconds. Keep the stop-level builder intact for the formulation ablation | **L** |
-| 3.2 | Correct splitting: calendar-boundary temporal splits with `trip_id` grouping and an explicit purge/embargo gap. Stable sort with a deterministic secondary key. Replace `temporal_split` and the duplicated `_temporal_split_df` | M |
-| 3.3 | Determinism and provenance: global seeding, seed recorded in metadata, plus git SHA, dataset content hash, library versions, split boundaries, `arrival_source`, and the exact feature list | S |
-| 3.4 | Restore a schedule-derived baseline (as a *comparator*, and optionally as features) | M |
+| # | Task | Size | Status |
+|---|---|---|---|
+| 3.1 | Segment dataset builder: one row per (trip instance × segment), target = observed traversal seconds. Keep the stop-level builder intact for the formulation ablation | **L** | **Done (bUCR), 08-24.** `feature_engineering/segment_dataset_builder.py` (+ 12 tests); one row per (trip × segment), **position-derived** target so the offset timetable can't poison labels. MBTA stop-level builder kept for the formulation ablation |
+| 3.2 | Correct splitting: calendar-boundary temporal splits with `trip_id` grouping and an explicit purge/embargo gap. Stable sort with a deterministic secondary key. Replace `temporal_split` and the duplicated `_temporal_split_df` | M | **Partial.** The bUCR baseline uses a clean **day-grouped** holdout (train 33 d / test 5 d), which keeps whole trips inside one split; the formal calendar-boundary split with explicit purge/embargo, the stable secondary sort, and replacing `temporal_split`/`_temporal_split_df` (the original MBTA stop-level leakage) are **still open**. The leakage probe has not been run |
+| 3.3 | Determinism and provenance: global seeding, seed recorded in metadata, plus git SHA, dataset content hash, library versions, split boundaries, `arrival_source`, and the exact feature list | S | **Open.** No seed/git-SHA/content-hash provenance in metadata yet; the fixed-seed byte-identical re-run check is still open |
+| 3.4 | Restore a schedule-derived baseline (as a *comparator*, and optionally as features) | M | **Partial.** bUCR has an offset-invariant, position-derived schedule baseline (`scratchpad/baseline_compare_corpus.py`); restoring the schedule-derived baseline in the **MBTA** builder (removed in `653e54f`) is not done |
 
 **Verification:** a leakage probe — train on a shuffled-label variant and confirm metrics
 collapse to baseline; confirm no `trip_id` appears in more than one split; re-running
@@ -658,6 +678,31 @@ Phase 0 ──┬─→ Phase 1 ──┬─→ Phase 2 ──┐
    on the VPS unprotected.
 
 ## What's next (2026-08-18, updated same day)
+
+**Update 2026-08-30 (v3.3), supersedes the ordering below where they overlap.** Since v3.2:
+the bUCR slice is **merged to `main`**, and **ewma is retired** (item 2 in the 08-18 list —
+now decided: cut from defaults/serving, kept for ablation). Current priorities:
+
+1. **1.7 (databus reconciliation)** — still the long pole, still untouched. Its "first
+   action" (delete databus's vendored `backend/gtfs-eta/`, replace with a real dependency on
+   this repo) touches a live-production repo — **do not start without the user's explicit
+   go-ahead.**
+2. **Re-export the served XGBoost artifact** under container-matching sklearn/xgboost
+   versions. It bundles a sklearn `ColumnTransformer`, so xgboost's native version-portable
+   format alone won't fix the sklearn half — the re-export must run under 1.9.0/3.4.1 (in the
+   container or a matching env) and only lands via a databus redeploy, so **deferred with the
+   databus work**.
+3. **Generalize the bUCR slice** — 2.1's unified `AgencyConfig` and the **MBTA** segment
+   reformulation (Phase 3 for MBTA), so the cross-agency claim rests on one pipeline rather
+   than a bUCR-only path plus the older MBTA stop-level one.
+4. **Rigor before the paper** — 3.2 formal split + leakage probe, 3.3 provenance/seed, plus
+   the bUCR report's open items (under-prediction-bias calibration, min-traversal outlier
+   filter, fixed-seed re-run check).
+5. **90-day replication corpus** (closes **2026-11-12**) still not started.
+
+The 08-18 list below remains valid for its lower-priority open items (0.5 TripUpdates, 1.3
+`arrival_method`, the O(n²) audit, per-route vs global models, the `current_speed_kmh=0.0`
+check).
 
 For a fresh agent picking this up: the state above (through v3.2) is current as of this
 commit. 1.1–1.8's status is still unchanged by today's work — datasets, training, and
