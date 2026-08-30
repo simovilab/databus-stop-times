@@ -114,3 +114,163 @@ def test_put_snapshot_raises_on_mc_failure(monkeypatch):
 
     with pytest.raises(sg.StaticGtfsError, match="access denied"):
         sg.put_snapshot(b"zip-bytes", "bucr", dt.date(2026, 8, 17))
+
+
+class _FakeLsCompletedProcess:
+    def __init__(self, returncode: int, stdout: bytes = b"", stderr: bytes = b""):
+        self.returncode = returncode
+        self.stdout = stdout
+        self.stderr = stderr
+
+
+_LS_OUTPUT = (
+    b"[2026-08-14 12:36:26 CST]  18MiB STANDARD 2026-08-14.zip\n"
+    b"[2026-08-16 22:00:03 CST]  18MiB STANDARD 2026-08-17.zip\n"
+    b"[2026-08-23 22:00:04 CST]  18MiB STANDARD 2026-08-24.zip\n"
+)
+
+
+def test_list_snapshots_parses_and_sorts_dates(monkeypatch):
+    calls = {}
+
+    def fake_run(cmd, capture_output):
+        calls["cmd"] = cmd
+        return _FakeLsCompletedProcess(0, stdout=_LS_OUTPUT)
+
+    monkeypatch.setattr(sg.subprocess, "run", fake_run)
+    monkeypatch.setattr(
+        "rt_pipeline.compaction.credentials.load_credentials", lambda alias: None
+    )
+
+    result = sg.list_snapshots("mbta")
+
+    assert calls["cmd"] == ["mc", "ls", "simovilab/transit/feeds/mbta/gtfs_static/"]
+    assert result == [
+        dt.date(2026, 8, 14),
+        dt.date(2026, 8, 17),
+        dt.date(2026, 8, 24),
+    ]
+
+
+def test_list_snapshots_returns_empty_when_prefix_missing(monkeypatch):
+    monkeypatch.setattr(
+        sg.subprocess,
+        "run",
+        lambda cmd, capture_output: _FakeLsCompletedProcess(
+            1, stderr=b"mc: <ERROR> Unable to list folder. Object does not exist"
+        ),
+    )
+    monkeypatch.setattr(
+        "rt_pipeline.compaction.credentials.load_credentials", lambda alias: None
+    )
+
+    assert sg.list_snapshots("bucr") == []
+
+
+def test_list_snapshots_returns_empty_for_no_output(monkeypatch):
+    monkeypatch.setattr(
+        sg.subprocess,
+        "run",
+        lambda cmd, capture_output: _FakeLsCompletedProcess(0, stdout=b""),
+    )
+    monkeypatch.setattr(
+        "rt_pipeline.compaction.credentials.load_credentials", lambda alias: None
+    )
+
+    assert sg.list_snapshots("bucr") == []
+
+
+def test_list_snapshots_raises_on_other_mc_failure(monkeypatch):
+    monkeypatch.setattr(
+        sg.subprocess,
+        "run",
+        lambda cmd, capture_output: _FakeLsCompletedProcess(1, stderr=b"access denied"),
+    )
+    monkeypatch.setattr(
+        "rt_pipeline.compaction.credentials.load_credentials", lambda alias: None
+    )
+
+    with pytest.raises(sg.StaticGtfsError, match="access denied"):
+        sg.list_snapshots("mbta")
+
+
+def test_get_snapshot_builds_key_and_returns_bytes(monkeypatch):
+    calls = {}
+
+    def fake_run(cmd, capture_output):
+        calls["cmd"] = cmd
+        return _FakeLsCompletedProcess(0, stdout=b"zip-bytes-here")
+
+    monkeypatch.setattr(sg.subprocess, "run", fake_run)
+    monkeypatch.setattr(
+        "rt_pipeline.compaction.credentials.load_credentials", lambda alias: None
+    )
+
+    result = sg.get_snapshot("mbta", dt.date(2026, 8, 17))
+
+    assert calls["cmd"] == [
+        "mc",
+        "cat",
+        "simovilab/transit/feeds/mbta/gtfs_static/2026-08-17.zip",
+    ]
+    assert result == b"zip-bytes-here"
+
+
+def test_get_snapshot_raises_on_missing_date(monkeypatch):
+    monkeypatch.setattr(
+        sg.subprocess,
+        "run",
+        lambda cmd, capture_output: _FakeLsCompletedProcess(
+            1, stderr=b"mc: <ERROR> Unable to stat: Object does not exist"
+        ),
+    )
+    monkeypatch.setattr(
+        "rt_pipeline.compaction.credentials.load_credentials", lambda alias: None
+    )
+
+    with pytest.raises(sg.StaticGtfsError, match="Object does not exist"):
+        sg.get_snapshot("mbta", dt.date(2099, 1, 1))
+
+
+def test_latest_snapshot_on_or_before_returns_exact_match(monkeypatch):
+    monkeypatch.setattr(
+        sg, "list_snapshots", lambda agency, **kw: [
+            dt.date(2026, 8, 14), dt.date(2026, 8, 17), dt.date(2026, 8, 24)
+        ]
+    )
+
+    assert sg.latest_snapshot_on_or_before(
+        "mbta", dt.date(2026, 8, 17)
+    ) == dt.date(2026, 8, 17)
+
+
+def test_latest_snapshot_on_or_before_returns_previous_when_between(monkeypatch):
+    monkeypatch.setattr(
+        sg, "list_snapshots", lambda agency, **kw: [
+            dt.date(2026, 8, 14), dt.date(2026, 8, 17), dt.date(2026, 8, 24)
+        ]
+    )
+
+    assert sg.latest_snapshot_on_or_before(
+        "mbta", dt.date(2026, 8, 20)
+    ) == dt.date(2026, 8, 17)
+
+
+def test_latest_snapshot_on_or_before_returns_none_when_target_before_first(
+    monkeypatch,
+):
+    monkeypatch.setattr(
+        sg, "list_snapshots", lambda agency, **kw: [
+            dt.date(2026, 8, 14), dt.date(2026, 8, 17), dt.date(2026, 8, 24)
+        ]
+    )
+
+    assert (
+        sg.latest_snapshot_on_or_before("mbta", dt.date(2026, 8, 1)) is None
+    )
+
+
+def test_latest_snapshot_on_or_before_returns_none_when_no_snapshots(monkeypatch):
+    monkeypatch.setattr(sg, "list_snapshots", lambda agency, **kw: [])
+
+    assert sg.latest_snapshot_on_or_before("mbta", dt.date(2026, 8, 20)) is None

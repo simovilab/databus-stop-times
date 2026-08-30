@@ -55,6 +55,93 @@ def fetch(url: str, *, timeout: int = 60) -> bytes:
     return content
 
 
+def list_snapshots(
+    agency: str,
+    *,
+    alias: str = "simovilab",
+    bucket: str = "transit",
+) -> list[dt.date]:
+    """List the available snapshot dates for `agency`, sorted ascending.
+
+    Returns `[]` if the prefix does not exist or has no snapshots yet.
+    """
+    from ..compaction.credentials import load_credentials
+
+    load_credentials(alias)
+    prefix = f"feeds/{agency}/gtfs_static/"
+    target = f"{alias}/{bucket}/{prefix}"
+    proc = subprocess.run(["mc", "ls", target], capture_output=True)
+    if proc.returncode != 0:
+        stderr = proc.stderr.decode(errors="replace").strip()
+        stderr_lower = stderr.lower()
+        if (
+            "not found" in stderr_lower
+            or "no such" in stderr_lower
+            or "does not exist" in stderr_lower
+        ):
+            return []
+        raise StaticGtfsError(f"mc ls failed for {target}: {stderr}")
+
+    dates: list[dt.date] = []
+    for line in proc.stdout.decode(errors="replace").splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        name = line.split()[-1]
+        if not name.endswith(".zip"):
+            continue
+        try:
+            dates.append(dt.date.fromisoformat(name[: -len(".zip")]))
+        except ValueError:
+            continue
+    return sorted(dates)
+
+
+def get_snapshot(
+    agency: str,
+    snapshot_date: dt.date,
+    *,
+    alias: str = "simovilab",
+    bucket: str = "transit",
+) -> bytes:
+    """Fetch the bytes of one dated snapshot.
+
+    Raises `StaticGtfsError` if that date's object does not exist in S3.
+    """
+    from ..compaction.credentials import load_credentials
+
+    load_credentials(alias)
+    key = f"feeds/{agency}/gtfs_static/{snapshot_date.isoformat()}.zip"
+    target = f"{alias}/{bucket}/{key}"
+    proc = subprocess.run(["mc", "cat", target], capture_output=True)
+    if proc.returncode != 0:
+        raise StaticGtfsError(
+            f"mc cat failed for {target}: {proc.stderr.decode(errors='replace').strip()}"
+        )
+    return proc.stdout
+
+
+def latest_snapshot_on_or_before(
+    agency: str,
+    target_date: dt.date,
+    *,
+    alias: str = "simovilab",
+    bucket: str = "transit",
+) -> dt.date | None:
+    """The newest available snapshot date `<= target_date`, matching a
+    realtime observation back to the schedule version in effect then.
+
+    Returns `None` if no snapshot exists on or before `target_date` (e.g. a
+    vehicle position recorded before the first snapshot was taken).
+    """
+    candidates = [
+        d
+        for d in list_snapshots(agency, alias=alias, bucket=bucket)
+        if d <= target_date
+    ]
+    return max(candidates) if candidates else None
+
+
 def put_snapshot(
     content: bytes,
     agency: str,
