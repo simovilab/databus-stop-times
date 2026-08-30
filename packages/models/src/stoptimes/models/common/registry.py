@@ -13,6 +13,7 @@ import pandas as pd
 
 from core.config import get_config
 from core.logging import get_logger
+from .provenance import build_provenance
 
 _logger = get_logger("registry")
 
@@ -97,6 +98,22 @@ class ModelRegistry:
         metadata['model_key'] = model_key
         metadata['saved_at'] = datetime.now().isoformat()
         metadata['model_path'] = model_path.name
+
+        # Reproducibility provenance (roadmap 3.3): git SHA, library/python
+        # versions, dataset content hash, seed, features -- everything
+        # needed to reproduce this exact model later. Computed centrally
+        # here since save_model is the single choke point every model
+        # family trains through. A trainer that already set a partial
+        # `provenance` dict (e.g. family-specific extras) is merged with,
+        # not clobbered by, the env-level fields computed here.
+        existing_provenance = metadata.get('provenance') or {}
+        metadata['provenance'] = {
+            **build_provenance(
+                dataset_name=metadata.get('dataset'),
+                seed=metadata.get('seed'),
+            ),
+            **existing_provenance,
+        }
 
         # Save metadata
         with open(meta_path, 'w') as f:

@@ -431,6 +431,7 @@ def train_xgboost(
         "handle_nan": handle_nan,
         "n_features": len(model.feature_cols) if model.feature_cols else 0,
         "features": model.feature_cols,
+        "seed": model.random_state,
         "n_samples": len(train_df) + len(val_df) + len(test_df),
         "n_trips": dataset.df["trip_id"].nunique() if route_id else None,
         "train_samples": len(train_df),
