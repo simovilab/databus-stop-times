@@ -23,6 +23,17 @@
 > re-export must run under container-matching versions and only lands via a databus redeploy,
 > so it is **deferred with the databus work**. 1.7 and 1.8 remain untouched.
 >
+> **Results ledger (`docs/RESULTS.html`).** Every measured result from here to the paper lives in a
+> single graphical ledger, `docs/RESULTS.html` (published as a private Claude artifact). It currently
+> holds: the bUCR segment leaderboard + stop-level horizon curves + error distribution (+35%/+39% vs
+> the offset schedule), the shuffle-label leakage probe (PASS), the MBTA dataset-size ablation
+> (1/7/15/28 d), and the first MBTA segment smoke test. **Future agents: when you land a new measured
+> result** (a larger day-grouped MBTA segment build, MBTA-vs-schedule/GTFS-RT baselines, calibration,
+> HPO trials, the 90-day replication numbers, or the Phase 6.2 ablation grid), **add it to
+> `docs/RESULTS.html`, bump its `Updated` date, and republish the artifact to the same URL** — keep
+> rehearsal and replication numbers visibly separated. This is the canonical results surface; Phase
+> 6.3's publication figures are generated from the same Parquet, not from this ledger.
+>
 > **v3 (2026-08-17):** The ETA suite now lives in its own repository,
 > **`github.com/dotjae/gtfs-eta`**, extracted from `gtfs-django/eta_prediction` with full
 > history preserved across the three branches that touched it (89 / 52 / 77 commits).
@@ -624,7 +635,7 @@ leaderboard reproduces from a clean checkout; latency numbers come from a live r
 |---|---|---|
 | 6.1 | Freeze a held-out final test period, untouched during all development | S |
 | 6.2 | Run the full experiment grid: {models} × {agencies} × {history sizes} × {feature sets} × {formulations}. Needs the TU archive from 0.5 so every arm replays the same window | M |
-| 6.3 | Figures: error-vs-horizon curves, convergence, per-route breakdowns, ablation tables, cost/accuracy Pareto. Reuse `etaval`'s `@unovis` dashboard for exploration; generate publication figures from the Parquet | M |
+| 6.3 | Figures: error-vs-horizon curves, convergence, per-route breakdowns, ablation tables, cost/accuracy Pareto. Reuse `etaval`'s `@unovis` dashboard for exploration; generate publication figures from the Parquet. **Interim results are tracked live in `docs/RESULTS.html`** (see the v3.3 addendum) — publication figures are the print-quality end state, the ledger is the running record | M |
 | 6.4 | Reproducibility bundle: pinned environment, dataset hashes, seeds, one-command rebuild | M |
 | 6.5 | Draft → arXiv preprint → venue submission | **L** |
 
