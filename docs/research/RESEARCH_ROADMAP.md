@@ -581,7 +581,7 @@ natural sequence for a recurrent model to consume.
 
 | # | Task | Size | Status |
 |---|---|---|---|
-| 3.1 | Segment dataset builder: one row per (trip instance × segment), target = observed traversal seconds. Keep the stop-level builder intact for the formulation ablation | **L** | **Done (bUCR), 08-24.** `feature_engineering/segment_dataset_builder.py` (+ 12 tests); one row per (trip × segment), **position-derived** target so the offset timetable can't poison labels. MBTA stop-level builder kept for the formulation ablation |
+| 3.1 | Segment dataset builder: one row per (trip instance × segment), target = observed traversal seconds. Keep the stop-level builder intact for the formulation ablation | **L** | **Done, both agencies.** bUCR 08-24 (`feature_engineering/segment_dataset_builder.py`, +12 tests); **MBTA 08-30** (`feature_engineering/mbta_segments.py`, +15 tests) — resolves real GTFS trip_ids directly through `trips`/`stop_times`/`shapes`, emits the **identical `OUTPUT_COLUMNS` schema** so both agencies share the trainers/leakage-probe/metrics. Position-derived target so the offset timetable can't poison labels. Reads the S3 static-GTFS snapshot in effect for each VP window (via the new `static_gtfs` reader). First MBTA build validated (2 d, routes 222/15/37, snapshot 2026-08-17, 11,976 segments; xgboost test R² 0.400). MBTA stop-level builder kept for the formulation ablation |
 | 3.2 | Correct splitting: calendar-boundary temporal splits with `trip_id` grouping and an explicit purge/embargo gap. Stable sort with a deterministic secondary key. Replace `temporal_split` and the duplicated `_temporal_split_df` | M | **Partial (leakage probe done 08-30).** The bUCR baseline uses a clean **day-grouped** holdout (train 33 d / test 5 d), which keeps whole trips inside one split, and the shuffle-label **leakage probe now passes** (`models/evaluation/leakage_probe.py`: control 33.4 s/R² 0.694 vs shuffled 72.3 s/R² −0.046 collapsing to the 71.2 s naive baseline → no target leakage). Still open: the formal calendar-boundary split with explicit purge/embargo, the stable secondary sort, and replacing `temporal_split`/`_temporal_split_df` (the original MBTA stop-level leakage) |
 | 3.3 | Determinism and provenance: global seeding, seed recorded in metadata, plus git SHA, dataset content hash, library versions, split boundaries, `arrival_source`, and the exact feature list | S | **Done 08-30.** `models/common/provenance.py` stamps git SHA, sklearn/xgboost/numpy/pandas/python versions, dataset sha256, seed, and feature list into every saved model's metadata (wired centrally in `registry.save_model`); `models/tests/test_provenance.py` includes a fixed-seed reproducibility check (identical metrics across runs). Remaining minor: `arrival_source` stamping is tied to 1.3 (dataset-level), not this item |
 | 3.4 | Restore a schedule-derived baseline (as a *comparator*, and optionally as features) | M | **Partial.** bUCR has an offset-invariant, position-derived schedule baseline (`scratchpad/baseline_compare_corpus.py`); restoring the schedule-derived baseline in the **MBTA** builder (removed in `653e54f`) is not done |
@@ -692,9 +692,13 @@ now decided: cut from defaults/serving, kept for ablation). Current priorities:
    format alone won't fix the sklearn half — the re-export must run under 1.9.0/3.4.1 (in the
    container or a matching env) and only lands via a databus redeploy, so **deferred with the
    databus work**.
-3. **Generalize the bUCR slice** — 2.1's unified `AgencyConfig` and the **MBTA** segment
-   reformulation (Phase 3 for MBTA), so the cross-agency claim rests on one pipeline rather
-   than a bUCR-only path plus the older MBTA stop-level one.
+3. **Generalize the bUCR slice** — **MBTA segment reformulation is done (08-30)**: both
+   agencies now share one segment builder + schema, reading the S3 static-GTFS snapshot
+   active at each VP's collection time (new `static_gtfs.{list_snapshots,get_snapshot,
+   latest_snapshot_on_or_before}` reader — the read half of 0.2 / 1.8a). Remaining for full
+   generalization: 2.1's unified `AgencyConfig`; a larger/day-grouped MBTA build (the first
+   was a 2-day validation window); and folding the parallel bUCR/MBTA segment builders into
+   one once MBTA is proven at scale.
 4. **Rigor before the paper** — 3.2 formal split + leakage probe, 3.3 provenance/seed, plus
    the bUCR report's open items (under-prediction-bias calibration, min-traversal outlier
    filter, fixed-seed re-run check).
