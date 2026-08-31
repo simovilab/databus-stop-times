@@ -212,6 +212,20 @@
   }
   .takeaway b { color: var(--ink); font-weight: 600; }
 
+  .callout {
+    margin-top: 22px;
+    padding: 20px 22px;
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    border-left: 4px solid var(--warn, var(--accent));
+    border-radius: 10px;
+  }
+  .callout h3 { margin: 0 0 10px; font-size: 15px; color: var(--ink); }
+  .callout p { margin: 0 0 10px; font-size: 14px; line-height: 1.6; color: var(--ink-soft); }
+  .callout p:last-child { margin-bottom: 0; }
+  .callout b { color: var(--ink); font-weight: 600; }
+  .callout code { font-size: 12.5px; }
+
   /* ---- table ---- */
   .table-scroll { overflow-x: auto; margin-top: 4px; }
   table { border-collapse: collapse; width: 100%; font-size: 13.5px; }
@@ -507,9 +521,26 @@
       </div>
       <div class="takeaway">With early stopping picking the tree count, the two agencies diverge: bUCR leans on very
         heavy L2 (<code>reg_lambda</code>&nbsp;69, past the old range ceiling of 20) &mdash; a 17k-row target needs
-        aggressive regularization. MBTA no longer improves with any config, so its next lever is <b>features</b>, not
-        hyperparameters.</div>
+        aggressive regularization. MBTA no longer improves with any config &mdash; and a scheduled-duration feature
+        probe (below) shows it is not tuning-limited <i>or</i> cheaply feature-limited either.</div>
     </div>
+  </div>
+
+  <div class="callout">
+    <h3>Feature probe &middot; scheduled segment duration does <i>not</i> break the MBTA plateau</h3>
+    <p>If MBTA is feature-limited, the obvious first feature is the <b>scheduled</b> segment duration
+      (<code>sched_arrival(to) &minus; sched_arrival(from)</code> from the GTFS snapshot) &mdash; a serveable,
+      leakage-free prior. Trained on the <b>identical row set</b> and split (tuned config + early stopping; uncovered
+      rows keep <code>NaN</code>, routed natively), it moved nothing: test MAE <b>23.90&rarr;23.88&nbsp;s</b>
+      (+0.1%), R² <b>0.659&rarr;0.661</b> (+0.002), and <code>sched_dur</code> did not reach the top-5 importances
+      (dominated by <code>progress_ratio</code>&nbsp;0.58, <code>is_at_stop</code>&nbsp;0.14).</p>
+    <p><b>Why:</b> the target is <i>time remaining from the current position to the next stop</i>, not full-segment
+      traversal, so it is dominated by how far along the vehicle already is (geometry). A full-segment scheduled
+      duration is both redundant with that geometry and mismatched to a partial-remaining target. Since GTFS schedules
+      are built from historical running times, this also lowers expectations for empirical <b>segment identity</b>
+      (target encoding) &mdash; between-segment differences are already captured. The residual is <b>within-segment
+      live variance</b> (moment-to-moment congestion), which no static, serveable feature can see. Moving MBTA
+      further needs a live rolling-conditions signal (a serving-side feature store), not another static feature.</p>
   </div>
 
   <footer>
