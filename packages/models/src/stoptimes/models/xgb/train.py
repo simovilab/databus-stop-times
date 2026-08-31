@@ -55,6 +55,7 @@ class XGBTimeModel:
         reg_alpha: float = 0.0,
         reg_lambda: float = 1.0,
         gamma: float = 0.0,
+        early_stopping_rounds: Optional[int] = None,
         include_temporal: bool = True,
         include_spatial: bool = True,
         handle_nan: str = "drop",  # 'drop', 'impute', or 'error'
@@ -85,6 +86,8 @@ class XGBTimeModel:
         self.reg_alpha = reg_alpha
         self.reg_lambda = reg_lambda
         self.gamma = gamma
+        self.early_stopping_rounds = early_stopping_rounds
+        self.best_iteration: Optional[int] = None
         self.include_temporal = include_temporal
         self.include_spatial = include_spatial
         self.handle_nan = handle_nan
@@ -220,13 +223,17 @@ class XGBTimeModel:
         self,
         train_df: pd.DataFrame,
         target_col: str = "time_to_arrival_seconds",
+        eval_df: Optional[pd.DataFrame] = None,
     ) -> None:
         """
         Train model.
-        
+
         Args:
             train_df: Training dataframe
             target_col: Target column name
+            eval_df: Optional validation dataframe. Only used when
+                early_stopping_rounds is set; the tree count then grows until
+                validation MAE stops improving instead of a fixed n_estimators.
         """
         # Clean data
         train_clean = self._clean_data(train_df, target_col)
@@ -258,8 +265,20 @@ class XGBTimeModel:
 
         X_transformed = self.preprocessor.fit_transform(X)
 
+        # Optional early-stopping eval set (transformed through the fitted
+        # preprocessor; mirrors handle_nan='drop' on the eval frame).
+        use_early_stopping = (
+            self.early_stopping_rounds is not None and eval_df is not None
+        )
+        eval_set = None
+        if use_early_stopping:
+            eval_clean = eval_df.dropna(subset=self.feature_cols + [target_col])
+            X_eval = self.preprocessor.transform(eval_clean[self.feature_cols])
+            y_eval = eval_clean[target_col].values
+            eval_set = [(X_eval, y_eval)]
+
         # Create and fit model
-        self.model = XGBRegressor(
+        xgb_kwargs = dict(
             max_depth=self.max_depth,
             n_estimators=self.n_estimators,
             learning_rate=self.learning_rate,
@@ -273,7 +292,16 @@ class XGBTimeModel:
             random_state=self.random_state,
             n_jobs=self.n_jobs,
         )
-        self.model.fit(X_transformed, y)
+        if use_early_stopping:
+            xgb_kwargs["early_stopping_rounds"] = self.early_stopping_rounds
+            xgb_kwargs["eval_metric"] = "mae"
+
+        self.model = XGBRegressor(**xgb_kwargs)
+        if use_early_stopping:
+            self.model.fit(X_transformed, y, eval_set=eval_set, verbose=False)
+            self.best_iteration = getattr(self.model, "best_iteration", None)
+        else:
+            self.model.fit(X_transformed, y)
 
     def predict(self, X: pd.DataFrame) -> np.ndarray:
         """
@@ -354,6 +382,7 @@ def train_xgboost(
     reg_alpha: float = 0.0,
     reg_lambda: float = 1.0,
     gamma: float = 0.0,
+    early_stopping_rounds: Optional[int] = None,
     include_temporal: bool = True,
     include_spatial: bool = True,
     handle_nan: str = "drop",
@@ -418,11 +447,15 @@ def train_xgboost(
         reg_alpha=reg_alpha,
         reg_lambda=reg_lambda,
         gamma=gamma,
+        early_stopping_rounds=early_stopping_rounds,
         include_temporal=include_temporal,
         include_spatial=include_spatial,
         handle_nan=handle_nan,
     )
-    model.fit(train_df)
+    if early_stopping_rounds is not None:
+        model.fit(train_df, eval_df=val_df)
+    else:
+        model.fit(train_df)
 
     # Validation
     y_val = val_df["time_to_arrival_seconds"].values
@@ -450,6 +483,8 @@ def train_xgboost(
         "reg_alpha": reg_alpha,
         "reg_lambda": reg_lambda,
         "gamma": gamma,
+        "early_stopping_rounds": early_stopping_rounds,
+        "best_iteration": model.best_iteration,
         "include_temporal": include_temporal,
         "include_spatial": include_spatial,
         "handle_nan": handle_nan,
