@@ -222,6 +222,48 @@ def test_two_trips_kept_separate():
     assert len(out) == 4
 
 
+def test_reused_trip_id_across_service_dates_kept_separate():
+    """MBTA reuses one trip_id across weekdays; each service date must be its
+    own trip instance. Regression: the builder used to group VPs by trip_id
+    alone, so arrival detection collapsed a reused id into a single instance
+    (the first date) and silently dropped every later date's segments."""
+    day1 = _vps_frame()  # 2026-08-17
+    day2 = _vps_frame()  # same trip_id, +1 service date
+    day2["ts"] = day2["ts"] + pd.Timedelta(days=1)
+    out = build_mbta_segment_dataset(pd.concat([day1, day2], ignore_index=True), _gtfs())
+
+    assert len(out) == 4, "both service-date instances should produce 2 segments each"
+    assert pd.to_datetime(out["vp_ts"], utc=True).dt.date.nunique() == 2
+    assert list(out["time_to_arrival_seconds"]) == [180.0, 300.0, 180.0, 300.0]
+
+
+def test_after_midnight_vps_stay_one_service_date():
+    """A trip running across local midnight (e.g. 23:40 -> 00:20 local) must
+    stay a SINGLE instance -- the 3am service-day boundary, not calendar date,
+    defines the instance. In EDT (UTC-4): 03:40Z -> 23:40 prev local,
+    04:20Z -> 00:20 local; both belong to the same service date."""
+    lat = _LAT
+    base = pd.Timestamp("2026-08-18T03:40:00Z")  # 23:40 EDT on 08-17 service day
+    rows = []
+    for lon, minute in zip(_STOP_LONS, (0, 3, 8)):
+        rows.append(
+            {
+                "vehicle_id": "V1",
+                "ts": base + pd.Timedelta(minutes=minute),
+                "lat": lat,
+                "lon": lon,
+                "bearing": 90.0,
+                "speed": 0.0,
+                "trip_id": _TRIP,
+                "current_stop_sequence": None,
+                "current_status": "STOPPED_AT",
+                "route_id": _ROUTE,
+            }
+        )
+    out = build_mbta_segment_dataset(pd.DataFrame(rows), _gtfs())
+    assert len(out) == 2, "an across-midnight run is one instance, not two"
+
+
 def test_type_errors():
     with pytest.raises(TypeError):
         build_mbta_segment_dataset([1, 2, 3], _gtfs())

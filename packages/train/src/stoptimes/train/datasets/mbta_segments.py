@@ -177,6 +177,18 @@ def build_mbta_segment_dataset(
     if df.empty:
         return pd.DataFrame(columns=OUTPUT_COLUMNS)
 
+    # MBTA reuses one GTFS ``trip_id`` across every service date in a feed's
+    # validity window (Mon..Fri commonly share ids; weekend service is
+    # distinct). A trip *instance* is therefore (trip_id, service_date), not
+    # trip_id alone -- grouping by trip_id alone concatenates several days of
+    # fixes, and arrival detection (first-fix-within-radius) then resolves only
+    # the earliest date, silently dropping every later instance. Derive the
+    # service date with a 3am local-time boundary (the standard transit
+    # service-day cut, DST-safe via tz_convert), so a run crossing local
+    # midnight stays one instance, and group per instance below.
+    _local = df["ts"].dt.tz_convert(temporal_tz)
+    df["_service_date"] = (_local - pd.Timedelta(hours=3)).dt.date
+
     # Real-world GTFS csvs routinely load id columns as ``object`` dtype with
     # a MIX of str/int python values (some rows numeric-looking, pandas'
     # per-chunk type sniffing doesn't unify them) -- MBTA's static feed does
@@ -206,7 +218,9 @@ def build_mbta_segment_dataset(
     polyline_cache: Dict[str, Optional[List[PolylinePoint]]] = {}
 
     rows: List[dict] = []
-    for trip_id, trip_vps in df.groupby("trip_id", sort=True):
+    for (trip_id, _service_date), trip_vps in df.groupby(
+        ["trip_id", "_service_date"], sort=True
+    ):
         trip_id_str = str(trip_id)
         if trip_id_str not in trips.index:
             continue

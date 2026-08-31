@@ -291,9 +291,9 @@
       <div class="sub">33.4 s vs 51.6 s MAE &middot; XGBoost</div>
     </div>
     <div class="kpi" style="--kc:var(--mbta)">
-      <div class="num">+42%</div>
+      <div class="num">+44%</div>
       <div class="lab">MBTA segment XGBoost beats the offset schedule</div>
-      <div class="sub">28.1 s vs 48.8 s MAE &middot; R² 0.598 &middot; 16-day holdout</div>
+      <div class="sub">27.5 s vs 48.9 s MAE &middot; R² 0.627 &middot; 16-day holdout</div>
     </div>
     <div class="kpi" style="--kc:var(--accent)">
       <div class="num">PASS</div>
@@ -416,19 +416,19 @@
     <h2>MBTA &mdash; segment models vs the schedule</h2>
     <span class="tag">16-day corpus &middot; day-grouped holdout</span>
   </div>
-  <p class="section-note">The MBTA segment reformulation at scale: <b>87,609 segments</b> over a 16-day window
+  <p class="section-note">The MBTA segment reformulation at scale: <b>153,498 segments</b> over a full 16-day window
     (routes 222/15/37), each sub-window matched to the static-GTFS snapshot in effect. Real GTFS trip IDs make the
     schedule baseline <b>exact</b> &mdash; the scheduled duration of each stop-to-stop segment, offset-invariant so a
-    trip running late as a whole isn't penalised. Split is day-grouped so whole trips stay in one split. (An agency
-    GTFS-RT baseline isn't available offline &mdash; MBTA TripUpdates aren't archived yet; that comparator is live-only
-    via etaval.)</p>
+    trip running late as a whole isn't penalised. Split is day-grouped (all 16 service-days usable) so whole trips stay
+    in one split. (An agency GTFS-RT baseline isn't available offline &mdash; MBTA TripUpdates aren't archived yet; that
+    comparator is live-only via etaval.)</p>
   <div class="grid-2">
     <div class="card">
       <h3>Test MAE by model &middot; lower is better</h3>
-      <p class="cap">datasets/mbta_segments_corpus.parquet &middot; test = 3 service-days, 27,800 segments</p>
+      <p class="cap">datasets/mbta_segments_corpus.parquet &middot; test = 3 service-days, 28,346 segments</p>
       <div class="chart-box"><canvas id="c_mbta_seg_leader"></canvas></div>
-      <div class="takeaway">XGBoost leads at <b>28.1 s</b> (R² 0.598), <b>+42%</b> over the 48.8 s schedule. Notably,
-        per-segment <b>historical_mean</b> (34.0 s) is the strong runner-up &mdash; ahead of both polyreg families on
+      <div class="takeaway">XGBoost leads at <b>27.5 s</b> (R² 0.627), <b>+44%</b> over the 48.9 s schedule. Notably,
+        per-segment <b>historical_mean</b> (33.7 s) is the strong runner-up &mdash; ahead of both polyreg families on
         MBTA, a different ordering than bUCR.</div>
     </div>
     <div class="card">
@@ -438,28 +438,27 @@
         <table>
           <thead><tr><th>Statistic</th><th>XGBoost</th><th>Offset schedule</th></tr></thead>
           <tbody>
-            <tr class="best"><td>MAE</td><td>28.1 s</td><td>48.8 s</td></tr>
-            <tr><td>median |err|</td><td>13.9 s</td><td>33.0 s</td></tr>
-            <tr><td>p90</td><td>51.0 s</td><td>78.0 s</td></tr>
-            <tr><td>p95</td><td>86.4 s</td><td>113.0 s</td></tr>
-            <tr><td>p99</td><td>330.7 s</td><td>562.4 s</td></tr>
-            <tr class="best"><td>within &plusmn;30 s</td><td>80.1%</td><td>44.7%</td></tr>
-            <tr><td>within &plusmn;60 s</td><td>91.9%</td><td>85.7%</td></tr>
+            <tr class="best"><td>MAE</td><td>27.5 s</td><td>48.9 s</td></tr>
+            <tr><td>median |err|</td><td>13.6 s</td><td>33.0 s</td></tr>
+            <tr><td>p90</td><td>50.4 s</td><td>78.0 s</td></tr>
+            <tr><td>p95</td><td>87.4 s</td><td>115.0 s</td></tr>
+            <tr><td>p99</td><td>308.5 s</td><td>571.0 s</td></tr>
+            <tr class="best"><td>within &plusmn;30 s</td><td>80.3%</td><td>44.3%</td></tr>
+            <tr><td>within &plusmn;60 s</td><td>91.9%</td><td>85.6%</td></tr>
           </tbody>
         </table>
       </div>
-      <div class="takeaway">XGBoost is near-unbiased (signed mean &minus;0.6 s) and lands <b>80%</b> of segments within
-        &plusmn;30 s, against the schedule's 45%.</div>
+      <div class="takeaway">XGBoost is near-unbiased (signed mean &minus;1.3 s) and lands <b>80%</b> of segments within
+        &plusmn;30 s, against the schedule's 44%.</div>
     </div>
   </div>
   <div class="card" style="margin-top:18px">
-    <div class="maint" style="margin-top:0">
-      <span class="pill warn">KNOWN LIMITATION</span> <b>Weekday coverage.</b> The build yields ~10 effective
-      service-days from the 16-day window, not 16: MBTA reuses one <code>trip_id</code> across all weekdays, and the
-      segment builder currently collapses a reused id into a single trip instance &mdash; so Tue&ndash;Thu repeats are
-      dropped while Mon/Fri and the day-distinct weekend service survive (verified: Mon&cap;Tue = 265 shared trip IDs).
-      The model-vs-schedule comparison above is still apples-to-apples (identical test segments), but a complete MBTA
-      corpus needs the builder to split trip instances by <b>service date</b>. This is the next MBTA fix.
+    <div class="takeaway" style="margin-top:0">
+      <span class="pill good">FIXED</span> <b>Weekday coverage.</b> MBTA reuses one <code>trip_id</code> across every
+      weekday, and the builder used to collapse a reused id into a single trip instance &mdash; dropping Tue&ndash;Thu
+      repeats and leaving only ~10 effective service-days. The builder now splits trip instances by <b>service date</b>
+      (3am local boundary), recovering all 16 days: the corpus grew 87.6k &rarr; <b>153.5k segments</b> and XGBoost
+      improved to 27.5 s / R² 0.627. Covered by a regression test.
     </div>
   </div>
 
@@ -471,7 +470,7 @@
           <b>not</b> the transferable 90-day replication numbers (window <code>2026-08-14 &rarr; 2026-11-12</code>).</li>
         <li>bUCR and MBTA corpora differ in fix cadence (~80 s vs 5 s), so segment-level results are not directly comparable across agencies.</li>
         <li>bUCR segment target is position-derived (50 m first-within, else closest-approach &le;200 m); holdout is day-grouped so whole trips stay within one split.</li>
-        <li>MBTA segment corpus is 87,609 segments / 16 days, but ~10 effective service-days (weekday <code>trip_id</code> reuse &mdash; see §05); the schedule baseline covers 70% of test segments.</li>
+        <li>MBTA segment corpus is 153,498 segments / 16 days (all service-days; trip instances split by service date &mdash; see §05); the schedule baseline covers 70% of test segments.</li>
         <li>Every saved model now stamps git SHA, library versions, dataset SHA-256, and seed (<code>models/common/provenance.py</code>); fixed-seed reruns reproduce metrics.</li>
         <li>Sources: <code>docs/SESSION_2026-08-24_BUCR_ETA_MODELS.md</code>, <code>models/evaluation/leakage_probe.py</code>, roadmap §3 tables.</li>
       </ul>
@@ -657,8 +656,8 @@
   });
 
   // 05 — MBTA segment leaderboard (test MAE, schedule reference)
-  var mLabels = ['XGBoost', 'historical_mean', 'ewma', 'PolyReg-time', 'PolyReg-dist', 'Offset schedule'];
-  var mVals   = [28.1, 34.0, 39.4, 41.7, 42.1, 48.8];
+  var mLabels = ['XGBoost', 'historical_mean', 'PolyReg-dist', 'PolyReg-time', 'ewma', 'Offset schedule'];
+  var mVals   = [27.5, 33.7, 42.1, 42.5, 43.3, 48.9];
   var mFill   = [C.accent, alpha(C.accent,0.6), alpha(C.accent,0.6), alpha(C.accent,0.6), alpha(C.accent,0.6), alpha(C.schedule,0.85)];
   var mBorder = [C.accent, C.accent, C.accent, C.accent, C.accent, C.schedule];
   mk('c_mbta_seg_leader', {
