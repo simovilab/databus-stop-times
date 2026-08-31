@@ -621,7 +621,7 @@ timezone bug from §1.1 would have been caught by it (regression-test the fix th
 
 | # | Task | Size |
 |---|---|---|
-| 5.1 | Hyperparameter tuning on the *validation* split (Optuna with pruning; CPU-friendly budgets locally, GPU rental for the heavier sweeps). Record every trial | M |
+| 5.1 | Hyperparameter tuning on the *validation* split (Optuna with pruning; CPU-friendly budgets locally, GPU rental for the heavier sweeps). Record every trial. **Partial (08-30):** `scratchpad/hpo_xgboost.py` — TPE study over the 5 XGBoost params, scored on the day-grouped **val** split, test evaluated once for the val-best config; 50 trials/agency recorded to `scratchpad/hpo_trials_*.csv`. Tuning helps both: MBTA test MAE 27.5→**25.0 s** (R² 0.627→0.644, +9.2%), bUCR 33.5→**29.9 s** (R² 0.694→**0.759**, +10.8%). Best configs differ by data volume (MBTA: depth 9 / 550 trees / lr 0.019; bUCR: depth 8 / 150 trees / lr 0.048, low subsample/colsample). Results in `docs/RESULTS.html` §06. Not yet done: pruning, promoting tuned configs to the served registry, extending the search to reg_alpha/reg_lambda/min_child_weight (train_xgboost exposes only the 5) | M |
 | 5.2 | **LSTM/GRU over segment sequences.** Small enough to train on a rented GPU in hours. This is the deep-learning entry the AI-masters framing wants | **L** |
 | 5.3 | Fix the apples-to-apples breaks: EWMA must not see validation data; unify NaN handling and prediction clipping across all model families | S |
 | 5.4 | Cost instrumentation: training wall-clock and cost, inference p50/p95/p99 latency per model, measured through the serving path rather than the stale `bytewax/profiling/*.csv` snapshots | M |

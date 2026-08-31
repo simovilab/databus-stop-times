@@ -462,6 +462,47 @@
     </div>
   </div>
 
+  <!-- 6 -->
+  <div class="section-head">
+    <span class="idx">06</span>
+    <h2>Hyperparameter tuning (Optuna)</h2>
+    <span class="tag">50 trials/agency &middot; tuned on val, tested once</span>
+  </div>
+  <p class="section-note">Roadmap 5.1: the validation split was computed but never used, and every hyperparameter
+    was hardcoded. A TPE study over the five XGBoost hyperparameters, scored on the <b>validation</b> split of each
+    segment corpus and selecting the best config by val MAE &mdash; the <b>test</b> set is touched only once, for the
+    chosen config. Every trial is recorded. Tuning helps both agencies, and the best configs differ sensibly by data
+    volume.</p>
+  <div class="grid-2">
+    <div class="card">
+      <h3>Default vs tuned &middot; test MAE</h3>
+      <p class="cap">lower is better &middot; XGBoost segment model</p>
+      <div class="chart-box"><canvas id="c_hpo"></canvas></div>
+      <div class="takeaway">Tuning cuts test MAE <b>9&ndash;11%</b>: MBTA 27.5&rarr;<b>25.0 s</b> (R² 0.627&rarr;0.644),
+        bUCR 33.5&rarr;<b>29.9 s</b> (R² 0.694&rarr;<b>0.759</b>).</div>
+    </div>
+    <div class="card">
+      <h3>Best configuration by agency</h3>
+      <p class="cap">selected by validation MAE</p>
+      <div class="table-scroll">
+        <table>
+          <thead><tr><th>Param</th><th>MBTA (153k)</th><th>bUCR (17.5k)</th></tr></thead>
+          <tbody>
+            <tr><td>max_depth</td><td>9</td><td>8</td></tr>
+            <tr><td>n_estimators</td><td>550</td><td>150</td></tr>
+            <tr><td>learning_rate</td><td>0.019</td><td>0.048</td></tr>
+            <tr><td>subsample</td><td>0.98</td><td>0.63</td></tr>
+            <tr><td>colsample_bytree</td><td>0.90</td><td>0.64</td></tr>
+            <tr class="best"><td>test MAE</td><td>24.99 s</td><td>29.85 s</td></tr>
+            <tr class="best"><td>test R²</td><td>0.644</td><td>0.759</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="takeaway">Data-rich MBTA wants a larger, slower ensemble; data-poor bUCR wants a smaller,
+        more-regularized one (low subsample/colsample) &mdash; a small but real data-volume signal.</div>
+    </div>
+  </div>
+
   <footer>
     <div class="prov">
       <h3>Provenance &amp; caveats</h3>
@@ -472,6 +513,7 @@
         <li>bUCR segment target is position-derived (50 m first-within, else closest-approach &le;200 m); holdout is day-grouped so whole trips stay within one split.</li>
         <li>MBTA segment corpus is 153,498 segments / 16 days (all service-days; trip instances split by service date &mdash; see §05); the schedule baseline covers 70% of test segments.</li>
         <li>Every saved model now stamps git SHA, library versions, dataset SHA-256, and seed (<code>models/common/provenance.py</code>); fixed-seed reruns reproduce metrics.</li>
+        <li>HPO (§06) tunes on the validation split only; the test set is evaluated once for the val-selected config. Seed 42, 50 TPE trials/agency, all trials recorded to <code>scratchpad/hpo_trials_*.csv</code>. Tuned configs are not yet promoted to the served registry.</li>
         <li>Sources: <code>docs/SESSION_2026-08-24_BUCR_ETA_MODELS.md</code>, <code>models/evaluation/leakage_probe.py</code>, roadmap §3 tables.</li>
       </ul>
       <div class="maint">
@@ -673,6 +715,23 @@
       scales: {
         x: { grid: grid, beginAtZero: true, title: { display: true, text: 'test MAE (seconds)', color: C.faint } },
         y: { grid: { display: false }, ticks: { color: C.soft } }
+      }
+    }
+  });
+
+  // 06 — HPO default vs tuned (test MAE, grouped by agency)
+  mk('c_hpo', {
+    type: 'bar',
+    data: { labels: ['MBTA (153k)', 'bUCR (17.5k)'], datasets: [
+      { label: 'default', data: [27.52, 33.45], backgroundColor: alpha(C.schedule, 0.85), borderRadius: 5, maxBarThickness: 46 },
+      { label: 'tuned', data: [24.99, 29.85], backgroundColor: alpha(C.accent, 0.9), borderRadius: 5, maxBarThickness: 46 }
+    ]},
+    options: {
+      plugins: { legend: { position: 'top', align: 'end' },
+        tooltip: { callbacks: { label: function(x){ return x.dataset.label + ': ' + x.parsed.y + ' s'; } } } },
+      scales: {
+        x: { grid: { display: false }, ticks: { color: C.soft } },
+        y: { grid: grid, beginAtZero: true, title: { display: true, text: 'test MAE (s)', color: C.faint } }
       }
     }
   });
