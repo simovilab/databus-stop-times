@@ -51,6 +51,10 @@ class XGBTimeModel:
         learning_rate: float = 0.05,
         subsample: float = 0.8,
         colsample_bytree: float = 0.8,
+        min_child_weight: float = 1.0,
+        reg_alpha: float = 0.0,
+        reg_lambda: float = 1.0,
+        gamma: float = 0.0,
         include_temporal: bool = True,
         include_spatial: bool = True,
         handle_nan: str = "drop",  # 'drop', 'impute', or 'error'
@@ -77,6 +81,10 @@ class XGBTimeModel:
         self.learning_rate = learning_rate
         self.subsample = subsample
         self.colsample_bytree = colsample_bytree
+        self.min_child_weight = min_child_weight
+        self.reg_alpha = reg_alpha
+        self.reg_lambda = reg_lambda
+        self.gamma = gamma
         self.include_temporal = include_temporal
         self.include_spatial = include_spatial
         self.handle_nan = handle_nan
@@ -257,6 +265,10 @@ class XGBTimeModel:
             learning_rate=self.learning_rate,
             subsample=self.subsample,
             colsample_bytree=self.colsample_bytree,
+            min_child_weight=self.min_child_weight,
+            reg_alpha=self.reg_alpha,
+            reg_lambda=self.reg_lambda,
+            gamma=self.gamma,
             objective="reg:squarederror",
             random_state=self.random_state,
             n_jobs=self.n_jobs,
@@ -338,6 +350,10 @@ def train_xgboost(
     learning_rate: float = 0.05,
     subsample: float = 0.8,
     colsample_bytree: float = 0.8,
+    min_child_weight: float = 1.0,
+    reg_alpha: float = 0.0,
+    reg_lambda: float = 1.0,
+    gamma: float = 0.0,
     include_temporal: bool = True,
     include_spatial: bool = True,
     handle_nan: str = "drop",
@@ -398,6 +414,10 @@ def train_xgboost(
         learning_rate=learning_rate,
         subsample=subsample,
         colsample_bytree=colsample_bytree,
+        min_child_weight=min_child_weight,
+        reg_alpha=reg_alpha,
+        reg_lambda=reg_lambda,
+        gamma=gamma,
         include_temporal=include_temporal,
         include_spatial=include_spatial,
         handle_nan=handle_nan,
@@ -426,6 +446,10 @@ def train_xgboost(
         "learning_rate": learning_rate,
         "subsample": subsample,
         "colsample_bytree": colsample_bytree,
+        "min_child_weight": min_child_weight,
+        "reg_alpha": reg_alpha,
+        "reg_lambda": reg_lambda,
+        "gamma": gamma,
         "include_temporal": include_temporal,
         "include_spatial": include_spatial,
         "handle_nan": handle_nan,

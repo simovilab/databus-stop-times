@@ -466,40 +466,48 @@
   <div class="section-head">
     <span class="idx">06</span>
     <h2>Hyperparameter tuning (Optuna)</h2>
-    <span class="tag">50 trials/agency &middot; tuned on val, tested once</span>
+    <span class="tag">120 trials/agency &middot; 9 params &middot; tuned on val, tested once</span>
   </div>
   <p class="section-note">Roadmap 5.1: the validation split was computed but never used, and every hyperparameter
-    was hardcoded. A TPE study over the five XGBoost hyperparameters, scored on the <b>validation</b> split of each
-    segment corpus and selecting the best config by val MAE &mdash; the <b>test</b> set is touched only once, for the
-    chosen config. Every trial is recorded. Tuning helps both agencies, and the best configs differ sensibly by data
-    volume.</p>
+    was hardcoded. A TPE study scored on the <b>validation</b> split of each segment corpus, selecting the best config
+    by val MAE &mdash; the <b>test</b> set is touched only once, for the chosen config. The search covers <b>nine</b>
+    XGBoost hyperparameters: the five structural ones plus the four regularization knobs
+    (<code>min_child_weight</code>, <code>reg_alpha</code>, <code>reg_lambda</code>, <code>gamma</code>) now wired
+    through <code>train_xgboost</code>. Adding regularization sharply helped the data-poor agency, and the best configs
+    differ sensibly by data volume.</p>
   <div class="grid-2">
     <div class="card">
       <h3>Default vs tuned &middot; test MAE</h3>
       <p class="cap">lower is better &middot; XGBoost segment model</p>
       <div class="chart-box"><canvas id="c_hpo"></canvas></div>
-      <div class="takeaway">Tuning cuts test MAE <b>9&ndash;11%</b>: MBTA 27.5&rarr;<b>25.0 s</b> (R² 0.627&rarr;0.644),
-        bUCR 33.5&rarr;<b>29.9 s</b> (R² 0.694&rarr;<b>0.759</b>).</div>
+      <div class="takeaway">Tuning cuts test MAE <b>10&ndash;15%</b>: MBTA 27.5&rarr;<b>24.7 s</b> (R² 0.627&rarr;0.655),
+        bUCR 33.5&rarr;<b>28.5 s</b> (R² 0.694&rarr;<b>0.777</b>). The four regularization params lifted bUCR from
+        +10.8% (5-param) to <b>+14.9%</b>.</div>
     </div>
     <div class="card">
       <h3>Best configuration by agency</h3>
-      <p class="cap">selected by validation MAE</p>
+      <p class="cap">selected by validation MAE &middot; 9-param search</p>
       <div class="table-scroll">
         <table>
           <thead><tr><th>Param</th><th>MBTA (153k)</th><th>bUCR (17.5k)</th></tr></thead>
           <tbody>
-            <tr><td>max_depth</td><td>9</td><td>8</td></tr>
-            <tr><td>n_estimators</td><td>550</td><td>150</td></tr>
-            <tr><td>learning_rate</td><td>0.019</td><td>0.048</td></tr>
-            <tr><td>subsample</td><td>0.98</td><td>0.63</td></tr>
-            <tr><td>colsample_bytree</td><td>0.90</td><td>0.64</td></tr>
-            <tr class="best"><td>test MAE</td><td>24.99 s</td><td>29.85 s</td></tr>
-            <tr class="best"><td>test R²</td><td>0.644</td><td>0.759</td></tr>
+            <tr><td>max_depth</td><td>12</td><td>11</td></tr>
+            <tr><td>n_estimators</td><td>950</td><td>800</td></tr>
+            <tr><td>learning_rate</td><td>0.011</td><td>0.0075</td></tr>
+            <tr><td>subsample</td><td>0.94</td><td>0.68</td></tr>
+            <tr><td>colsample_bytree</td><td>0.66</td><td>0.55</td></tr>
+            <tr><td>min_child_weight</td><td>5.7</td><td>1.7</td></tr>
+            <tr><td>reg_alpha (L1)</td><td>9.2</td><td>0.005</td></tr>
+            <tr><td>reg_lambda (L2)</td><td>19.8</td><td>20.0</td></tr>
+            <tr class="best"><td>test MAE</td><td>24.71 s</td><td>28.46 s</td></tr>
+            <tr class="best"><td>test R²</td><td>0.655</td><td>0.777</td></tr>
           </tbody>
         </table>
       </div>
-      <div class="takeaway">Data-rich MBTA wants a larger, slower ensemble; data-poor bUCR wants a smaller,
-        more-regularized one (low subsample/colsample) &mdash; a small but real data-volume signal.</div>
+      <div class="takeaway">Both agencies want heavy L2 (<code>reg_lambda</code>&nbsp;&asymp;&nbsp;20, pinned at the
+        range ceiling) and deep, slow ensembles. MBTA also leans on strong L1 (<code>reg_alpha</code>&nbsp;9.2); bUCR
+        regularizes through low subsample/colsample instead. Several params sit at their range ceilings &mdash; a
+        signal that early stopping (rather than a fixed tree count) is the next lever.</div>
     </div>
   </div>
 
@@ -513,7 +521,7 @@
         <li>bUCR segment target is position-derived (50 m first-within, else closest-approach &le;200 m); holdout is day-grouped so whole trips stay within one split.</li>
         <li>MBTA segment corpus is 153,498 segments / 16 days (all service-days; trip instances split by service date &mdash; see §05); the schedule baseline covers 70% of test segments.</li>
         <li>Every saved model now stamps git SHA, library versions, dataset SHA-256, and seed (<code>models/common/provenance.py</code>); fixed-seed reruns reproduce metrics.</li>
-        <li>HPO (§06) tunes on the validation split only; the test set is evaluated once for the val-selected config. Seed 42, 50 TPE trials/agency, all trials recorded to <code>scratchpad/hpo_trials_*.csv</code>. Tuned configs are not yet promoted to the served registry.</li>
+        <li>HPO (§06) tunes on the validation split only; the test set is evaluated once for the val-selected config. Seed 42, 120 TPE trials/agency over 9 params (structural + <code>min_child_weight</code>/<code>reg_alpha</code>/<code>reg_lambda</code>/<code>gamma</code>, now wired through <code>train_xgboost</code>); all trials recorded to <code>scratchpad/hpo_trials_*.csv</code>. Best configs pin several params at their range ceilings (esp. <code>reg_lambda</code>, and MBTA depth/n_estimators), so early stopping is the untried next lever. Tuned configs are not yet promoted to the served registry.</li>
         <li>Sources: <code>docs/SESSION_2026-08-24_BUCR_ETA_MODELS.md</code>, <code>models/evaluation/leakage_probe.py</code>, roadmap §3 tables.</li>
       </ul>
       <div class="maint">
@@ -724,7 +732,7 @@
     type: 'bar',
     data: { labels: ['MBTA (153k)', 'bUCR (17.5k)'], datasets: [
       { label: 'default', data: [27.52, 33.45], backgroundColor: alpha(C.schedule, 0.85), borderRadius: 5, maxBarThickness: 46 },
-      { label: 'tuned', data: [24.99, 29.85], backgroundColor: alpha(C.accent, 0.9), borderRadius: 5, maxBarThickness: 46 }
+      { label: 'tuned (9-param)', data: [24.71, 28.46], backgroundColor: alpha(C.accent, 0.9), borderRadius: 5, maxBarThickness: 46 }
     ]},
     options: {
       plugins: { legend: { position: 'top', align: 'end' },
