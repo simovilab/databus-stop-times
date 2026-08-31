@@ -710,9 +710,13 @@ now decided: cut from defaults/serving, kept for ablation). Current priorities:
    MBTA build + schedule baseline done 08-30** (153,498 segments / 16 d; xgboost +44% vs the
    exact per-trip offset schedule, R² 0.627 — see 3.1 and `docs/RESULTS.html` §05). The
    **service-date trip-instance split is done** (builder groups by `(trip_id, service_date)`;
-   recovered all 16 days, 87.6k → 153.5k segments, +2 regression tests). Remaining for full
-   generalization: 2.1's unified `AgencyConfig`; and folding the parallel bUCR/MBTA segment
-   builders into one now that MBTA is proven at scale.
+   recovered all 16 days, 87.6k → 153.5k segments, +2 regression tests). **Builder
+   unification done 08-30:** both builders now share one core
+   (`feature_engineering/segment_core.py` — constants, `OUTPUT_COLUMNS`, arrival detection,
+   the per-segment emit loop, `TripInstance`, `build_segments_from_instances`); each keeps
+   only its agency-specific resolver. Verified byte-for-byte on both real corpora (MBTA
+   153,498 rows, deployed bUCR path 17,499 rows) + 9 core tests. Remaining for full
+   generalization: 2.1's unified `AgencyConfig`.
 4. **Rigor before the paper** — 3.2 formal split + leakage probe, 3.3 provenance/seed, plus
    the bUCR report's open items (under-prediction-bias calibration, min-traversal outlier
    filter, fixed-seed re-run check).
