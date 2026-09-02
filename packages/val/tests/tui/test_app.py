@@ -17,6 +17,11 @@ from etaval.tui.app import EtavalApp
 from etaval.tui.screens import ConsoleScreen, ExplorerScreen, LeaderboardScreen, TelemetryScreen
 
 
+def _static_content(widget: Any) -> str:
+    """Return the plain-text content last passed to a Static widget's ``.update()``."""
+    return str(widget._Static__content)  # noqa: SLF001 — textual stores it name-mangled
+
+
 class FakeApi:
     """In-memory stand-in for ApiClient — same method signatures, no network."""
 
@@ -51,15 +56,73 @@ class FakeApi:
         return {"run_id": "run-xyz789"}
 
     async def get_run(self, run_id: str) -> dict[str, Any]:
-        return {"id": run_id, "status": "done"}
+        return {
+            "id": run_id,
+            "status": "done",
+            "provenance": {
+                "etaval_git_sha": "abc123def456",
+                "etaval_dirty": True,
+                "gtfs_eta_git_sha": "deadbeefcafe",
+                "gtfs_eta_dirty": False,
+                "gtfs_snapshot": "2026-09-01",
+                "source_config_sha256": "0123456789abcdef",
+                "seed": 0,
+                "created_at": "2026-09-01T00:00:00+00:00",
+            },
+        }
 
     async def get_metrics(self, run_id: str, stats: int = 0) -> dict[str, Any]:
-        return {
+        body: dict[str, Any] = {
             "per_predictor": [{"predictor_id": "gtfsrt", "mae_s": 12.5, "n": 100}],
             "horizon_buckets": [{"bucket": "0-60", "mae_s": 10.0, "n": 50}],
             "convergence": [],
             "head_to_head": [],
         }
+        if stats:
+            body["per_predictor"] = [
+                {
+                    "predictor_id": "gtfsrt",
+                    "mae": 12.5,
+                    "mae_s": 12.5,
+                    "n": 100,
+                    "mae_ci": {"lo": 10.0, "hi": 15.0, "ci": 0.95, "n_boot": 1000},
+                    "latency": {"p50_s": 0.01, "p95_s": 0.02, "p99_s": 0.03, "count": 100},
+                },
+                {
+                    "predictor_id": "baseline:constant_speed",
+                    "mae": 20.0,
+                    "mae_s": 20.0,
+                    "n": 90,
+                    "mae_ci": {"lo": 18.0, "hi": 22.0, "ci": 0.95, "n_boot": 1000},
+                    "latency": None,
+                },
+            ]
+            body["significance"] = [
+                {
+                    "a": "baseline:constant_speed",
+                    "b": "gtfsrt",
+                    "test": "wilcoxon",
+                    "statistic": 3.0,
+                    "p_value": 0.04,
+                    "p_adjusted": 0.04,
+                    "reject": True,
+                    "n": 10,
+                    "diff_mean": 7.5,
+                }
+            ]
+            body["calibration"] = [
+                {
+                    "band_label": "<2m",
+                    "band_lo_s": 0.0,
+                    "band_hi_s": 120.0,
+                    "tolerance_s": 30.0,
+                    "n": 40,
+                    "nominal_coverage": 0.68,
+                    "empirical_coverage": 0.62,
+                }
+            ]
+            body["seed"] = 0
+        return body
 
     async def get_results(
         self, run_id: str, predictor: str | None = None, limit: int = 1000
@@ -154,3 +217,85 @@ async def test_switch_to_telemetry_screen_polls(fake_client: FakeApi) -> None:
         await pilot.press("f4")
         await pilot.pause()
         assert isinstance(app.screen, TelemetryScreen)
+
+
+# ── Stats surfaces (CIs, latency, significance, provenance, calibration) ─────────
+
+
+async def test_leaderboard_detail_renders_stats_surfaces_without_error(
+    fake_client: FakeApi,
+) -> None:
+    """A DONE run's detail panel mounts CI/latency/significance/provenance widgets
+    from a ``stats=1`` payload without raising."""
+    from textual.widgets import DataTable, Static
+
+    app = EtavalApp(client=fake_client)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        await pilot.press("f2")
+        await pilot.pause()
+        screen = app.screen
+        assert isinstance(screen, LeaderboardScreen)
+
+        await screen._open_detail("run-abc123")
+        await pilot.pause()
+
+        pred_table = screen.query_one("#predictor-metrics-table", DataTable)
+        assert pred_table.row_count == 2
+
+        latency_table = screen.query_one("#latency-table", DataTable)
+        assert latency_table.row_count == 2
+
+        significance_text = _static_content(screen.query_one("#significance-block", Static))
+        assert "wilcoxon" in str(significance_text)
+        assert "p=0.04*" in str(significance_text)
+
+        provenance_str = _static_content(screen.query_one("#provenance-block", Static))
+        assert "abc123de*" in provenance_str  # dirty etaval sha, starred
+        assert "deadbeef" in provenance_str  # clean gtfs-eta sha, no star
+        assert "2026-09-01" in provenance_str
+
+
+async def test_leaderboard_detail_null_safe_when_stats_missing(fake_client: FakeApi) -> None:
+    """A run whose get_run/get_metrics return no provenance/stats renders '—', not a crash."""
+
+    class NoStatsApi(FakeApi):
+        async def get_run(self, run_id: str) -> dict[str, Any]:
+            return {"id": run_id, "status": "pending"}
+
+    app = EtavalApp(client=NoStatsApi())
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        await pilot.press("f2")
+        await pilot.pause()
+        screen = app.screen
+        assert isinstance(screen, LeaderboardScreen)
+
+        await screen._open_detail("run-abc123")
+        await pilot.pause()
+        # Should not raise; plain (non-stats) metrics still render.
+        from textual.widgets import DataTable
+
+        pred_table = screen.query_one("#predictor-metrics-table", DataTable)
+        assert pred_table.row_count == 1
+
+
+async def test_explorer_screen_renders_calibration(fake_client: FakeApi) -> None:
+    from textual.widgets import Static
+
+    app = EtavalApp(client=fake_client)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        await pilot.press("f3")
+        await pilot.pause()
+        screen = app.screen
+        assert isinstance(screen, ExplorerScreen)
+
+        screen.set_run("run-abc123")
+        await pilot.pause()
+        await pilot.pause()
+
+        calibration_text = _static_content(screen.query_one("#calibration-block", Static))
+        assert "<2m" in calibration_text
+        assert "0.68" in calibration_text
+        assert "0.62" in calibration_text

@@ -3,11 +3,28 @@
 // Mirrors AnalyticsDashboard's data flow (useResultsAnalytics) but with a
 // restructured ops-console layout: sticky left filter spine, bento chart grid.
 
+import type { CalibrationBin } from '~/types/api'
+
 const props = defineProps<{
   runId: string
 }>()
 
 const analytics = useResultsAnalytics(props.runId)
+
+// ── Calibration (stats layer) ────────────────────────────────────────────
+// ExplorerBody is only ever mounted for done runs (explorer.vue filters to
+// status === 'done'), so it's always safe to request ?stats=1 here.
+const api = useApi()
+const calibrationData = ref<CalibrationBin[]>([])
+
+async function loadCalibration(): Promise<void> {
+  try {
+    const m = await api.getMetrics(props.runId, true)
+    calibrationData.value = m.calibration ?? []
+  } catch {
+    calibrationData.value = []
+  }
+}
 
 const {
   loading,
@@ -39,6 +56,7 @@ const {
 
 onMounted(() => {
   load()
+  loadCalibration()
 })
 
 const hasRows = computed(() => rows.value.length > 0)
@@ -170,8 +188,8 @@ function isActiveHorizon(preset: [number, number] | null): boolean {
             <AnalyticsHeadToHead :data="headToHeadData" :color-map="colorMap" />
           </div>
 
-          <!-- Calibration placeholder – real chart lands in a later wave -->
-          <div class="panel border-dashed">
+          <AnalyticsCalibrationChart v-if="calibrationData.length > 0" :data="calibrationData" />
+          <div v-else class="panel border-dashed">
             <div class="panel-header"><span class="micro-label">Calibration</span></div>
             <div class="px-3 py-8 text-center text-xs text-dim">
               CALIBRATION — pending stats layer

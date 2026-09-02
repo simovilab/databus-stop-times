@@ -40,8 +40,11 @@ export function useApi() {
     return $fetch<RunInfo>(`/api/runs/${id}`, { baseURL })
   }
 
-  async function getMetrics(id: string): Promise<RunMetrics> {
-    return $fetch<RunMetrics>(`/api/runs/${id}/metrics`, { baseURL })
+  async function getMetrics(id: string, withStats = false): Promise<RunMetrics> {
+    return $fetch<RunMetrics>(`/api/runs/${id}/metrics`, {
+      baseURL,
+      query: withStats ? { stats: 1 } : undefined
+    })
   }
 
   async function getResults(

@@ -6,16 +6,18 @@ signatures) — no widget imports httpx / websockets directly.  This keeps the
 screens testable with ``App.run_test()`` and a fake client (see
 ``tests/tui/test_app.py``).
 
-Stats surfaces (CIs, significance, provenance, calibration) are intentionally
-NOT wired here yet — they land in a later wave.  ``get_metrics(..., stats=1)``
-is already threaded through :class:`~etaval.tui.client.ApiClient` so that
-wave can turn it on without touching this module's call sites.
+Stats surfaces (CIs, significance, provenance, calibration) are rendered on
+LEADERBOARD's run-detail panel (for DONE runs, via ``get_metrics(...,
+stats=1)`` + ``get_run(...)`` for provenance) and on EXPLORER's calibration
+panel. Every stats field is optional/nullable end to end — a missing value
+renders as ``—`` rather than raising.
 """
 
 from __future__ import annotations
 
 from typing import Any
 
+from rich.text import Text
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
@@ -172,11 +174,19 @@ class LeaderboardScreen(Screen):
             yield Static("", id="winner-banner")
             yield DataTable(id="predictor-metrics-table")
             yield DataTable(id="horizon-buckets-table")
+            yield Label("LATENCY", classes="micro-label")
+            yield DataTable(id="latency-table")
+            yield Label("SIGNIFICANCE", classes="micro-label")
+            yield Static("", id="significance-block")
+            yield Label("PROVENANCE", classes="micro-label")
+            yield Static("", id="provenance-block")
         yield Footer()
 
     def on_mount(self) -> None:
         table = self.query_one("#runs-table", DataTable)
         table.add_columns("RUN_ID", "STATUS", "SOURCE", "TICKS", "RESULTS")
+        latency_table = self.query_one("#latency-table", DataTable)
+        latency_table.add_columns("PREDICTOR", "P50_S", "P95_S", "P99_S", "COUNT")
         self.query_one("#run-detail").display = False
         self.run_worker(self._load_runs(), exclusive=True, group="load-runs")
 
@@ -209,8 +219,15 @@ class LeaderboardScreen(Screen):
             self.run_worker(self._open_detail(run_id), exclusive=True, group="run-detail")
 
     async def _open_detail(self, run_id: str) -> None:
+        run_info: dict[str, Any] = {}
         try:
-            metrics = await self.app.client.get_metrics(run_id)
+            run_info = await self.app.client.get_run(run_id)
+        except Exception:  # noqa: BLE001
+            pass
+        is_done = run_info.get("status") == "done"
+
+        try:
+            metrics = await self.app.client.get_metrics(run_id, stats=1 if is_done else 0)
         except Exception as exc:  # noqa: BLE001
             self.query_one("#winner-banner", Static).update(f"metrics unavailable: {exc}")
             self.query_one("#run-detail").display = True
@@ -223,12 +240,10 @@ class LeaderboardScreen(Screen):
 
         pred_table = self.query_one("#predictor-metrics-table", DataTable)
         pred_table.clear(columns=True)
-        pred_table.add_columns("PREDICTOR", "MAE_S", "N")
+        pred_table.add_columns("PREDICTOR", "MAE [lo–hi]", "N")
         for row in per_predictor:
             pred_table.add_row(
-                row.get("predictor_id", ""),
-                f"{row.get('mae_s', 0):.1f}",
-                str(row.get("n", 0)),
+                row.get("predictor_id", ""), self._mae_ci_cell(row), str(row.get("n", 0))
             )
 
         horizon_table = self.query_one("#horizon-buckets-table", DataTable)
@@ -241,7 +256,82 @@ class LeaderboardScreen(Screen):
                 str(row.get("n", 0)),
             )
 
+        self._render_latency(per_predictor)
+        self._render_significance(metrics.get("significance"))
+        self._render_provenance(run_info.get("provenance"), metrics.get("seed"))
+
         self.query_one("#run-detail").display = True
+
+    def _mae_ci_cell(self, row: dict[str, Any]) -> Text:
+        """``MAE [lo–hi]`` cell — MAE plain, CI in the dim token color, or ``—`` when absent."""
+        mae = row.get("mae")
+        mae_str = f"{mae:.1f}" if isinstance(mae, (int, float)) else "—"
+        ci = row.get("mae_ci")
+        if not ci:
+            return Text(mae_str)
+        lo, hi = ci.get("lo"), ci.get("hi")
+        if lo is None or hi is None:
+            return Text(mae_str)
+        text = Text(mae_str)
+        text.append(f" [{lo:.1f}–{hi:.1f}]", style="dim")
+        return text
+
+    def _render_latency(self, per_predictor: list[dict[str, Any]]) -> None:
+        table = self.query_one("#latency-table", DataTable)
+        table.clear()
+        for row in per_predictor:
+            latency = row.get("latency")
+            pid = row.get("predictor_id", "")
+            if not latency:
+                table.add_row(pid, "—", "—", "—", "—")
+                continue
+            table.add_row(
+                pid,
+                f"{latency.get('p50_s', 0):.3f}",
+                f"{latency.get('p95_s', 0):.3f}",
+                f"{latency.get('p99_s', 0):.3f}",
+                str(latency.get("count", 0)),
+            )
+
+    def _render_significance(self, significance: list[dict[str, Any]] | None) -> None:
+        widget = self.query_one("#significance-block", Static)
+        if not significance:
+            widget.update("no significance data" if significance is not None else "—")
+            return
+        lines = []
+        for row in significance:
+            a, b = row.get("a", "?"), row.get("b", "?")
+            diff_mean = row.get("diff_mean", 0.0) or 0.0
+            better, worse = (a, b) if diff_mean <= 0 else (b, a)
+            star = "*" if row.get("reject") else ""
+            p_adj = row.get("p_adjusted", row.get("p_value", 0.0))
+            lines.append(f"[{row.get('test', '?')}] {better} > {worse} (p={p_adj:.2f}{star})")
+        widget.update("\n".join(lines))
+
+    def _render_provenance(
+        self, provenance: dict[str, Any] | None, seed: int | None
+    ) -> None:
+        widget = self.query_one("#provenance-block", Static)
+        if not provenance:
+            widget.update("—")
+            return
+
+        def _sha(sha: str | None, dirty: bool | None) -> str:
+            if not sha:
+                return "—"
+            return f"{sha[:8]}{'*' if dirty else ''}"
+
+        etaval_sha = _sha(provenance.get("etaval_git_sha"), provenance.get("etaval_dirty"))
+        gtfs_eta_sha = _sha(provenance.get("gtfs_eta_git_sha"), provenance.get("gtfs_eta_dirty"))
+        lines = [
+            f"etaval:    {etaval_sha}",
+            f"gtfs-eta:  {gtfs_eta_sha}",
+            f"snapshot:  {provenance.get('gtfs_snapshot') or '—'}",
+            f"seed:      {seed if seed is not None else provenance.get('seed', '—')}",
+            f"config:    {(provenance.get('source_config_sha256') or '—')[:12]}",
+            f"created:   {provenance.get('created_at') or '—'}",
+        ]
+        widget.update("\n".join(lines))
 
     def action_back(self) -> None:
         detail = self.query_one("#run-detail")
@@ -269,6 +359,8 @@ class ExplorerScreen(Screen):
             yield Button("APPLY", id="apply-filter")
         yield DataTable(id="explorer-table")
         yield Static("", id="horizon-chart", classes="panel")
+        yield Label("CALIBRATION (nominal vs empirical coverage)", classes="micro-label")
+        yield Static("", id="calibration-block", classes="panel")
         yield Footer()
 
     def on_mount(self) -> None:
@@ -280,6 +372,7 @@ class ExplorerScreen(Screen):
         """Load results for *run_id* (called externally or wired to Leaderboard later)."""
         self._run_id = run_id
         self.run_worker(self._load_results(), exclusive=True, group="load-results")
+        self.run_worker(self._load_calibration(), exclusive=True, group="load-calibration")
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == "apply-filter":
@@ -331,6 +424,35 @@ class ExplorerScreen(Screen):
             lines.append(f"{bucket:>5}s | {'#' * bar_len} {mae:.1f}")
 
         self.query_one("#horizon-chart", Static).update("\n".join(lines) or "no data")
+
+    async def _load_calibration(self) -> None:
+        widget = self.query_one("#calibration-block", Static)
+        if self._run_id is None:
+            widget.update("—")
+            return
+        try:
+            metrics = await self.app.client.get_metrics(self._run_id, stats=1)
+        except Exception:  # noqa: BLE001
+            widget.update("—")
+            return
+
+        calibration = metrics.get("calibration")
+        if not calibration:
+            widget.update("no calibration data")
+            return
+
+        lines = []
+        for row in calibration:
+            band = row.get("band_label", "?")
+            tol = row.get("tolerance_s", 0)
+            nominal = row.get("nominal_coverage", 0.0) or 0.0
+            empirical = row.get("empirical_coverage", 0.0) or 0.0
+            n = row.get("n", 0)
+            lines.append(
+                f"{band:>6} @{tol:>4.0f}s  nominal={nominal:5.2f}  "
+                f"empirical={empirical:5.2f}  n={n}"
+            )
+        widget.update("\n".join(lines))
 
 
 # ── TELEMETRY ────────────────────────────────────────────────────────────────

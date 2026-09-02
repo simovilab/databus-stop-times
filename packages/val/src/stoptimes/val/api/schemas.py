@@ -40,13 +40,22 @@ class RunInfo(pydantic.BaseModel):
 class MetricsResponse(pydantic.BaseModel):
     """Response body for GET /api/runs/{id}/metrics.
 
-    Wraps the output of ``MetricsReport.summary()``.
+    Wraps the output of ``MetricsReport.summary()``. When ``?stats=1`` is
+    requested, ``per_predictor`` entries additionally carry ``mae_ci`` and
+    ``latency`` keys, and ``significance``/``calibration``/``seed`` are set.
+    These three fields are left unset (not merely ``None``) on the plain
+    (no-stats) path so the route can serve them with
+    ``response_model_exclude_unset=True`` and keep that response
+    byte-identical to the pre-stats contract.
     """
 
     per_predictor: list[dict]
     horizon_buckets: list[dict]
     convergence: list[dict]
     head_to_head: list[dict]
+    significance: list[dict] | None = None
+    calibration: list[dict] | None = None
+    seed: int | None = None
 
 
 class ResultRow(pydantic.BaseModel):

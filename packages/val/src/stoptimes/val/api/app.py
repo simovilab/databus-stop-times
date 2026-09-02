@@ -170,9 +170,22 @@ def create_app(run_manager: RunManager | None = None) -> FastAPI:
             raise HTTPException(status_code=404, detail=f"Run {run_id!r} not found")
         return _state_to_info(state)
 
-    @app.get("/api/runs/{run_id}/metrics")
-    async def get_metrics(run_id: str) -> MetricsResponse:
-        """Compute and return the full metrics report for a completed run."""
+    @app.get("/api/runs/{run_id}/metrics", response_model_exclude_unset=True)
+    async def get_metrics(
+        run_id: str,
+        stats: Annotated[int, Query()] = 0,
+    ) -> MetricsResponse:
+        """Compute and return the full metrics report for a completed run.
+
+        With ``?stats=1`` (only valid for DONE runs), the response is
+        augmented with a per-predictor ``mae_ci``/``latency`` and top-level
+        ``significance``/``calibration``/``seed`` — see
+        :mod:`etaval.api.stats_ext` for the full contract. The augmentation
+        is computed once per run and cached on the RunManager. Without
+        ``stats``, the response is byte-identical to the pre-stats contract
+        (``response_model_exclude_unset=True`` keeps the three new top-level
+        fields out of the payload entirely when they were never set).
+        """
         state = run_manager.get_run(run_id)
         if state is None:
             raise HTTPException(status_code=404, detail=f"Run {run_id!r} not found")
@@ -183,7 +196,35 @@ def create_app(run_manager: RunManager | None = None) -> FastAPI:
             storage.close()
         report = compute_metrics(results)
         s = report.summary()
-        return MetricsResponse(**s)
+
+        if not stats:
+            return MetricsResponse(**s)
+
+        if state.status != "done":
+            raise HTTPException(
+                status_code=409,
+                detail=f"Run {run_id!r} is not done (status={state.status!r}); "
+                "?stats=1 requires a completed run",
+            )
+
+        ext = run_manager.get_stats_extension(run_id, results)
+        per_predictor_ext = ext["per_predictor_ext"]
+
+        per_predictor = [dict(row) for row in s["per_predictor"]]
+        for row in per_predictor:
+            pred_ext = per_predictor_ext.get(row.get("predictor_id"), {})
+            row["mae_ci"] = pred_ext.get("mae_ci")
+            row["latency"] = pred_ext.get("latency")
+
+        return MetricsResponse(
+            per_predictor=per_predictor,
+            horizon_buckets=s["horizon_buckets"],
+            convergence=s["convergence"],
+            head_to_head=s["head_to_head"],
+            significance=ext["significance"],
+            calibration=ext["calibration"],
+            seed=ext["seed"],
+        )
 
     @app.get("/api/runs/{run_id}/results")
     async def get_results(

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import type { RunInfo, RunMetrics, ResultRow } from '~/types/api'
+import type { RunInfo, RunMetrics, ResultRow, PerPredictorMetric } from '~/types/api'
 
 const route = useRoute()
 const id = route.params.id as string
@@ -36,7 +36,7 @@ const statusColors: Record<string, BadgeColor> = {
 async function loadPostRunData() {
   try {
     const [m, r] = await Promise.all([
-      api.getMetrics(id),
+      api.getMetrics(id, true),
       api.getResults(id, { limit: 50 })
     ])
     metrics.value = m
@@ -89,9 +89,52 @@ function fmtDate(iso: string | null): string {
   return new Date(iso).toLocaleString()
 }
 
+function fmtSha(sha: string | null | undefined, dirty: boolean | null | undefined): string {
+  if (!sha) return '—'
+  const short = sha.slice(0, 10)
+  return dirty ? `${short}*` : short
+}
+
+const provenance = computed(() => run.value?.provenance ?? null)
+
 function fmtNum(n: number | undefined): string {
   if (n === undefined || n === null) return '—'
   return n.toFixed(1)
+}
+
+function fmtMs(sec: number | undefined | null): string {
+  if (sec === undefined || sec === null || !isFinite(sec)) return '—'
+  return Math.round(sec * 1000).toLocaleString()
+}
+
+function fmtCiRange(ci: PerPredictorMetric['mae_ci']): string {
+  if (!ci || !isFinite(ci.lo) || !isFinite(ci.hi)) return '—'
+  return `${ci.lo.toFixed(1)}–${ci.hi.toFixed(1)}`
+}
+
+// ── Significance (per test family, split into rejected vs n.s.) ────────────
+const significanceByTest = computed(() => {
+  const rows = metrics.value?.significance ?? []
+  const families = new Map<string, { rejected: typeof rows; nsCount: number }>()
+  for (const r of rows) {
+    const key = r.test
+    if (!families.has(key)) families.set(key, { rejected: [], nsCount: 0 })
+    const bucket = families.get(key)!
+    if (r.reject) bucket.rejected.push(r)
+    else bucket.nsCount += 1
+  }
+  return Array.from(families.entries()).map(([test, v]) => ({ test, ...v }))
+})
+
+const hasSignificance = computed(() => (metrics.value?.significance?.length ?? 0) > 0)
+
+function sigWinner(r: { a: string; b: string; diff_mean: number }): { winner: string; loser: string } {
+  // diff_mean is a - b; negative means a has lower error (a wins).
+  return r.diff_mean <= 0 ? { winner: r.a, loser: r.b } : { winner: r.b, loser: r.a }
+}
+
+function testLabel(test: string): string {
+  return test === 'diebold_mariano' ? 'Diebold–Mariano' : 'Wilcoxon'
 }
 
 // ── Winner (lowest MAE) ────────────────────────────────────────────────────
@@ -208,6 +251,8 @@ const isError = computed(() => displayStatus.value === 'error')
                 <th class="text-right py-1.5 px-3 font-normal">RMSE (s)</th>
                 <th class="text-right py-1.5 px-3 font-normal">MAPE (%)</th>
                 <th class="text-right py-1.5 px-3 font-normal">Bias (s)</th>
+                <th class="text-right py-1.5 px-3 font-normal">MAE 95% CI</th>
+                <th class="text-right py-1.5 px-3 font-normal">P95 latency (ms)</th>
                 <th class="text-right py-1.5 px-3 font-normal">Count</th>
               </tr>
             </thead>
@@ -225,6 +270,8 @@ const isError = computed(() => displayStatus.value === 'error')
                 <td class="py-1 px-3 text-right tabular-nums">{{ fmtNum(m.rmse) }}</td>
                 <td class="py-1 px-3 text-right tabular-nums">{{ fmtNum(m.mape) }}</td>
                 <td class="py-1 px-3 text-right tabular-nums">{{ fmtNum(m.bias) }}</td>
+                <td class="py-1 px-3 text-right tabular-nums text-dim">{{ fmtCiRange(m.mae_ci) }}</td>
+                <td class="py-1 px-3 text-right tabular-nums text-dim">{{ fmtMs(m.latency?.p95_s) }}</td>
                 <td class="py-1 px-3 text-right tabular-nums text-dim">{{ m.count.toLocaleString() }}</td>
               </tr>
             </tbody>
@@ -256,6 +303,47 @@ const isError = computed(() => displayStatus.value === 'error')
               </tr>
             </tbody>
           </table>
+        </div>
+      </div>
+
+      <!-- Significance -->
+      <div v-if="hasSignificance" class="panel">
+        <div class="panel-header"><span class="micro-label">Significance</span></div>
+        <div class="px-3 py-2 space-y-3">
+          <div v-for="fam in significanceByTest" :key="fam.test">
+            <div class="tile-l mb-1">{{ testLabel(fam.test) }}</div>
+            <div v-if="fam.rejected.length === 0" class="text-xs text-dim">
+              no significant pairs
+            </div>
+            <div v-else class="space-y-0.5">
+              <div
+                v-for="(r, i) in fam.rejected"
+                :key="`${fam.test}-${r.a}-${r.b}-${i}`"
+                class="text-[11px] font-mono"
+              >
+                <span class="text-accent">{{ sigWinner(r).winner }}</span>
+                <span class="text-dim mx-1">▸</span>
+                <span class="text-main">{{ sigWinner(r).loser }}</span>
+                <span class="text-dim ml-2">p={{ r.p_adjusted.toFixed(3) }}*</span>
+              </div>
+            </div>
+            <div v-if="fam.nsCount > 0" class="text-[11px] text-dim mt-1">
+              n.s. pairs: {{ fam.nsCount }}
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Provenance -->
+      <div v-if="provenance" class="panel">
+        <div class="panel-header"><span class="micro-label">Provenance</span></div>
+        <div class="px-3 py-2 grid grid-cols-2 sm:grid-cols-3 gap-x-6">
+          <div class="kv-row"><span class="k">etaval SHA</span><span class="v font-mono">{{ fmtSha(provenance.etaval_git_sha, provenance.etaval_dirty) }}</span></div>
+          <div class="kv-row"><span class="k">gtfs-eta SHA</span><span class="v font-mono">{{ fmtSha(provenance.gtfs_eta_git_sha, provenance.gtfs_eta_dirty) }}</span></div>
+          <div class="kv-row"><span class="k">Snapshot</span><span class="v">{{ provenance.gtfs_snapshot ?? '—' }}</span></div>
+          <div class="kv-row"><span class="k">Seed</span><span class="v">{{ provenance.seed ?? '—' }}</span></div>
+          <div class="kv-row"><span class="k">Config hash</span><span class="v font-mono">{{ provenance.source_config_sha256 ? provenance.source_config_sha256.slice(0, 10) : '—' }}</span></div>
+          <div class="kv-row"><span class="k">Created</span><span class="v">{{ fmtDate(provenance.created_at ?? null) }}</span></div>
         </div>
       </div>
 

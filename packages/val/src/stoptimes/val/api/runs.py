@@ -17,7 +17,9 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal
 
+from etaval.api.stats_ext import compute_stats_extension
 from etaval.api.telemetry import TelemetryCollector
+from etaval.domain.models import ValidationResult
 from etaval.engine.assembly import LiveRunDeps, build_live_run
 from etaval.engine.runtime import RunSummary, TickEvent, run_engine
 from etaval.feeds.source_config import load_named_source
@@ -81,6 +83,8 @@ class RunManager:
         self._tasks: dict[str, asyncio.Task] = {}
         # Phase B broadcast: run_id → list of subscriber queues.
         self._subscribers: dict[str, list[asyncio.Queue]] = {}
+        # ?stats=1 augmentation, computed once per run and cached in memory.
+        self._stats_cache: dict[str, dict[str, Any]] = {}
 
         self._load_index()
 
@@ -376,6 +380,25 @@ class RunManager:
         """Return all known RunStates (live + persisted), newest first."""
         return sorted(self._runs.values(), key=lambda s: s.started_at, reverse=True)
 
+    def get_stats_extension(
+        self, run_id: str, results: list[ValidationResult]
+    ) -> dict[str, Any]:
+        """Return the cached ``?stats=1`` augmentation for *run_id*, computing it once.
+
+        Callers are responsible for only invoking this for DONE runs — the
+        computation itself is a pure function of the run's persisted results
+        (plus its summary's inference-latency block) and is deterministic
+        given the pinned seed, so it is safe to cache indefinitely in memory.
+        """
+        cached = self._stats_cache.get(run_id)
+        if cached is not None:
+            return cached
+        state = self._runs.get(run_id)
+        summary = state.summary if state is not None else None
+        ext = compute_stats_extension(results, summary)
+        self._stats_cache[run_id] = ext
+        return ext
+
     async def delete_run(self, run_id: str) -> bool:
         """Cancel running task (if any) and remove the run from the index.
 
@@ -405,5 +428,6 @@ class RunManager:
             pass
 
         self._subscribers.pop(run_id, None)
+        self._stats_cache.pop(run_id, None)
         self._persist()
         return True
