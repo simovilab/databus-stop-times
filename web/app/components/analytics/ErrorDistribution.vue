@@ -33,34 +33,35 @@ const xTickFormat = (v: number) => `${v > 0 ? '+' : ''}${v}s`
 </script>
 
 <template>
-  <UCard>
-    <template #header>
-      <h3 class="text-sm font-semibold text-gray-800 dark:text-gray-200">Error Distribution</h3>
-      <p class="text-xs text-gray-400 mt-0.5">+ = late, − = early</p>
-    </template>
+  <div class="panel">
+    <div class="panel-header">
+      <span class="micro-label">Error distribution</span>
+      <span class="micro-label">+ late / − early</span>
+    </div>
+    <div class="p-3">
+      <ClientOnly>
+        <div v-if="hasData">
+          <VisBulletLegend :items="legendItems" class="mb-3" />
+          <VisXYContainer :data="data" :height="220">
+            <VisGroupedBar
+              :x="xAccessor"
+              :y="yAccessors"
+              :color="barColors"
+              :data-step="60"
+              :rounded-corners="0"
+            />
+            <VisAxis type="x" label="Error (s)" :tick-format="xTickFormat" />
+            <VisAxis type="y" label="Count" />
+          </VisXYContainer>
+        </div>
+        <div v-else class="py-8 text-center text-xs text-dim">
+          No data for selected filters.
+        </div>
 
-    <ClientOnly>
-      <div v-if="hasData">
-        <VisBulletLegend :items="legendItems" class="mb-3" />
-        <VisXYContainer :data="data" :height="220">
-          <VisGroupedBar
-            :x="xAccessor"
-            :y="yAccessors"
-            :color="barColors"
-            :data-step="60"
-            :rounded-corners="2"
-          />
-          <VisAxis type="x" label="Error (s)" :tick-format="xTickFormat" />
-          <VisAxis type="y" label="Count" />
-        </VisXYContainer>
-      </div>
-      <div v-else class="py-8 text-center text-sm text-gray-400 dark:text-gray-600">
-        No data for selected filters.
-      </div>
-
-      <template #fallback>
-        <div class="h-[220px] bg-gray-100 dark:bg-gray-800 rounded animate-pulse" />
-      </template>
-    </ClientOnly>
-  </UCard>
+        <template #fallback>
+          <div class="h-[220px] bg-panel animate-pulse" />
+        </template>
+      </ClientOnly>
+    </div>
+  </div>
 </template>

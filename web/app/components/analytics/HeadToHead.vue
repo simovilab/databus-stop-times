@@ -41,68 +41,68 @@ const hasContests = computed(() => totalContests.value > 0)
 </script>
 
 <template>
-  <UCard>
-    <template #header>
-      <div>
-        <h3 class="text-sm font-semibold text-gray-800 dark:text-gray-200">Head-to-Head Win Rate</h3>
-        <p v-if="hasContests" class="text-xs text-gray-400 mt-0.5">
-          {{ totalContests.toLocaleString() }} contested (trip, stop) pairs
-        </p>
-      </div>
-    </template>
+  <div class="panel">
+    <div class="panel-header">
+      <span class="micro-label">Head-to-head win rate</span>
+      <span v-if="hasContests" class="text-[10px] text-dim">
+        {{ totalContests.toLocaleString() }} contested pairs
+      </span>
+    </div>
 
-    <ClientOnly>
-      <div v-if="hasContests">
-        <VisBulletLegend :items="legendItems" class="mb-3" />
-        <div class="grid grid-cols-2 gap-4">
-          <!-- Win count bars -->
-          <div>
-            <p class="text-xs text-gray-500 mb-2 text-center">Win count</p>
-            <VisXYContainer :data="barData" :height="180">
-              <VisGroupedBar
-                :x="xAccessor"
-                :y="yWins"
-                :color="barColors"
-                :data-step="1"
-                :rounded-corners="2"
-              />
-              <VisAxis
-                type="x"
-                :tick-format="xTickFormat"
-                :num-ticks="props.data.length"
-              />
-              <VisAxis type="y" label="Wins" />
-            </VisXYContainer>
-          </div>
+    <div class="p-3">
+      <ClientOnly>
+        <div v-if="hasContests">
+          <VisBulletLegend :items="legendItems" class="mb-3" />
+          <div class="grid grid-cols-2 gap-4">
+            <!-- Win count bars -->
+            <div>
+              <p class="text-xs text-dim mb-2 text-center">Win count</p>
+              <VisXYContainer :data="barData" :height="180">
+                <VisGroupedBar
+                  :x="xAccessor"
+                  :y="yWins"
+                  :color="barColors"
+                  :data-step="1"
+                  :rounded-corners="0"
+                />
+                <VisAxis
+                  type="x"
+                  :tick-format="xTickFormat"
+                  :num-ticks="props.data.length"
+                />
+                <VisAxis type="y" label="Wins" />
+              </VisXYContainer>
+            </div>
 
-          <!-- Win share donut -->
-          <div>
-            <p class="text-xs text-gray-500 mb-2 text-center">Win share</p>
-            <VisSingleContainer :data="data" :height="180">
-              <VisDonut
-                :value="donutValue"
-                :color="donutColor"
-                :arc-width="28"
-                :pad-angle="0.02"
-              />
-            </VisSingleContainer>
+            <!-- Win share donut -->
+            <div>
+              <p class="text-xs text-dim mb-2 text-center">Win share</p>
+              <VisSingleContainer :data="data" :height="180">
+                <VisDonut
+                  :value="donutValue"
+                  :color="donutColor"
+                  :arc-width="28"
+                  :pad-angle="0.02"
+                />
+              </VisSingleContainer>
+            </div>
           </div>
         </div>
-      </div>
 
-      <!-- Not enough predictors for head-to-head -->
-      <div v-else-if="props.data.length < 2" class="py-8 text-center text-sm text-gray-400 dark:text-gray-600">
-        Head-to-head requires at least 2 active predictors.
-      </div>
+        <!-- Not enough predictors for head-to-head -->
+        <div v-else-if="props.data.length < 2" class="py-8 text-center text-xs text-dim">
+          Head-to-head requires at least 2 active predictors.
+        </div>
 
-      <!-- No contested pairs -->
-      <div v-else class="py-8 text-center text-sm text-gray-400 dark:text-gray-600">
-        No shared (trip, stop) pairs between predictors in the current filter.
-      </div>
+        <!-- No contested pairs -->
+        <div v-else class="py-8 text-center text-xs text-dim">
+          No shared (trip, stop) pairs between predictors in the current filter.
+        </div>
 
-      <template #fallback>
-        <div class="h-[200px] bg-gray-100 dark:bg-gray-800 rounded animate-pulse" />
-      </template>
-    </ClientOnly>
-  </UCard>
+        <template #fallback>
+          <div class="h-[200px] bg-panel animate-pulse" />
+        </template>
+      </ClientOnly>
+    </div>
+  </div>
 </template>

@@ -68,9 +68,9 @@ const hasFiltered = computed(() => filtered.value.length > 0)
 </script>
 
 <template>
-  <div class="space-y-4">
+  <div class="space-y-3">
     <!-- Loading -->
-    <div v-if="loading" class="flex items-center gap-2 text-sm text-gray-500 py-4">
+    <div v-if="loading" class="flex items-center gap-2 text-xs text-dim py-4">
       <UIcon name="i-heroicons-arrow-path" class="animate-spin w-4 h-4" />
       Loading analytics data…
     </div>
@@ -119,7 +119,7 @@ const hasFiltered = computed(() => filtered.value.length > 0)
 
       <template v-else>
         <!-- Row 1: Comparison table + Horizon curve -->
-        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
           <AnalyticsPredictorComparisonTable
             :data="predictorAggs"
             :color-map="colorMap"
@@ -132,7 +132,7 @@ const hasFiltered = computed(() => filtered.value.length > 0)
         </div>
 
         <!-- Row 2: Scatter + Convergence -->
-        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
           <AnalyticsErrorScatter
             :data="filtered"
             :predictors="activePredictors"
@@ -149,7 +149,7 @@ const hasFiltered = computed(() => filtered.value.length > 0)
         </div>
 
         <!-- Row 3: Error distribution + Route breakdown -->
-        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
           <AnalyticsErrorDistribution
             :data="histData"
             :predictors="activePredictors"

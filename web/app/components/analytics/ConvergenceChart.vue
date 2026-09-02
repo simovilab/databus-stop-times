@@ -42,60 +42,60 @@ const selectionLabel = computed(() =>
 </script>
 
 <template>
-  <UCard>
-    <template #header>
-      <div class="flex items-center justify-between gap-2 min-w-0">
-        <div class="min-w-0">
-          <h3 class="text-sm font-semibold text-gray-800 dark:text-gray-200">Prediction Convergence</h3>
-          <p v-if="hasSelection" class="text-xs text-gray-400 truncate mt-0.5">{{ selectionLabel }}</p>
+  <div class="panel">
+    <div class="panel-header">
+      <div class="min-w-0">
+        <span class="micro-label">Prediction convergence</span>
+        <p v-if="hasSelection" class="text-xs text-dim truncate mt-0.5">{{ selectionLabel }}</p>
+      </div>
+      <UButton
+        v-if="hasSelection"
+        size="xs"
+        variant="ghost"
+        icon="i-heroicons-x-mark"
+        label="Clear"
+        @click="emit('clear')"
+      />
+    </div>
+
+    <div class="p-3">
+      <ClientOnly>
+        <!-- No selection yet -->
+        <div v-if="!hasSelection" class="py-8 text-center text-xs text-dim">
+          Click a point in the Error Scatter to see convergence for that trip / stop.
         </div>
-        <UButton
-          v-if="hasSelection"
-          size="xs"
-          variant="ghost"
-          icon="i-heroicons-x-mark"
-          label="Clear"
-          @click="emit('clear')"
-        />
-      </div>
-    </template>
 
-    <ClientOnly>
-      <!-- No selection yet -->
-      <div v-if="!hasSelection" class="py-8 text-center text-sm text-gray-400 dark:text-gray-600">
-        Click a point in the Error Scatter to see convergence for that trip / stop.
-      </div>
+        <!-- Selection but no rows survived filters -->
+        <div v-else-if="!hasData" class="py-8 text-center text-xs text-dim">
+          No predictions found for this trip/stop under the current filters.
+        </div>
 
-      <!-- Selection but no rows survived filters -->
-      <div v-else-if="!hasData" class="py-8 text-center text-sm text-gray-400 dark:text-gray-600">
-        No predictions found for this trip/stop under the current filters.
-      </div>
+        <!-- Chart -->
+        <div v-else>
+          <VisBulletLegend :items="legendItems" class="mb-3" />
+          <VisXYContainer :data="data" :height="220">
+            <VisLine
+              v-for="(yFn, i) in yAccessors"
+              :key="predictors[i]"
+              :x="xAccessor"
+              :y="yFn"
+              :color="lineColors[i]"
+              :fallback-value="undefined"
+              :line-width="2"
+              :highlight-on-hover="true"
+            />
+            <VisAxis type="x" label="Horizon (s)" />
+            <VisAxis type="y" label="|Error| (s)" />
+          </VisXYContainer>
+          <p class="mt-1 text-xs text-dim text-center">
+            Lower is better. X = time before arrival when prediction was made (larger = earlier).
+          </p>
+        </div>
 
-      <!-- Chart -->
-      <div v-else>
-        <VisBulletLegend :items="legendItems" class="mb-3" />
-        <VisXYContainer :data="data" :height="220">
-          <VisLine
-            v-for="(yFn, i) in yAccessors"
-            :key="predictors[i]"
-            :x="xAccessor"
-            :y="yFn"
-            :color="lineColors[i]"
-            :fallback-value="undefined"
-            :line-width="2"
-            :highlight-on-hover="true"
-          />
-          <VisAxis type="x" label="Horizon (s)" />
-          <VisAxis type="y" label="|Error| (s)" />
-        </VisXYContainer>
-        <p class="mt-1 text-xs text-gray-400 text-center">
-          Lower is better. X = time before arrival when prediction was made (larger = earlier).
-        </p>
-      </div>
-
-      <template #fallback>
-        <div class="h-[220px] bg-gray-100 dark:bg-gray-800 rounded animate-pulse" />
-      </template>
-    </ClientOnly>
-  </UCard>
+        <template #fallback>
+          <div class="h-[220px] bg-panel animate-pulse" />
+        </template>
+      </ClientOnly>
+    </div>
+  </div>
 </template>

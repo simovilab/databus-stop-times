@@ -41,24 +41,24 @@ function sortIcon(key: SortKey): string {
 </script>
 
 <template>
-  <UCard>
-    <template #header>
-      <h3 class="text-sm font-semibold text-gray-800 dark:text-gray-200">Predictor Comparison (filtered)</h3>
-    </template>
+  <div class="panel">
+    <div class="panel-header">
+      <span class="micro-label">Predictor comparison (filtered)</span>
+    </div>
 
-    <div v-if="data.length === 0" class="py-6 text-center text-sm text-gray-400">
+    <div v-if="data.length === 0" class="py-6 text-center text-xs text-dim">
       No data for selected filters.
     </div>
 
     <div v-else class="overflow-x-auto">
-      <table class="w-full text-sm text-left">
+      <table class="w-full text-[11px] text-left">
         <thead>
-          <tr class="border-b border-gray-200 dark:border-gray-700">
-            <th class="py-2 pr-4 font-semibold text-gray-600 dark:text-gray-400 whitespace-nowrap">Predictor</th>
+          <tr class="border-b border-line text-dim uppercase tracking-wide text-[10px]">
+            <th class="py-1.5 px-3 font-normal whitespace-nowrap">Predictor</th>
             <th
               v-for="col in (['mae', 'rmse', 'mape', 'bias', 'count'] as SortKey[])"
               :key="col"
-              class="py-2 px-3 font-semibold text-gray-600 dark:text-gray-400 whitespace-nowrap cursor-pointer hover:text-gray-900 dark:hover:text-gray-100 select-none"
+              class="py-1.5 px-3 font-normal whitespace-nowrap cursor-pointer hover:text-main select-none"
               @click="toggleSort(col)"
             >
               <span class="inline-flex items-center gap-1">
@@ -72,28 +72,28 @@ function sortIcon(key: SortKey): string {
           <tr
             v-for="row in sorted"
             :key="row.predictor_id"
-            class="border-b border-gray-100 dark:border-gray-800 hover:bg-gray-50 dark:hover:bg-gray-800/50"
+            class="border-b border-[#141f1a]"
           >
-            <td class="py-2 pr-4 whitespace-nowrap">
+            <td class="py-1 px-3 whitespace-nowrap">
               <span class="inline-flex items-center gap-2">
                 <span
-                  class="w-2.5 h-2.5 rounded-full flex-shrink-0"
+                  class="w-2 h-2 flex-shrink-0"
                   :style="{ backgroundColor: colorMap[row.predictor_id] ?? '#999' }"
                 />
-                <span class="font-medium text-gray-800 dark:text-gray-200">{{ row.predictor_id }}</span>
+                <span class="text-bright">{{ row.predictor_id }}</span>
               </span>
             </td>
-            <td class="py-2 px-3 tabular-nums text-gray-700 dark:text-gray-300">{{ fmtNum(row.mae) }}</td>
-            <td class="py-2 px-3 tabular-nums text-gray-700 dark:text-gray-300">{{ fmtNum(row.rmse) }}</td>
-            <td class="py-2 px-3 tabular-nums text-gray-700 dark:text-gray-300">{{ fmtNum(row.mape) }}</td>
+            <td class="py-1 px-3 tabular-nums text-main">{{ fmtNum(row.mae) }}</td>
+            <td class="py-1 px-3 tabular-nums text-main">{{ fmtNum(row.rmse) }}</td>
+            <td class="py-1 px-3 tabular-nums text-main">{{ fmtNum(row.mape) }}</td>
             <td
-              class="py-2 px-3 tabular-nums"
-              :class="row.bias > 0 ? 'text-orange-600 dark:text-orange-400' : row.bias < 0 ? 'text-blue-600 dark:text-blue-400' : 'text-gray-700 dark:text-gray-300'"
+              class="py-1 px-3 tabular-nums"
+              :class="row.bias > 0 ? 'text-warn' : row.bias < 0 ? 'text-accent' : 'text-main'"
             >{{ fmtNum(row.bias) }}</td>
-            <td class="py-2 px-3 tabular-nums text-gray-500">{{ row.count.toLocaleString() }}</td>
+            <td class="py-1 px-3 tabular-nums text-dim">{{ row.count.toLocaleString() }}</td>
           </tr>
         </tbody>
       </table>
     </div>
-  </UCard>
+  </div>
 </template>

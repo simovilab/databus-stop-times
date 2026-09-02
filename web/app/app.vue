@@ -1,34 +1,65 @@
+<script setup lang="ts">
+const config = useRuntimeConfig()
+const apiBase = config.public.apiBase as string
+
+const healthOk = ref<boolean | null>(null)
+
+async function pingHealth() {
+  try {
+    await $fetch('/api/health', { baseURL: apiBase })
+    healthOk.value = true
+  } catch {
+    healthOk.value = false
+  }
+}
+
+let timer: ReturnType<typeof setInterval> | undefined
+
+onMounted(() => {
+  pingHealth()
+  timer = setInterval(pingHealth, 15000)
+})
+
+onUnmounted(() => {
+  if (timer) clearInterval(timer)
+})
+
+const healthLedClass = computed(() => {
+  if (healthOk.value === null) return 'status-led idle'
+  return healthOk.value ? 'status-led ok' : 'status-led err'
+})
+
+const healthLabel = computed(() => {
+  if (healthOk.value === null) return 'checking'
+  return healthOk.value ? 'online' : 'offline'
+})
+</script>
+
 <template>
   <UApp>
-    <div class="min-h-screen bg-gray-50 dark:bg-gray-950">
+    <div class="min-h-screen bg-void text-main">
       <!-- Top navigation -->
-      <header class="border-b border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900 sticky top-0 z-10">
-        <div class="max-w-6xl mx-auto px-4 py-3 flex items-center gap-6">
-          <NuxtLink to="/" class="font-bold text-lg tracking-tight text-gray-900 dark:text-white">
-            etaval
+      <header class="sticky top-0 z-10 border-b border-line bg-panel">
+        <div class="flex items-center h-10 px-3 gap-4">
+          <NuxtLink to="/" class="text-bright font-bold tracking-wide text-[13px] shrink-0">
+            etaval<span class="text-dim">://</span>
           </NuxtLink>
-          <nav class="flex gap-4">
-            <NuxtLink
-              to="/"
-              class="text-sm font-medium text-gray-600 hover:text-primary-500 dark:text-gray-400 dark:hover:text-primary-400"
-              active-class="text-primary-600 dark:text-primary-400"
-              exact
-            >
-              New Run
-            </NuxtLink>
-            <NuxtLink
-              to="/runs"
-              class="text-sm font-medium text-gray-600 hover:text-primary-500 dark:text-gray-400 dark:hover:text-primary-400"
-              active-class="text-primary-600 dark:text-primary-400"
-            >
-              History
-            </NuxtLink>
+          <nav class="flex h-full">
+            <NuxtLink to="/" class="nav-link" active-class="active" exact> Console </NuxtLink>
+            <NuxtLink to="/runs" class="nav-link" active-class="active"> Leaderboard </NuxtLink>
+            <NuxtLink to="/explorer" class="nav-link" active-class="active"> Explorer </NuxtLink>
+            <NuxtLink to="/telemetry" class="nav-link" active-class="active"> Telemetry </NuxtLink>
           </nav>
+          <div class="ml-auto flex items-center gap-2 text-[11px] text-dim shrink-0">
+            <span class="micro-label">api</span>
+            <span :class="healthLedClass" />
+            <span>{{ healthLabel }}</span>
+          </div>
         </div>
       </header>
 
       <!-- Page content -->
-      <main class="max-w-6xl mx-auto px-4 py-8">
+      <main class="w-full">
         <NuxtPage />
       </main>
     </div>

@@ -50,37 +50,39 @@ const hasData = computed(() => props.data.some((d) => props.predictors.some((p) 
 </script>
 
 <template>
-  <UCard>
-    <template #header>
-      <h3 class="text-sm font-semibold text-gray-800 dark:text-gray-200">MAE by Horizon Bucket</h3>
-    </template>
+  <div class="panel">
+    <div class="panel-header">
+      <span class="micro-label">MAE by horizon bucket</span>
+    </div>
 
-    <ClientOnly>
-      <div v-if="hasData">
-        <VisBulletLegend :items="legendItems" class="mb-3" />
-        <VisXYContainer :data="data" :height="220" :x-domain="[-0.5, 3.5]">
-          <VisLine
-            v-for="(yFn, i) in yAccessors"
-            :key="predictors[i]"
-            :x="xAccessor"
-            :y="yFn"
-            :color="lineColors[i]"
-            :fallback-value="undefined"
-            :line-width="2"
-            :highlight-on-hover="true"
-          />
-          <VisAxis type="x" :tick-format="xTickFormat" label="Horizon" />
-          <VisAxis type="y" label="MAE (s)" />
-          <VisCrosshair :x="xAccessor" :y="crosshairY" :color="lineColors" />
-        </VisXYContainer>
-      </div>
-      <div v-else class="py-8 text-center text-sm text-gray-400 dark:text-gray-600">
-        No data for selected filters.
-      </div>
+    <div class="p-3">
+      <ClientOnly>
+        <div v-if="hasData">
+          <VisBulletLegend :items="legendItems" class="mb-3" />
+          <VisXYContainer :data="data" :height="220" :x-domain="[-0.5, 3.5]">
+            <VisLine
+              v-for="(yFn, i) in yAccessors"
+              :key="predictors[i]"
+              :x="xAccessor"
+              :y="yFn"
+              :color="lineColors[i]"
+              :fallback-value="undefined"
+              :line-width="2"
+              :highlight-on-hover="true"
+            />
+            <VisAxis type="x" :tick-format="xTickFormat" label="Horizon" />
+            <VisAxis type="y" label="MAE (s)" />
+            <VisCrosshair :x="xAccessor" :y="crosshairY" :color="lineColors" />
+          </VisXYContainer>
+        </div>
+        <div v-else class="py-8 text-center text-xs text-dim">
+          No data for selected filters.
+        </div>
 
-      <template #fallback>
-        <div class="h-[220px] bg-gray-100 dark:bg-gray-800 rounded animate-pulse" />
-      </template>
-    </ClientOnly>
-  </UCard>
+        <template #fallback>
+          <div class="h-[220px] bg-panel animate-pulse" />
+        </template>
+      </ClientOnly>
+    </div>
+  </div>
 </template>

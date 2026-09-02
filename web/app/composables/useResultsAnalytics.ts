@@ -52,9 +52,8 @@ function mean(vals: number[]): number {
 }
 
 const PALETTE: readonly string[] = [
-  '#3b82f6', '#ef4444', '#10b981', '#f59e0b',
-  '#8b5cf6', '#06b6d4', '#f97316', '#84cc16',
-  '#ec4899', '#64748b',
+  '#2fd67b', '#7ee0a8', '#b8e8d0', '#e0b040', '#e06060',
+  '#6fd6d0', '#a0d68f', '#d0c060', '#8090e0', '#d08fd0',
 ]
 
 const BUCKET_LABELS: readonly string[] = ['<2m', '2-5m', '5-10m', '>10m']

@@ -1,8 +1,7 @@
 <script setup lang="ts">
-import type { TableRow } from '@nuxt/ui'
 import type { RunInfo } from '~/types/api'
 
-useHead({ title: 'History – etaval' })
+useHead({ title: 'leaderboard – etaval' })
 
 const api = useApi()
 const router = useRouter()
@@ -10,14 +9,6 @@ const router = useRouter()
 const runs = ref<RunInfo[]>([])
 const loading = ref(false)
 const loadError = ref<string | null>(null)
-
-type BadgeColor = 'success' | 'info' | 'warning' | 'error' | 'neutral'
-const statusColors: Record<string, BadgeColor> = {
-  pending: 'warning',
-  running: 'info',
-  done: 'success',
-  error: 'error'
-}
 
 async function loadRuns() {
   loading.value = true
@@ -44,86 +35,98 @@ function fmtDate(iso: string | null): string {
   return new Date(iso).toLocaleString()
 }
 
-function fmtPredictors(preds: string[]): string {
-  return preds.join(', ')
+function fmtDuration(run: RunInfo): string {
+  if (!run.started_at) return '—'
+  const start = new Date(run.started_at).getTime()
+  const end = run.ended_at ? new Date(run.ended_at).getTime() : Date.now()
+  const secs = Math.max(0, Math.round((end - start) / 1000))
+  const m = Math.floor(secs / 60)
+  const s = secs % 60
+  return `${m}m ${s}s`
 }
 
-// TanStack Table column definitions for UTable
-const columns = [
-  { accessorKey: 'status', header: 'Status' },
-  {
-    id: 'source',
-    header: 'Source',
-    accessorFn: (row: RunInfo) => row.params.source
-  },
-  {
-    id: 'predictors',
-    header: 'Predictors',
-    accessorFn: (row: RunInfo) => fmtPredictors(row.params.predictors)
-  },
-  {
-    id: 'counts',
-    header: 'Ticks / Samples / Results',
-    accessorFn: (row: RunInfo) =>
-      `${row.summary.ticks} / ${row.summary.samples_saved} / ${row.summary.results_saved}`
-  },
-  {
-    id: 'started_at',
-    header: 'Started',
-    accessorFn: (row: RunInfo) => fmtDate(row.started_at)
-  }
-]
+function shortId(id: string): string {
+  return id.length > 22 ? `${id.slice(0, 22)}…` : id
+}
+
+function ledClass(status: string): string {
+  if (status === 'error') return 'status-led err'
+  if (status === 'running' || status === 'pending') return 'status-led warn'
+  if (status === 'done') return 'status-led ok'
+  return 'status-led idle'
+}
+
+function goTo(id: string) {
+  router.push(`/runs/${id}`)
+}
 </script>
 
 <template>
-  <div>
-    <div class="flex items-center justify-between mb-6">
-      <h1 class="text-2xl font-bold text-gray-900 dark:text-white">Run history</h1>
+  <div class="p-3">
+    <div class="flex items-center justify-between mb-3">
+      <div class="sec-h flex-1">Run history</div>
       <UButton
         label="Refresh"
         variant="outline"
         icon="i-heroicons-arrow-path"
         :loading="loading"
+        size="xs"
+        class="ml-3"
         @click="loadRuns"
       />
     </div>
 
-    <UAlert
-      v-if="loadError"
-      color="error"
-      variant="subtle"
-      :title="loadError"
-      class="mb-4"
-    />
+    <UAlert v-if="loadError" color="error" variant="subtle" :title="loadError" class="mb-4" />
 
     <!-- Empty state -->
-    <div
-      v-if="!loading && !loadError && runs.length === 0"
-      class="text-center py-16 text-gray-500"
-    >
-      <p class="text-lg">No runs yet.</p>
-      <p class="text-sm mt-2">
-        <NuxtLink to="/" class="text-primary-500 hover:underline">Start one →</NuxtLink>
+    <div v-if="!loading && !loadError && runs.length === 0" class="text-center py-16 text-dim">
+      <p class="text-sm">No runs yet.</p>
+      <p class="text-xs mt-2">
+        <NuxtLink to="/" class="text-accent hover:underline">start one →</NuxtLink>
       </p>
     </div>
 
-    <!-- Runs table -->
-    <UTable
-      v-if="runs.length > 0"
-      :data="runs"
-      :columns="columns"
-      :loading="loading"
-      class="cursor-pointer"
-      @select="(_e: Event, row: TableRow<RunInfo>) => router.push(`/runs/${row.original.id}`)"
-    >
-      <!-- Status badge -->
-      <template #status-cell="{ row }">
-        <UBadge
-          :color="statusColors[row.original.status] ?? 'neutral'"
-          variant="subtle"
-          :label="row.original.status"
-        />
-      </template>
-    </UTable>
+    <!-- Bento cards -->
+    <div v-if="runs.length > 0" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+      <div
+        v-for="run in runs"
+        :key="run.id"
+        class="panel p-3 cursor-pointer hover:border-accent transition-colors"
+        @click="goTo(run.id)"
+      >
+        <div class="flex items-center gap-2 mb-2">
+          <span :class="ledClass(run.status)" />
+          <span class="text-bright font-mono text-xs truncate" :title="run.id">{{ shortId(run.id) }}</span>
+          <span class="ml-auto text-[10px] uppercase tracking-wide text-dim">{{ run.status }}</span>
+        </div>
+
+        <div class="kv-row"><span class="k">Source</span><span class="v">{{ run.params.source }}</span></div>
+        <div class="kv-row"><span class="k">Duration</span><span class="v">{{ fmtDuration(run) }}</span></div>
+        <div class="kv-row"><span class="k">Started</span><span class="v">{{ fmtDate(run.started_at) }}</span></div>
+
+        <div class="flex flex-wrap gap-1 mt-2 mb-2">
+          <span v-for="p in run.params.predictors" :key="p" class="chip pointer-events-none">{{ p }}</span>
+        </div>
+
+        <div class="grid grid-cols-4 gap-px bg-line mt-2">
+          <div class="bg-panel px-1.5 py-1">
+            <div class="tile-l">Ticks</div>
+            <div class="text-sm text-bright tabular-nums">{{ run.summary.ticks }}</div>
+          </div>
+          <div class="bg-panel px-1.5 py-1">
+            <div class="tile-l">Samples</div>
+            <div class="text-sm text-bright tabular-nums">{{ run.summary.samples_saved }}</div>
+          </div>
+          <div class="bg-panel px-1.5 py-1">
+            <div class="tile-l">Arrivals</div>
+            <div class="text-sm text-bright tabular-nums">{{ run.summary.arrivals_saved }}</div>
+          </div>
+          <div class="bg-panel px-1.5 py-1">
+            <div class="tile-l">Results</div>
+            <div class="text-sm text-bright tabular-nums">{{ run.summary.results_saved }}</div>
+          </div>
+        </div>
+      </div>
+    </div>
   </div>
 </template>

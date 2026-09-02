@@ -4,7 +4,7 @@ import type { RunInfo, RunMetrics, ResultRow } from '~/types/api'
 const route = useRoute()
 const id = route.params.id as string
 
-useHead({ title: `Run ${id} – etaval` })
+useHead({ title: `run ${id} – etaval` })
 
 const api = useApi()
 const router = useRouter()
@@ -94,23 +94,11 @@ function fmtNum(n: number | undefined): string {
   return n.toFixed(1)
 }
 
-// ── Metric table columns ──────────────────────────────────────────────────────
-const metricColumns = [
-  { accessorKey: 'predictor_id', header: 'Predictor' },
-  { accessorKey: 'mae', header: 'MAE (s)' },
-  { accessorKey: 'rmse', header: 'RMSE (s)' },
-  { accessorKey: 'mape', header: 'MAPE (%)' },
-  { accessorKey: 'bias', header: 'Bias (s)' },
-  { accessorKey: 'count', header: 'Count' }
-]
-
-// ── Live results feed columns ─────────────────────────────────────────────────
-const liveResultColumns = [
-  { accessorKey: 'predictor_id', header: 'Predictor' },
-  { accessorKey: 'stop_id', header: 'Stop' },
-  { accessorKey: 'error_s', header: 'Error (s)' },
-  { accessorKey: 'horizon_s', header: 'Horizon (s)' }
-]
+// ── Winner (lowest MAE) ────────────────────────────────────────────────────
+const winner = computed(() => {
+  if (!metrics.value || metrics.value.per_predictor.length === 0) return null
+  return [...metrics.value.per_predictor].sort((a, b) => a.mae - b.mae)[0] ?? null
+})
 
 // Display reactive status from stream if live, else from run snapshot
 const displayStatus = computed(() => {
@@ -131,12 +119,12 @@ const isError = computed(() => displayStatus.value === 'error')
 </script>
 
 <template>
-  <div class="space-y-6">
+  <div class="p-3 space-y-3">
     <!-- Header -->
     <div class="flex items-start justify-between gap-4">
       <div>
         <div class="flex items-center gap-3 mb-1">
-          <h1 class="text-xl font-bold text-gray-900 dark:text-white font-mono truncate max-w-xs" :title="id">
+          <h1 class="text-bright font-bold font-mono truncate max-w-xs" :title="id">
             {{ id }}
           </h1>
           <UBadge
@@ -145,13 +133,15 @@ const isError = computed(() => displayStatus.value === 'error')
             variant="subtle"
             :label="displayStatus"
           />
-          <UBadge v-if="stream.connected.value" color="info" variant="solid" label="● live" />
+          <span v-if="stream.connected.value" class="flex items-center gap-1.5 text-[10px] text-accent border border-accent px-2 py-0.5 tracking-widest uppercase">
+            <span class="status-led ok" />live
+          </span>
         </div>
-        <p v-if="run" class="text-sm text-gray-500">
-          Source: <strong>{{ run.params.source }}</strong> ·
-          Predictors: <strong>{{ run.params.predictors.join(', ') }}</strong> ·
-          Duration: <strong>{{ run.params.duration }}</strong>
-          <span v-if="run.started_at"> · Started: {{ fmtDate(run.started_at) }}</span>
+        <p v-if="run" class="text-[11px] text-dim">
+          source <span class="text-main">{{ run.params.source }}</span> ·
+          predictors <span class="text-main">{{ run.params.predictors.join(', ') }}</span> ·
+          duration <span class="text-main">{{ run.params.duration }}</span>
+          <span v-if="run.started_at"> · started {{ fmtDate(run.started_at) }}</span>
         </p>
       </div>
       <UButton
@@ -170,68 +160,16 @@ const isError = computed(() => displayStatus.value === 'error')
 
     <!-- ── LIVE VIEW ──────────────────────────────────────────────────────── -->
     <template v-if="isLive && run">
-      <!-- Live counters -->
-      <div class="grid grid-cols-2 sm:grid-cols-4 gap-4">
-        <UCard>
-          <div class="text-center">
-            <p class="text-3xl font-bold tabular-nums">{{ displaySummary.ticks }}</p>
-            <p class="text-xs text-gray-500 mt-1">Ticks</p>
-          </div>
-        </UCard>
-        <UCard>
-          <div class="text-center">
-            <p class="text-3xl font-bold tabular-nums">{{ displaySummary.samples_saved }}</p>
-            <p class="text-xs text-gray-500 mt-1">Samples saved</p>
-          </div>
-        </UCard>
-        <UCard>
-          <div class="text-center">
-            <p class="text-3xl font-bold tabular-nums">{{ displaySummary.arrivals_saved }}</p>
-            <p class="text-xs text-gray-500 mt-1">Arrivals saved</p>
-          </div>
-        </UCard>
-        <UCard>
-          <div class="text-center">
-            <p class="text-3xl font-bold tabular-nums">{{ displaySummary.results_saved }}</p>
-            <p class="text-xs text-gray-500 mt-1">Results saved</p>
-          </div>
-        </UCard>
-      </div>
+      <ConsoleLiveRunPanel
+        :status="displayStatus"
+        :connected="stream.connected.value"
+        :vehicle-count="stream.vehicles.value.length"
+      />
 
-      <!-- Vehicles tracked -->
-      <UCard>
-        <div class="flex items-center gap-2">
-          <span class="text-sm text-gray-600 dark:text-gray-400">Vehicles tracked this tick:</span>
-          <span class="font-bold tabular-nums">{{ stream.vehicles.value.length }}</span>
-        </div>
-      </UCard>
+      <ConsoleCounterTiles :summary="displaySummary" />
 
-      <!-- Live results feed -->
-      <UCard>
-        <template #header>
-          <h2 class="font-semibold text-gray-800 dark:text-gray-200">
-            Live result feed
-            <span class="text-xs font-normal text-gray-400 ml-2">(last {{ stream.latestResults.value.length }} entries)</span>
-          </h2>
-        </template>
+      <ConsoleResultsTicker :results="stream.latestResults.value" :limit="20" />
 
-        <div v-if="stream.latestResults.value.length === 0" class="text-sm text-gray-500 py-4 text-center">
-          Waiting for first results…
-        </div>
-        <UTable
-          v-else
-          :data="stream.latestResults.value.slice().reverse().slice(0, 20)"
-          :columns="liveResultColumns"
-        >
-          <template #error_s-cell="{ row }">
-            <span :class="Math.abs(row.original.error_s) > 60 ? 'text-red-500' : ''">
-              {{ fmtNum(row.original.error_s) }}
-            </span>
-          </template>
-        </UTable>
-      </UCard>
-
-      <!-- Stream connection error -->
       <UAlert
         v-if="stream.connectError.value"
         color="warning"
@@ -252,84 +190,98 @@ const isError = computed(() => displayStatus.value === 'error')
 
     <!-- ── DONE VIEW ──────────────────────────────────────────────────────── -->
     <template v-else-if="isDone && run">
-      <!-- Final summary -->
-      <div class="grid grid-cols-2 sm:grid-cols-4 gap-4">
-        <UCard>
-          <div class="text-center">
-            <p class="text-3xl font-bold tabular-nums">{{ run.summary.ticks }}</p>
-            <p class="text-xs text-gray-500 mt-1">Ticks</p>
-          </div>
-        </UCard>
-        <UCard>
-          <div class="text-center">
-            <p class="text-3xl font-bold tabular-nums">{{ run.summary.samples_saved }}</p>
-            <p class="text-xs text-gray-500 mt-1">Samples saved</p>
-          </div>
-        </UCard>
-        <UCard>
-          <div class="text-center">
-            <p class="text-3xl font-bold tabular-nums">{{ run.summary.arrivals_saved }}</p>
-            <p class="text-xs text-gray-500 mt-1">Arrivals saved</p>
-          </div>
-        </UCard>
-        <UCard>
-          <div class="text-center">
-            <p class="text-3xl font-bold tabular-nums">{{ run.summary.results_saved }}</p>
-            <p class="text-xs text-gray-500 mt-1">Results saved</p>
-          </div>
-        </UCard>
-      </div>
+      <ConsoleCounterTiles :summary="run.summary" />
 
-      <UAlert
-        v-if="metricsError"
-        color="warning"
-        variant="subtle"
-        :title="metricsError"
-      />
+      <UAlert v-if="metricsError" color="warning" variant="subtle" :title="metricsError" />
+
+      <ConsoleWinnerSpotlight v-if="winner" :winner="winner" />
 
       <!-- Per-predictor metrics table -->
-      <UCard v-if="metrics">
-        <template #header>
-          <h2 class="font-semibold text-gray-800 dark:text-gray-200">Per-predictor metrics</h2>
-        </template>
-        <UTable
-          :data="metrics.per_predictor"
-          :columns="metricColumns"
-        >
-          <template #mae-cell="{ row }">{{ fmtNum(row.original.mae) }}</template>
-          <template #rmse-cell="{ row }">{{ fmtNum(row.original.rmse) }}</template>
-          <template #mape-cell="{ row }">{{ fmtNum(row.original.mape) }}</template>
-          <template #bias-cell="{ row }">{{ fmtNum(row.original.bias) }}</template>
-        </UTable>
-      </UCard>
+      <div v-if="metrics" class="panel">
+        <div class="panel-header"><span class="micro-label">Per-predictor metrics</span></div>
+        <div class="overflow-x-auto">
+          <table class="w-full text-[11px]">
+            <thead>
+              <tr class="border-b border-line text-dim uppercase tracking-wide text-[10px]">
+                <th class="text-left py-1.5 px-3 font-normal">Predictor</th>
+                <th class="text-right py-1.5 px-3 font-normal">MAE (s)</th>
+                <th class="text-right py-1.5 px-3 font-normal">RMSE (s)</th>
+                <th class="text-right py-1.5 px-3 font-normal">MAPE (%)</th>
+                <th class="text-right py-1.5 px-3 font-normal">Bias (s)</th>
+                <th class="text-right py-1.5 px-3 font-normal">Count</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr
+                v-for="m in metrics.per_predictor"
+                :key="m.predictor_id"
+                class="border-b border-[#141f1a]"
+                :class="winner && m.predictor_id === winner.predictor_id ? 'bg-accent-dim' : ''"
+              >
+                <td class="py-1 px-3" :class="winner && m.predictor_id === winner.predictor_id ? 'text-accent' : 'text-bright'">
+                  {{ m.predictor_id }}
+                </td>
+                <td class="py-1 px-3 text-right tabular-nums">{{ fmtNum(m.mae) }}</td>
+                <td class="py-1 px-3 text-right tabular-nums">{{ fmtNum(m.rmse) }}</td>
+                <td class="py-1 px-3 text-right tabular-nums">{{ fmtNum(m.mape) }}</td>
+                <td class="py-1 px-3 text-right tabular-nums">{{ fmtNum(m.bias) }}</td>
+                <td class="py-1 px-3 text-right tabular-nums text-dim">{{ m.count.toLocaleString() }}</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- Horizon-bucket pivot -->
+      <div v-if="metrics && metrics.horizon_buckets.length > 0" class="panel">
+        <div class="panel-header"><span class="micro-label">Horizon buckets</span></div>
+        <div class="overflow-x-auto">
+          <table class="w-full text-[11px]">
+            <thead>
+              <tr class="border-b border-line text-dim uppercase tracking-wide text-[10px]">
+                <th class="text-left py-1.5 px-3 font-normal">Bucket</th>
+                <th class="text-left py-1.5 px-3 font-normal">Predictor</th>
+                <th class="text-right py-1.5 px-3 font-normal">MAE (s)</th>
+                <th class="text-right py-1.5 px-3 font-normal">Bias (s)</th>
+                <th class="text-right py-1.5 px-3 font-normal">Count</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="(b, i) in metrics.horizon_buckets" :key="`${b.label}-${b.predictor_id}-${i}`" class="border-b border-[#141f1a]">
+                <td class="py-1 px-3 text-dim">{{ b.label }}</td>
+                <td class="py-1 px-3 text-bright">{{ b.predictor_id }}</td>
+                <td class="py-1 px-3 text-right tabular-nums">{{ fmtNum(b.mae) }}</td>
+                <td class="py-1 px-3 text-right tabular-nums">{{ fmtNum(b.bias) }}</td>
+                <td class="py-1 px-3 text-right tabular-nums text-dim">{{ b.count.toLocaleString() }}</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
 
       <!-- Results sample proof -->
-      <UCard v-if="resultsSample.length > 0">
-        <template #header>
-          <h2 class="font-semibold text-gray-800 dark:text-gray-200">
-            Result rows (sample)
-            <span class="text-xs font-normal text-gray-400 ml-2">{{ resultsSample.length }} rows fetched</span>
-          </h2>
-        </template>
-        <p class="text-sm text-gray-500">Data path verified — {{ resultsSample.length }} rows returned from <code class="font-mono">/api/runs/{{ id }}/results?limit=50</code>.</p>
-      </UCard>
+      <div v-if="resultsSample.length > 0" class="panel px-3 py-2">
+        <span class="micro-label">Result rows (sample)</span>
+        <p class="text-xs text-dim mt-1">
+          data path verified — {{ resultsSample.length }} rows returned from
+          <code class="font-mono">/api/runs/{{ id }}/results?limit=50</code>
+        </p>
+      </div>
 
-      <!-- ════════════════════════════════════════════════════════════════════
-           C2: Analytics dashboard — @unovis cross-filtered charts
-           ════════════════════════════════════════════════════════════════════ -->
-      <UCard>
-        <template #header>
-          <h2 class="font-semibold text-gray-800 dark:text-gray-200">Analytics</h2>
-        </template>
-        <AnalyticsDashboard :run-id="id" />
-      </UCard>
+      <!-- Analytics dashboard -->
+      <div class="panel">
+        <div class="panel-header"><span class="micro-label">Analytics</span></div>
+        <div class="p-3">
+          <AnalyticsDashboard :run-id="id" />
+        </div>
+      </div>
     </template>
 
     <!-- Loading skeleton when run is being fetched for the first time -->
     <template v-else-if="!loadError && !run">
-      <div class="space-y-4 animate-pulse">
-        <div class="h-24 bg-gray-200 dark:bg-gray-800 rounded-lg" />
-        <div class="h-48 bg-gray-200 dark:bg-gray-800 rounded-lg" />
+      <div class="space-y-3 animate-pulse">
+        <div class="h-24 bg-panel border border-line" />
+        <div class="h-48 bg-panel border border-line" />
       </div>
     </template>
   </div>

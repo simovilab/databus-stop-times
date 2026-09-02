@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import type { Source } from '~/types/api'
 
-useHead({ title: 'New Run – etaval' })
+useHead({ title: 'etaval:// console' })
 
 const api = useApi()
 const router = useRouter()
@@ -9,6 +9,8 @@ const router = useRouter()
 // ── Remote data ──────────────────────────────────────────────────────────────
 const sources = ref<Source[]>([])
 const predictors = ref<string[]>([])
+const runsCount = ref<number>(0)
+const activeRunsCount = ref<number>(0)
 const loadError = ref<string | null>(null)
 
 // ── Form state ────────────────────────────────────────────────────────────────
@@ -28,10 +30,15 @@ const formValid = computed(
 
 onMounted(async () => {
   try {
-    const [srcs, preds] = await Promise.all([api.getSources(), api.getPredictors()])
+    const [srcs, preds, runs] = await Promise.all([
+      api.getSources(),
+      api.getPredictors(),
+      api.getRuns()
+    ])
     sources.value = srcs
     predictors.value = preds
-    // Default: first source, all predictors selected
+    runsCount.value = runs.length
+    activeRunsCount.value = runs.filter((r) => r.status === 'pending' || r.status === 'running').length
     if (srcs.length > 0) selectedSource.value = srcs[0]!.name
     selectedPredictors.value = [...preds]
   } catch {
@@ -81,111 +88,123 @@ async function handleSubmit() {
 </script>
 
 <template>
-  <div class="max-w-xl">
-    <h1 class="text-2xl font-bold text-gray-900 dark:text-white mb-6">
-      Configure a new run
-    </h1>
+  <div class="p-3 space-y-3">
+    <div class="sec-h">New run</div>
 
-    <!-- API error banner -->
-    <UAlert
-      v-if="loadError"
-      color="error"
-      variant="subtle"
-      :title="loadError"
-      class="mb-6"
-    />
+    <UAlert v-if="loadError" color="error" variant="subtle" :title="loadError" />
 
-    <form class="space-y-6" @submit.prevent="handleSubmit">
-      <!-- Source -->
-      <div>
-        <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-          Source
-        </label>
-        <USelect
-          v-model="selectedSource"
-          :items="sourceItems"
-          :disabled="sources.length === 0"
-          placeholder="Select a source…"
-          class="w-full"
-        />
-      </div>
-
-      <!-- Predictors -->
-      <div>
-        <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-          Predictors
-        </label>
-        <div v-if="predictors.length === 0" class="text-sm text-gray-500">
-          Loading predictors…
-        </div>
-        <div v-else class="space-y-2">
-          <label
-            v-for="pred in predictors"
-            :key="pred"
-            class="flex items-center gap-3 cursor-pointer select-none"
-          >
-            <input
-              type="checkbox"
-              :value="pred"
-              :checked="selectedPredictors.includes(pred)"
-              class="h-4 w-4 rounded border-gray-300 text-primary-600 focus:ring-primary-500"
-              @change="togglePredictor(pred)"
+    <div class="grid grid-cols-1 lg:grid-cols-[1fr_320px] gap-3 items-start">
+      <!-- LEFT: terminal-style form -->
+      <div class="panel p-4">
+        <form class="space-y-5" @submit.prevent="handleSubmit">
+          <!-- Source -->
+          <div>
+            <label class="field-label">Source//</label>
+            <USelect
+              v-model="selectedSource"
+              :items="sourceItems"
+              :disabled="sources.length === 0"
+              placeholder="select a source…"
+              class="w-full"
             />
-            <span class="text-sm text-gray-800 dark:text-gray-200 font-mono">{{ pred }}</span>
-          </label>
+          </div>
+
+          <!-- Predictors -->
+          <div>
+            <label class="field-label">Predictors//</label>
+            <div v-if="predictors.length === 0" class="text-xs text-dim">
+              Loading predictors&hellip;
+            </div>
+            <div v-else class="grid grid-cols-2 sm:grid-cols-3 gap-2">
+              <label
+                v-for="pred in predictors"
+                :key="pred"
+                class="chip cursor-pointer"
+                :class="{ on: selectedPredictors.includes(pred) }"
+              >
+                <input
+                  type="checkbox"
+                  :value="pred"
+                  :checked="selectedPredictors.includes(pred)"
+                  class="sr-only"
+                  @change="togglePredictor(pred)"
+                />
+                <span class="truncate">{{ pred }}</span>
+              </label>
+            </div>
+            <p v-if="selectedPredictors.length === 0 && predictors.length > 0" class="mt-2 text-xs text-err">
+              Select at least one predictor.
+            </p>
+          </div>
+
+          <!-- Routes -->
+          <div>
+            <label class="field-label">Routes// <span class="normal-case text-dim">(optional, comma-separated)</span></label>
+            <UInput
+              v-model="routesInput"
+              placeholder="e.g. 1,2,Red — leave empty for all routes"
+              class="w-full"
+            />
+          </div>
+
+          <!-- Duration -->
+          <div>
+            <label class="field-label">Duration//</label>
+            <UInput v-model="duration" placeholder="e.g. 30m, 1h" class="w-full" />
+            <p class="mt-1 text-xs text-dim">
+              examples: <code class="font-mono">5m</code>, <code class="font-mono">30m</code>,
+              <code class="font-mono">1h</code>
+            </p>
+          </div>
+
+          <UAlert v-if="submitError" color="error" variant="subtle" :title="submitError" />
+
+          <UButton
+            type="submit"
+            label="▶ EXECUTE RUN"
+            :loading="submitting"
+            :disabled="!formValid || submitting"
+            color="primary"
+            size="lg"
+            block
+            class="tracking-widest uppercase text-xs font-bold"
+          />
+        </form>
+      </div>
+
+      <!-- RIGHT: status tiles + pipeline kv -->
+      <div class="space-y-3">
+        <div class="grid grid-cols-2 gap-px bg-line">
+          <div class="tile bg-panel px-3 py-2">
+            <div class="tile-l">Sources</div>
+            <div class="tile-v">{{ sources.length }}</div>
+          </div>
+          <div class="tile bg-panel px-3 py-2">
+            <div class="tile-l">Predictors</div>
+            <div class="tile-v">{{ predictors.length }}</div>
+          </div>
+          <div class="tile bg-panel px-3 py-2">
+            <div class="tile-l">Active runs</div>
+            <div class="tile-v" :class="activeRunsCount > 0 ? 'text-accent' : ''">{{ activeRunsCount }}</div>
+          </div>
+          <div class="tile bg-panel px-3 py-2">
+            <div class="tile-l">Runs recorded</div>
+            <div class="tile-v">{{ runsCount }}</div>
+          </div>
         </div>
-        <p v-if="selectedPredictors.length === 0 && predictors.length > 0" class="mt-1 text-xs text-red-500">
-          Select at least one predictor.
-        </p>
+
+        <div class="panel">
+          <div class="panel-header">
+            <span class="micro-label">Pipeline</span>
+          </div>
+          <div class="px-3 py-2">
+            <div class="kv-row"><span class="k">Feed</span><span class="v">{{ selectedSource || '—' }}</span></div>
+            <div class="kv-row"><span class="k">Predictors</span><span class="v">{{ selectedPredictors.length }} active</span></div>
+            <div class="kv-row"><span class="k">Routes</span><span class="v">{{ routesInput.trim() || 'all' }}</span></div>
+            <div class="kv-row"><span class="k">Duration</span><span class="v">{{ duration || '—' }}</span></div>
+          </div>
+        </div>
       </div>
-
-      <!-- Routes (optional) -->
-      <div>
-        <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-          Routes
-          <span class="font-normal text-gray-400">(optional, comma-separated)</span>
-        </label>
-        <UInput
-          v-model="routesInput"
-          placeholder="e.g. 1,2,Red (leave empty for all routes)"
-          class="w-full"
-        />
-      </div>
-
-      <!-- Duration -->
-      <div>
-        <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-          Duration
-        </label>
-        <UInput
-          v-model="duration"
-          placeholder="e.g. 30m, 1h"
-          class="w-full"
-        />
-        <p class="mt-1 text-xs text-gray-500">
-          Examples: <code class="font-mono">5m</code>, <code class="font-mono">30m</code>,
-          <code class="font-mono">1h</code>
-        </p>
-      </div>
-
-      <!-- Submit error -->
-      <UAlert
-        v-if="submitError"
-        color="error"
-        variant="subtle"
-        :title="submitError"
-      />
-
-      <!-- Submit button -->
-      <UButton
-        type="submit"
-        label="Start run"
-        :loading="submitting"
-        :disabled="!formValid || submitting"
-        color="primary"
-        size="lg"
-        class="w-full justify-center"
-      />
-    </form>
+    </div>
   </div>
 </template>

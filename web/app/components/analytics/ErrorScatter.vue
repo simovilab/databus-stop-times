@@ -63,47 +63,47 @@ const yDomain = computed((): [number, number] | undefined => {
 </script>
 
 <template>
-  <UCard>
-    <template #header>
-      <div class="flex items-center justify-between gap-2">
-        <h3 class="text-sm font-semibold text-gray-800 dark:text-gray-200">Error vs Horizon (scatter)</h3>
-        <span
-          v-if="isCapped"
-          class="text-xs text-amber-600 dark:text-amber-400"
-        >
-          Showing first {{ MAX_POINTS.toLocaleString() }} of {{ data.length.toLocaleString() }} points
-        </span>
-      </div>
-    </template>
+  <div class="panel">
+    <div class="panel-header">
+      <span class="micro-label">Error vs horizon</span>
+      <span
+        v-if="isCapped"
+        class="text-[10px] text-warn"
+      >
+        first {{ MAX_POINTS.toLocaleString() }} of {{ data.length.toLocaleString() }}
+      </span>
+    </div>
 
-    <ClientOnly>
-      <div v-if="hasData">
-        <VisBulletLegend :items="legendItems" class="mb-3" />
-        <VisXYContainer
-          :data="displayData"
-          :height="280"
-          :y-domain="yDomain"
-        >
-          <VisScatter
-            :x="xAccessor"
-            :y="yAccessor"
-            :color="colorFn"
-            :size="4"
-            cursor="pointer"
-            :events="scatterEvents"
-          />
-          <VisAxis type="x" label="Horizon (s)" />
-          <VisAxis type="y" label="Error (s)  [+ late / − early]" />
-        </VisXYContainer>
-        <p class="mt-1 text-xs text-gray-400 text-center">Click a point to see convergence for that trip/stop.</p>
-      </div>
-      <div v-else class="py-8 text-center text-sm text-gray-400 dark:text-gray-600">
-        No data for selected filters.
-      </div>
+    <div class="p-3">
+      <ClientOnly>
+        <div v-if="hasData">
+          <VisBulletLegend :items="legendItems" class="mb-3" />
+          <VisXYContainer
+            :data="displayData"
+            :height="280"
+            :y-domain="yDomain"
+          >
+            <VisScatter
+              :x="xAccessor"
+              :y="yAccessor"
+              :color="colorFn"
+              :size="4"
+              cursor="pointer"
+              :events="scatterEvents"
+            />
+            <VisAxis type="x" label="Horizon (s)" />
+            <VisAxis type="y" label="Error (s)  [+ late / − early]" />
+          </VisXYContainer>
+          <p class="mt-1 text-xs text-dim text-center">Click a point to see convergence for that trip/stop.</p>
+        </div>
+        <div v-else class="py-8 text-center text-xs text-dim">
+          No data for selected filters.
+        </div>
 
-      <template #fallback>
-        <div class="h-[280px] bg-gray-100 dark:bg-gray-800 rounded animate-pulse" />
-      </template>
-    </ClientOnly>
-  </UCard>
+        <template #fallback>
+          <div class="h-[280px] bg-panel animate-pulse" />
+        </template>
+      </ClientOnly>
+    </div>
+  </div>
 </template>

@@ -1,2 +1,205 @@
 @import "tailwindcss";
 @import "@nuxt/ui";
+
+@theme {
+  --font-mono: "SF Mono", "JetBrains Mono", Menlo, monospace;
+
+  --color-void: #0a0f0d;
+  --color-panel: #0d1512;
+  --color-line: #1c2a24;
+  --color-main: #c7d4cd;
+  --color-dim: #5b6b64;
+  --color-bright: #e8f2ec;
+  --color-accent: #2fd67b;
+  --color-accent-dim: rgba(47, 214, 123, 0.14);
+  --color-warn: #e0b040;
+  --color-err: #e06060;
+
+  --radius-none: 0px;
+}
+
+:root {
+  color-scheme: dark;
+  --vis-legend-label-color: var(--color-dim);
+  --vis-font-family: var(--font-mono);
+  --vis-axis-tick-label-color: var(--color-dim);
+  --vis-axis-grid-color: #141e19;
+  --vis-axis-domain-color: var(--color-line);
+  --vis-crosshair-line-color: var(--color-line);
+  --vis-tooltip-background-color: var(--color-panel);
+  --vis-tooltip-text-color: var(--color-main);
+  --vis-tooltip-border-color: var(--color-line);
+}
+
+html, body, #__nuxt {
+  background: var(--color-void);
+  color: var(--color-main);
+  font-family: var(--font-mono);
+}
+
+* {
+  border-radius: 0 !important;
+}
+
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-thumb { background: var(--color-line); }
+::-webkit-scrollbar-track { background: transparent; }
+
+/* ── Layout primitives ─────────────────────────────────────────────────── */
+
+.panel {
+  background: var(--color-panel);
+  border: 1px solid var(--color-line);
+  min-width: 0;
+}
+
+.panel-spot {
+  background: var(--color-panel);
+  border: 1px solid var(--color-line);
+  box-shadow: inset 3px 0 0 var(--color-accent);
+}
+
+.panel-header {
+  padding: 7px 10px;
+  border-bottom: 1px solid var(--color-line);
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.micro-label {
+  font-size: 10px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--color-dim);
+}
+
+.sec-h {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.2em;
+  color: var(--color-dim);
+  margin: 20px 0 10px;
+  display: flex;
+  gap: 10px;
+  align-items: center;
+}
+.sec-h::after {
+  content: "";
+  flex: 1;
+  height: 1px;
+  background: var(--color-line);
+}
+
+/* ── Tiles ─────────────────────────────────────────────────────────────── */
+
+.tile-l {
+  font-size: 9px;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  color: var(--color-dim);
+}
+
+.tile-v {
+  font-size: 20px;
+  color: var(--color-bright);
+  line-height: 1.1;
+  font-variant-numeric: tabular-nums;
+}
+.tile-v small {
+  font-size: 11px;
+  color: var(--color-dim);
+}
+
+/* ── Key/value rows ────────────────────────────────────────────────────── */
+
+.kv-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  font-size: 11px;
+  padding: 4px 0;
+  border-bottom: 1px solid #141f1a;
+}
+.kv-row:last-child { border-bottom: none; }
+.kv-row .k {
+  color: var(--color-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  font-size: 10px;
+}
+.kv-row .v {
+  color: var(--color-main);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ── Status LED ────────────────────────────────────────────────────────── */
+
+.status-led {
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  border-radius: 50% !important;
+  background: var(--color-dim);
+  flex: none;
+}
+.status-led.ok { background: var(--color-accent); box-shadow: 0 0 6px var(--color-accent); }
+.status-led.warn { background: var(--color-warn); box-shadow: 0 0 6px var(--color-warn); }
+.status-led.err { background: var(--color-err); box-shadow: 0 0 6px var(--color-err); }
+.status-led.idle { background: var(--color-dim); }
+
+/* ── Nav ───────────────────────────────────────────────────────────────── */
+
+.nav-link {
+  padding: 0 14px;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  color: var(--color-dim);
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  border-right: 1px solid var(--color-line);
+  text-decoration: none;
+}
+.nav-link:hover { color: var(--color-main); }
+.nav-link.active {
+  color: var(--color-accent);
+  background: var(--color-accent-dim);
+  box-shadow: inset 0 -2px 0 var(--color-accent);
+}
+.nav-link.active::before {
+  content: "▚ ";
+}
+
+/* ── Chips ─────────────────────────────────────────────────────────────── */
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 8px;
+  border: 1px solid var(--color-line);
+  color: var(--color-dim);
+  font-size: 11px;
+  cursor: pointer;
+  user-select: none;
+  background: transparent;
+}
+.chip.on {
+  border-color: var(--color-accent);
+  background: var(--color-accent-dim);
+  color: var(--color-bright);
+}
+
+/* ── Form fields (terminal look) ──────────────────────────────────────── */
+
+.field-label {
+  font-size: 10px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--color-dim);
+  margin-bottom: 6px;
+  display: block;
+}

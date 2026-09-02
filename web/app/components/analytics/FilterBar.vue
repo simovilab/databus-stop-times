@@ -52,26 +52,21 @@ function isActiveHorizon(preset: [number, number] | null) {
 </script>
 
 <template>
-  <UCard>
+  <div class="panel px-3 py-2.5">
     <div class="flex flex-wrap items-center gap-4 min-w-0">
 
       <!-- Predictor toggles -->
       <div class="flex flex-wrap items-center gap-1.5">
-        <span class="text-xs font-medium text-gray-500 dark:text-gray-400 mr-1 shrink-0">Predictors:</span>
+        <span class="micro-label mr-1 shrink-0">Predictors</span>
         <button
           v-for="p in predictors"
           :key="p"
-          class="inline-flex items-center gap-1.5 px-2 py-0.5 rounded border text-xs font-medium transition-all duration-150"
-          :class="[
-            selectedPredictors.includes(p)
-              ? 'border-transparent bg-gray-100 dark:bg-gray-800 opacity-100'
-              : 'border-transparent bg-gray-100 dark:bg-gray-800 opacity-35 line-through'
-          ]"
-          :style="{ outlineColor: colorMap[p] ?? '#999' }"
+          class="chip"
+          :class="[selectedPredictors.includes(p) ? 'on' : 'opacity-40 line-through']"
           @click="emit('toggle-predictor', p)"
         >
           <span
-            class="w-2.5 h-2.5 rounded-full flex-shrink-0"
+            class="w-2 h-2 shrink-0"
             :style="{ backgroundColor: colorMap[p] ?? '#999' }"
           />
           {{ p }}
@@ -80,10 +75,10 @@ function isActiveHorizon(preset: [number, number] | null) {
 
       <!-- Route selector -->
       <div class="flex items-center gap-1.5">
-        <span class="text-xs font-medium text-gray-500 dark:text-gray-400 shrink-0">Route:</span>
+        <span class="micro-label shrink-0">Route</span>
         <select
           v-model="routeModel"
-          class="text-xs rounded border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 text-gray-700 dark:text-gray-300 px-2 py-1 focus:outline-none focus:ring-1 focus:ring-blue-500"
+          class="text-xs border border-line bg-panel text-main px-2 py-1 focus:outline-none focus:border-accent"
         >
           <option v-for="opt in routeOptions" :key="opt.value" :value="opt.value">
             {{ opt.label }}
@@ -93,16 +88,12 @@ function isActiveHorizon(preset: [number, number] | null) {
 
       <!-- Horizon presets -->
       <div class="flex items-center gap-1.5 flex-wrap">
-        <span class="text-xs font-medium text-gray-500 dark:text-gray-400 shrink-0">Horizon:</span>
+        <span class="micro-label shrink-0">Horizon</span>
         <button
           v-for="preset in HORIZON_PRESETS"
           :key="preset.label"
-          class="text-xs px-2 py-0.5 rounded border transition-colors duration-150"
-          :class="[
-            isActiveHorizon(preset.value)
-              ? 'border-blue-400 bg-blue-50 dark:bg-blue-900/20 text-blue-700 dark:text-blue-300 font-medium'
-              : 'border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 text-gray-600 dark:text-gray-400 hover:border-blue-300'
-          ]"
+          class="chip"
+          :class="{ on: isActiveHorizon(preset.value) }"
           @click="setHorizon(preset.value)"
         >
           {{ preset.label }}
@@ -119,5 +110,5 @@ function isActiveHorizon(preset: [number, number] | null) {
         @click="emit('reset')"
       />
     </div>
-  </UCard>
+  </div>
 </template>

@@ -36,38 +36,40 @@ const xTickFormat = computed(() => {
 </script>
 
 <template>
-  <UCard>
-    <template #header>
-      <h3 class="text-sm font-semibold text-gray-800 dark:text-gray-200">MAE by Route</h3>
-    </template>
+  <div class="panel">
+    <div class="panel-header">
+      <span class="micro-label">MAE by route</span>
+    </div>
 
-    <ClientOnly>
-      <div v-if="hasData">
-        <VisBulletLegend :items="legendItems" class="mb-3" />
-        <VisXYContainer :data="data" :height="220">
-          <VisGroupedBar
-            :x="xAccessor"
-            :y="yAccessors"
-            :color="barColors"
-            :data-step="1"
-            :rounded-corners="2"
-          />
-          <VisAxis
-            type="x"
-            label="Route"
-            :tick-format="xTickFormat"
-            :num-ticks="Math.min(data.length, 10)"
-          />
-          <VisAxis type="y" label="MAE (s)" />
-        </VisXYContainer>
-      </div>
-      <div v-else class="py-8 text-center text-sm text-gray-400 dark:text-gray-600">
-        No data for selected filters.
-      </div>
+    <div class="p-3">
+      <ClientOnly>
+        <div v-if="hasData">
+          <VisBulletLegend :items="legendItems" class="mb-3" />
+          <VisXYContainer :data="data" :height="220">
+            <VisGroupedBar
+              :x="xAccessor"
+              :y="yAccessors"
+              :color="barColors"
+              :data-step="1"
+              :rounded-corners="0"
+            />
+            <VisAxis
+              type="x"
+              label="Route"
+              :tick-format="xTickFormat"
+              :num-ticks="Math.min(data.length, 10)"
+            />
+            <VisAxis type="y" label="MAE (s)" />
+          </VisXYContainer>
+        </div>
+        <div v-else class="py-8 text-center text-xs text-dim">
+          No data for selected filters.
+        </div>
 
-      <template #fallback>
-        <div class="h-[220px] bg-gray-100 dark:bg-gray-800 rounded animate-pulse" />
-      </template>
-    </ClientOnly>
-  </UCard>
+        <template #fallback>
+          <div class="h-[220px] bg-panel animate-pulse" />
+        </template>
+      </ClientOnly>
+    </div>
+  </div>
 </template>
