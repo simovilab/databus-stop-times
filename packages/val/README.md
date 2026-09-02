@@ -134,6 +134,60 @@ uv run --no-editable etaval run --source mbta \
 uv run --no-editable etaval report r.parquet
 ```
 
+## Walk-forward backtest and the 70/10/20 split
+
+`etaval walk-forward` (`etaval/backtest.py`) splits an archived replay window
+into contiguous, non-overlapping sub-windows — either an equal COUNT
+(`--windows`) or a fixed WIDTH (`--width`) — and runs a fresh replay per
+window with a shared `--seed`, reducing each window's ValidationResults to a
+per-predictor MAE with a bootstrap confidence interval
+(`etaval.stats.bootstrap.bootstrap_ci`). The output JSON carries per-window
+MAE+CI, window boundaries, each window's fraction of the overall range, run
+provenance, the seed, and a `split_note`.
+
+**Alignment requirement with gtfs-eta's train/val/test split.** The
+`gtfs_eta:*` predictors wrap models trained in the sibling `../gtfs-eta`
+checkout, which reserves a canonical chronological train/validation/test
+split of its own training data (`models/common/data.py`'s `temporal_split`,
+which by default holds out the most-recent slice of the timeline as test —
+etaval treats this as a 70/10/20-style train/val/test split and never
+modifies gtfs-eta or re-derives that split itself). For a walk-forward run
+here to be a *valid, leakage-free held-out evaluation* of any `gtfs_eta:*`
+predictor, every backtest window's `[window_start, window_end]` must fall
+entirely inside that model's reserved **test** slice — a window overlapping
+the train/val slices would let the model be evaluated on data it was
+directly or indirectly fitted on, inflating apparent accuracy. Predictors
+with no training split (`gtfsrt`, `baseline:*`) have no such constraint.
+
+It is the **caller's** responsibility to choose `--replay-start`/
+`--replay-end` (or the `start`/`end` passed to `walk_forward()`) so they lie
+within the trained model's reserved test window — `walk_forward()` records
+this requirement in the result's `split_note` field, it does not verify it
+(etaval has no visibility into which archived rows gtfs-eta's `temporal_split`
+put in train vs. val vs. test at training time).
+
+```bash
+uv run --no-editable etaval walk-forward wf.json \
+  --source mbta --replay-vp s3://bucket/mbta/vp --replay-gtfs mbta.zip \
+  --replay-start 2024-06-01T00:00:00Z --replay-end 2024-06-08T00:00:00Z \
+  --windows 7 --predictor gtfsrt --predictor baseline:constant_speed --seed 0
+```
+
+## Publication figures
+
+`etaval figures <parquet> --out-dir <dir>` (`etaval/figures.py`) renders six
+300 dpi PNG figures from a Parquet results file using a colorblind-safe
+Okabe-Ito-derived palette (headless `Agg` backend, no seaborn):
+`error_vs_horizon`, `error_distribution`, `convergence_curve`,
+`per_route_mae`, `calibration_diagram`, and `cost_accuracy_pareto`. The
+Pareto figure (inference latency vs. MAE) is only produced when `--summary
+<...>.summary.json` is given — without it, a run has no recorded per-predictor
+latency to plot, so it is skipped (returns `None`) rather than drawn empty.
+
+```bash
+uv run --no-editable etaval figures r.parquet --out-dir figs/ --summary r.parquet.summary.json
+```
+
 ## Configured sources
 
 - **`mbta`** — MBTA public GTFS-RT JSON + GTFS static.

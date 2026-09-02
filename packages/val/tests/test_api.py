@@ -258,6 +258,61 @@ async def test_delete_removes_run(client: httpx.AsyncClient) -> None:
     assert resp.status_code == 404
 
 
+# ── Provenance (A7) ──────────────────────────────────────────────────────────
+
+
+async def test_run_with_seed_exposes_provenance(client: httpx.AsyncClient) -> None:
+    resp = await client.post(
+        "/api/runs", json={"source": "mbta", "duration": "1m", "seed": 42}
+    )
+    run_id = resp.json()["run_id"]
+    data = await _wait_done(client, run_id)
+
+    assert data["provenance"] is not None
+    assert data["provenance"]["seed"] == 42
+    assert data["provenance"]["source_name"] == "mbta"
+    assert "shape_distance" in data["provenance"]["detectors"]
+
+
+async def test_run_without_seed_still_has_provenance(client: httpx.AsyncClient) -> None:
+    resp = await client.post("/api/runs", json={"source": "mbta", "duration": "1m"})
+    run_id = resp.json()["run_id"]
+    data = await _wait_done(client, run_id)
+
+    assert data["provenance"] is not None
+    assert data["provenance"]["seed"] is None
+
+
+async def test_provenance_sidecar_written_to_run_dir(
+    client: httpx.AsyncClient, run_manager: RunManager
+) -> None:
+    resp = await client.post("/api/runs", json={"source": "mbta", "duration": "1m"})
+    run_id = resp.json()["run_id"]
+    await _wait_done(client, run_id)
+
+    state = run_manager.get_run(run_id)
+    assert state is not None
+    sidecar = Path(f"{state.db_path}.provenance.json")
+    assert sidecar.is_file()
+
+
+async def test_delete_run_removes_provenance_sidecar(
+    client: httpx.AsyncClient, run_manager: RunManager
+) -> None:
+    resp = await client.post("/api/runs", json={"source": "mbta", "duration": "1m"})
+    run_id = resp.json()["run_id"]
+    await _wait_done(client, run_id)
+
+    state = run_manager.get_run(run_id)
+    assert state is not None
+    sidecar = Path(f"{state.db_path}.provenance.json")
+    assert sidecar.is_file()
+
+    resp = await client.delete(f"/api/runs/{run_id}")
+    assert resp.status_code == 200
+    assert not sidecar.exists()
+
+
 # ── Error handling ─────────────────────────────────────────────────────────────
 
 

@@ -24,13 +24,14 @@ from pathlib import Path
 
 import pytest
 
-from etaval.engine.runtime import FeedSnapshot, ReplayFeedSource, run_engine
+from etaval.engine.runtime import FeedSnapshot, ReplayFeedSource, RunSummary, run_engine
 from etaval.feeds.gtfsrt_json import parse_tu_feed, parse_vp_feed
 from etaval.feeds.static import GtfsStaticLoader
 from etaval.groundtruth.position_radius import PositionRadiusDetector
 from etaval.groundtruth.shape_distance import ShapeDistanceDetector
 from etaval.predictors.constant_speed import ConstantSpeedPredictor
 from etaval.predictors.gtfsrt_tripupdates import GtfsRtTripUpdatesPredictor
+from etaval.provenance import build_run_provenance
 from etaval.scoring.metrics import compute_metrics
 from etaval.storage.sqlite import SqliteStorage
 
@@ -583,3 +584,109 @@ def test_tick_event_default_error_dicts_are_backward_compatible() -> None:
     )
     assert ev.predictor_errors == {}
     assert ev.detector_errors == {}
+
+
+# ── Provenance + inference-latency threading (A7/A8) ────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_run_engine_records_inference_latency_per_predictor() -> None:
+    """Every predict() call is timed and folded into RunSummary.inference_latency."""
+    static_loader = GtfsStaticLoader(_MINI_GTFS)
+    storage = SqliteStorage(":memory:")
+    snapshots = _build_snapshots()
+
+    summary = await run_engine(
+        feed_source=ReplayFeedSource(snapshots),
+        static_loader=static_loader,
+        predictors=[ConstantSpeedPredictor(), GtfsRtTripUpdatesPredictor()],
+        detectors=[ShapeDistanceDetector(shape_threshold_m=30.0)],
+        storage=storage,
+        primary_method="shape_distance",
+        source_name="test",
+    )
+
+    assert set(summary.inference_latency) == {
+        "baseline:constant_speed",
+        "gtfsrt",
+    }
+    for stats in summary.inference_latency.values():
+        assert stats.count > 0
+        assert stats.p50_s >= 0.0
+        assert stats.p95_s >= stats.p50_s
+        assert stats.p99_s >= stats.p95_s
+
+
+@pytest.mark.asyncio
+async def test_run_engine_threads_seed_and_provenance_into_summary() -> None:
+    static_loader = GtfsStaticLoader(_MINI_GTFS)
+    storage = SqliteStorage(":memory:")
+    snapshots = _build_snapshots()
+
+    prov = build_run_provenance(
+        source_name="test",
+        source_config={"name": "test"},
+        detectors=[ShapeDistanceDetector(shape_threshold_m=30.0)],
+        predictor_ids=["baseline:constant_speed"],
+        seed=123,
+    )
+
+    summary = await run_engine(
+        feed_source=ReplayFeedSource(snapshots),
+        static_loader=static_loader,
+        predictors=[ConstantSpeedPredictor()],
+        detectors=[ShapeDistanceDetector(shape_threshold_m=30.0)],
+        storage=storage,
+        primary_method="shape_distance",
+        source_name="test",
+        seed=123,
+        provenance=prov,
+    )
+
+    assert summary.provenance is prov
+    assert summary.provenance.seed == 123
+
+
+def test_run_summary_from_dict_round_trips_latency_and_provenance() -> None:
+    prov = build_run_provenance(
+        source_name="test",
+        source_config={"name": "test"},
+        detectors=[],
+        predictor_ids=["gtfsrt"],
+        seed=99,
+    )
+    from etaval.provenance import LatencyStats
+
+    summary = RunSummary(
+        ticks=5,
+        samples_saved=10,
+        arrivals_saved=2,
+        results_saved=2,
+        predictor_errors={"p1": 1},
+        detector_errors={},
+        provenance=prov,
+        inference_latency={"gtfsrt": LatencyStats(count=3, p50_s=0.001, p95_s=0.002, p99_s=0.003)},
+    )
+
+    restored = RunSummary.from_dict(summary.to_dict())
+
+    assert restored.ticks == summary.ticks
+    assert restored.samples_saved == summary.samples_saved
+    assert restored.provenance == summary.provenance
+    assert restored.inference_latency == summary.inference_latency
+
+
+def test_run_summary_from_dict_handles_missing_optional_fields() -> None:
+    """Older persisted summaries (pre-provenance) still round-trip."""
+    restored = RunSummary.from_dict(
+        {
+            "ticks": 1,
+            "samples_saved": 0,
+            "arrivals_saved": 0,
+            "results_saved": 0,
+            "predictor_errors": {},
+            "detector_errors": {},
+        }
+    )
+    assert restored.provenance is None
+    assert restored.inference_latency == {}

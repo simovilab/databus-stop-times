@@ -14,6 +14,7 @@ class RunRequest(pydantic.BaseModel):
     predictors: list[str] = []
     routes: list[str] = []
     duration: str = "30m"
+    seed: int | None = None
 
     @pydantic.field_validator("duration")
     @classmethod
@@ -29,6 +30,7 @@ class RunInfo(pydantic.BaseModel):
     params: dict
     status: str
     summary: dict | None = None
+    provenance: dict | None = None
     db_path: str
     started_at: float
     ended_at: float | None = None

@@ -21,6 +21,7 @@ from etaval.api.telemetry import TelemetryCollector
 from etaval.engine.assembly import LiveRunDeps, build_live_run
 from etaval.engine.runtime import RunSummary, TickEvent, run_engine
 from etaval.feeds.source_config import load_named_source
+from etaval.provenance import RunProvenance, build_run_provenance, write_provenance_sidecar
 from etaval.storage.sqlite import SqliteStorage
 
 
@@ -34,6 +35,7 @@ class RunState:
     db_path: str
     started_at: float
     summary: RunSummary | None = None
+    provenance: RunProvenance | None = None
     ended_at: float | None = None
     error: str | None = None
 
@@ -104,6 +106,10 @@ class RunManager:
                 if summary_raw is not None
                 else None
             )
+            provenance_raw = meta.get("provenance")
+            provenance = (
+                RunProvenance.from_dict(provenance_raw) if provenance_raw is not None else None
+            )
             self._runs[run_id] = RunState(
                 id=run_id,
                 params=meta["params"],
@@ -111,6 +117,7 @@ class RunManager:
                 db_path=meta["db_path"],
                 started_at=meta["started_at"],
                 summary=summary,
+                provenance=provenance,
                 ended_at=meta.get("ended_at"),
                 error=meta.get("error"),
             )
@@ -122,10 +129,14 @@ class RunManager:
             summary_dict: dict | None = None
             if state.summary is not None:
                 summary_dict = state.summary.to_dict()
+            provenance_dict: dict | None = None
+            if state.provenance is not None:
+                provenance_dict = state.provenance.to_dict()
             index[run_id] = {
                 "params": state.params,
                 "status": state.status,
                 "summary": summary_dict,
+                "provenance": provenance_dict,
                 "db_path": state.db_path,
                 "started_at": state.started_at,
                 "ended_at": state.ended_at,
@@ -235,6 +246,7 @@ class RunManager:
         predictor_ids: list[str],
         routes: list[str],
         duration_s: float,
+        seed: int | None = None,
     ) -> str:
         """Create and launch a new background validation run.
 
@@ -252,6 +264,7 @@ class RunManager:
                 "predictors": predictor_ids,
                 "routes": routes,
                 "duration_s": duration_s,
+                "seed": seed,
             },
             status="pending",
             db_path=db_path,
@@ -261,7 +274,7 @@ class RunManager:
         self._persist()
 
         task = asyncio.create_task(
-            self._run_background(run_id, cfg, predictor_ids, routes, duration_s)
+            self._run_background(run_id, cfg, predictor_ids, routes, duration_s, seed)
         )
         self._tasks[run_id] = task
         return run_id
@@ -273,6 +286,7 @@ class RunManager:
         predictor_ids: list[str],
         routes: list[str],
         duration_s: float,
+        seed: int | None = None,
     ) -> None:
         """Background task: build deps, run engine, update state on completion."""
         state = self._runs[run_id]
@@ -288,6 +302,21 @@ class RunManager:
             gtfs_path = deps.gtfs_path
             storage = SqliteStorage(state.db_path)
 
+            # Build provenance BEFORE the engine starts and persist it right
+            # away — so GET /api/runs/{id} exposes it even while "running".
+            provenance = build_run_provenance(
+                source_name=cfg.name,
+                source_config=cfg,
+                detectors=deps.detectors,
+                predictor_ids=predictor_ids or list(predictor_ids),
+                seed=seed,
+            )
+            state.provenance = provenance
+            try:
+                write_provenance_sidecar(state.db_path, provenance)
+            except Exception:  # noqa: BLE001
+                pass  # sidecar is best-effort; never abort the run over it
+
             state.status = "running"
             self._persist()
 
@@ -302,6 +331,8 @@ class RunManager:
                 source_name=cfg.name,
                 on_tick=self._make_on_tick(run_id),
                 on_predictor_error=self._make_on_predictor_error(run_id),
+                seed=seed,
+                provenance=provenance,
             )
 
             state.summary = summary
@@ -366,6 +397,10 @@ class RunManager:
         state = self._runs.pop(run_id)
         try:
             os.unlink(state.db_path)
+        except OSError:
+            pass
+        try:
+            os.unlink(f"{state.db_path}.provenance.json")
         except OSError:
             pass
 

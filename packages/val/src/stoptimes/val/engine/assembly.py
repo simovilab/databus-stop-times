@@ -12,12 +12,15 @@ download_gtfs(cfg)                 -> Path   (sync; caller must os.unlink)
 build_predictors(predictor_ids)    -> list
 build_detectors(cfg)               -> list
 build_live_run(cfg, ...)           -> LiveRunDeps
+build_replay_run(cfg, ...)         -> ReplayRunDeps
 LiveRunDeps                         dataclass
+ReplayRunDeps                       dataclass
 _RouteFilterLiveSource              class (also re-exported for CLI use)
 """
 
 from __future__ import annotations
 
+import datetime as dt
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
@@ -39,6 +42,7 @@ from etaval.groundtruth.stop_status import StopStatusDetector
 from etaval.predictors.constant_speed import ConstantSpeedPredictor
 from etaval.predictors.gtfs_eta_models import GtfsEtaModelPredictor
 from etaval.predictors.gtfsrt_tripupdates import GtfsRtTripUpdatesPredictor
+from etaval.predictors.schedule_baseline import ScheduleBaselinePredictor
 
 # ── Predictor registry ────────────────────────────────────────────────────────
 #
@@ -48,6 +52,7 @@ from etaval.predictors.gtfsrt_tripupdates import GtfsRtTripUpdatesPredictor
 PREDICTOR_REGISTRY: dict[str, Any] = {
     "gtfsrt": GtfsRtTripUpdatesPredictor,
     "baseline:constant_speed": ConstantSpeedPredictor,
+    "baseline:schedule": ScheduleBaselinePredictor,
     "gtfs_eta:historical_mean": lambda: GtfsEtaModelPredictor("historical_mean"),
     "gtfs_eta:polyreg_distance": lambda: GtfsEtaModelPredictor("polyreg_distance"),
     "gtfs_eta:polyreg_time": lambda: GtfsEtaModelPredictor("polyreg_time"),
@@ -188,6 +193,21 @@ def build_predictors(predictor_ids: list[str] | None = None) -> list[Any]:
     return [PREDICTOR_REGISTRY[pid]() for pid in ids]
 
 
+def _attach_static_loader(predictors: list[Any], static_loader: GtfsStaticLoader) -> None:
+    """Give every predictor that exposes ``attach_static_loader`` the run's loader.
+
+    Duck-typed opt-in, mirroring the ``accepts_position_history`` pattern:
+    any predictor instance with a callable ``attach_static_loader`` attribute
+    is called with *static_loader*; predictors without the method are left
+    untouched. Currently only :class:`~etaval.predictors.schedule_baseline.
+    ScheduleBaselinePredictor` uses this hook.
+    """
+    for predictor in predictors:
+        attach = getattr(predictor, "attach_static_loader", None)
+        if callable(attach):
+            attach(static_loader)
+
+
 def build_detectors(cfg: SourceConfig) -> list[Any]:
     """Instantiate the standard detector suite from a SourceConfig.
 
@@ -269,10 +289,118 @@ def build_live_run(
     else:
         feed_source = live_source
 
+    predictors = build_predictors(predictor_ids)
+    _attach_static_loader(predictors, static_loader)
+
     return LiveRunDeps(
         feed_source=feed_source,
         static_loader=static_loader,
-        predictors=build_predictors(predictor_ids),
+        predictors=predictors,
         detectors=build_detectors(cfg),
         gtfs_path=gtfs_path,
+    )
+
+
+# ── ReplayRunDeps (A1: archived-Parquet replay) ────────────────────────────────
+
+
+@dataclass
+class ReplayRunDeps:
+    """All dependencies needed to call run_engine in archived-replay mode.
+
+    Unlike :class:`LiveRunDeps`, ``gtfs_path`` is only set (and only needs
+    cleanup) when the static GTFS zip was fetched from S3 to a temp file; a
+    local ``--replay-gtfs`` / ``--replay-gtfs-dir`` match is a path the caller
+    does not own and must NOT delete.
+    """
+
+    feed_source: Any  # ArchiveReplayFeedSource (etaval.feeds.replay_archive)
+    static_loader: GtfsStaticLoader
+    predictors: list[Any]
+    detectors: list[Any]
+    gtfs_path: Path | None
+
+
+def build_replay_run(
+    cfg: SourceConfig,
+    *,
+    vp_path: str | Path,
+    tu_path: str | Path | None = None,
+    start: Any = None,
+    end: Any = None,
+    routes: list[str] | None = None,
+    predictor_ids: list[str] | None = None,
+    static_gtfs_zip: str | Path | None = None,
+    static_gtfs_dir: str | Path | None = None,
+) -> ReplayRunDeps:
+    """Assemble all dependencies for an archived-Parquet replay run.
+
+    Mirrors :func:`build_live_run`'s wiring of predictors/detectors, but
+    sources snapshots from :class:`~etaval.feeds.replay_archive.ArchiveReplayFeedSource`
+    instead of live HTTP polling, and resolves the static GTFS zip via
+    :func:`~etaval.feeds.replay_archive.resolve_static_gtfs` (a local
+    ``static_gtfs_zip`` / ``static_gtfs_dir`` snapshot matched to the first
+    archived tick's date, rather than downloading ``cfg.gtfs_static_url``).
+
+    Args:
+        cfg:            SourceConfig; only its detector params are used here
+                        (arrival_radius_m, dwell_s, shape_threshold_m) — the
+                        live feed URLs are ignored in replay mode.
+        vp_path:        Archived VP Parquet path (dir, file, or s3://).
+        tu_path:        Archived TU Parquet path; ``None`` for VP-only replay.
+        start, end:     Optional replay window bounds (epoch seconds or ISO
+                        8601 strings).
+        routes:         Optional route ID filter; ``None``/empty means all.
+        predictor_ids:  Predictor IDs to instantiate; ``None`` uses
+                        DEFAULT_PREDICTOR_IDS.
+        static_gtfs_zip: Explicit static GTFS zip path — takes priority.
+        static_gtfs_dir: Directory of dated ``YYYY-MM-DD.zip`` snapshots; the
+                        newest one <= the first archived tick's date is used.
+
+    Returns:
+        ReplayRunDeps instance.
+
+    Raises:
+        ValueError: no VP rows matched the path/window/route filter, or
+            neither static_gtfs_zip nor static_gtfs_dir was given.
+        FileNotFoundError: the resolved static GTFS zip does not exist, or no
+            dated snapshot <= the target date was found in static_gtfs_dir.
+    """
+    from etaval.feeds.replay_archive import ArchiveReplayFeedSource, resolve_static_gtfs
+
+    if static_gtfs_zip is None and static_gtfs_dir is None:
+        raise ValueError(
+            "build_replay_run requires one of static_gtfs_zip or static_gtfs_dir"
+        )
+
+    route_ids = set(routes) if routes else None
+
+    feed_source = ArchiveReplayFeedSource(
+        vp_path, tu_path, start=start, end=end, route_ids=route_ids
+    )
+    snapshots = feed_source.snapshots
+    if not snapshots:
+        raise ValueError(
+            "No archived VehiclePosition rows matched the given path/window/route filter"
+        )
+
+    first_tick = snapshots[0].header_timestamp
+    first_date = dt.datetime.fromtimestamp(first_tick, tz=dt.UTC).date()
+
+    if static_gtfs_zip is not None:
+        static_zip_path = resolve_static_gtfs(local_zip=static_gtfs_zip)
+    else:
+        static_zip_path = resolve_static_gtfs(local_dir=static_gtfs_dir, target_date=first_date)
+
+    static_loader = GtfsStaticLoader(static_zip_path)
+
+    predictors = build_predictors(predictor_ids)
+    _attach_static_loader(predictors, static_loader)
+
+    return ReplayRunDeps(
+        feed_source=feed_source,
+        static_loader=static_loader,
+        predictors=predictors,
+        detectors=build_detectors(cfg),
+        gtfs_path=None,
     )

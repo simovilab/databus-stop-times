@@ -443,3 +443,72 @@ async def test_run_validation_core_to_parquet_and_report(tmp_path: Path) -> None
     )
 
     storage.close()
+
+
+# ── run --seed (offline replay/fixture path) — A7/A8 CLI stamp + sidecars ────
+
+
+def test_run_command_with_seed_writes_sidecars_and_prints_stamp(tmp_path: Path) -> None:
+    """Full CliRunner invocation of ``etaval run --replay-vp ... --seed ...``.
+
+    Exercises the real ``run`` command end-to-end (offline archive replay, no
+    network) and asserts both sidecars land on disk and the one-line
+    provenance stamp is printed.
+    """
+    from tests.test_feeds_replay_archive import _base_vp_rows, _write_vp_archive
+
+    vp_dir = _write_vp_archive(tmp_path, _base_vp_rows())
+    out = tmp_path / "results.parquet"
+
+    result = runner.invoke(
+        app,
+        [
+            "run",
+            "--source", "mbta",
+            "--replay-vp", str(vp_dir),
+            "--replay-gtfs", str(_MINI_GTFS),
+            "--out", str(out),
+            "--seed", "1234",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "Provenance: etaval" in result.output
+    assert "seed=1234" in result.output
+
+    prov_sidecar = Path(f"{out}.provenance.json")
+    summary_sidecar = Path(f"{out}.summary.json")
+    assert prov_sidecar.is_file()
+    assert summary_sidecar.is_file()
+
+    import json
+
+    prov_data = json.loads(prov_sidecar.read_text())
+    assert prov_data["seed"] == 1234
+    assert prov_data["source_name"] == "mbta"
+
+    summary_data = json.loads(summary_sidecar.read_text())
+    assert summary_data["provenance"]["seed"] == 1234
+    assert "inference_latency" in summary_data
+
+
+def test_run_command_without_out_skips_sidecars(tmp_path: Path) -> None:
+    """No --out means no sidecars are written (mirrors parquet-export gating)."""
+    from tests.test_feeds_replay_archive import _base_vp_rows, _write_vp_archive
+
+    vp_dir = _write_vp_archive(tmp_path, _base_vp_rows())
+
+    result = runner.invoke(
+        app,
+        [
+            "run",
+            "--source", "mbta",
+            "--replay-vp", str(vp_dir),
+            "--replay-gtfs", str(_MINI_GTFS),
+            "--seed", "7",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "Provenance: etaval" in result.output
+    assert not (tmp_path / "results.parquet.provenance.json").exists()

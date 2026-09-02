@@ -41,11 +41,15 @@ def _state_to_info(state: RunState) -> RunInfo:
     summary_dict: dict | None = None
     if state.summary is not None:
         summary_dict = state.summary.to_dict()
+    provenance_dict: dict | None = None
+    if state.provenance is not None:
+        provenance_dict = state.provenance.to_dict()
     return RunInfo(
         id=state.id,
         params=state.params,
         status=state.status,
         summary=summary_dict,
+        provenance=provenance_dict,
         db_path=state.db_path,
         started_at=state.started_at,
         ended_at=state.ended_at,
@@ -149,6 +153,7 @@ def create_app(run_manager: RunManager | None = None) -> FastAPI:
             predictor_ids=predictor_ids,
             routes=body.routes,
             duration_s=duration_s,
+            seed=body.seed,
         )
         return {"run_id": run_id}
 

@@ -31,6 +31,8 @@ the path to ``GtfsStaticLoader``, then deletes the temp file.
 from __future__ import annotations
 
 import asyncio
+import json
+import math
 import os
 import sys
 from pathlib import Path
@@ -42,11 +44,14 @@ from rich.console import Console
 from rich.table import Table
 
 import etaval
+from etaval.backtest import walk_forward
 from etaval.engine.assembly import (
     DEFAULT_PREDICTOR_IDS,
     PREDICTOR_REGISTRY,
+    _attach_static_loader,
     _RouteFilterLiveSource,
     build_detectors,
+    build_replay_run,
     download_gtfs,
     parse_duration,
 )
@@ -62,7 +67,10 @@ from etaval.feeds.gtfsrt_json import (
 )
 from etaval.feeds.source_config import list_sources, load_named_source
 from etaval.feeds.static import GtfsStaticLoader
+from etaval.figures import render_all_figures
+from etaval.provenance import RunProvenance, build_run_provenance, write_provenance_sidecar
 from etaval.scoring.metrics import compute_metrics
+from etaval.scoring.sensitivity import sensitivity_from_persisted_arrivals
 from etaval.storage.parquet_export import export_results, load_results_parquet
 from etaval.storage.sqlite import SqliteStorage
 
@@ -89,6 +97,8 @@ async def _run_validation(
     max_ticks: int | None = None,
     poll_interval_s: float = 15.0,
     source_name: str = "",
+    seed: int | None = None,
+    provenance: RunProvenance | None = None,
 ) -> RunSummary:
     """Thin async core that delegates to :func:`~etaval.engine.runtime.run_engine`.
 
@@ -107,6 +117,8 @@ async def _run_validation(
         max_ticks:       Tick count cap (live or replay; ``None`` = unlimited).
         poll_interval_s: Sleep between live ticks (ignored in replay mode).
         source_name:     Source label forwarded to the trip tracker.
+        seed:            Optional run seed, threaded through to RunSummary/provenance.
+        provenance:      Optional pre-built RunProvenance, threaded through unchanged.
 
     Returns:
         :class:`~etaval.engine.runtime.RunSummary` with counts.
@@ -122,6 +134,8 @@ async def _run_validation(
         max_ticks=max_ticks,
         poll_interval_s=poll_interval_s,
         source_name=source_name,
+        seed=seed,
+        provenance=provenance,
     )
 
 
@@ -184,12 +198,39 @@ def run(
     duration: str = typer.Option("30m", "--duration", help="Run duration, e.g. 30m / 90s / 1h"),
     out: Path | None = typer.Option(None, "--out", help="Parquet output path"),  # noqa: B008
     db: Path | None = typer.Option(None, "--db", help="SQLite path (default: in-memory)"),  # noqa: B008
+    replay_vp: str | None = typer.Option(
+        None, "--replay-vp", help="Archived VP parquet path (dir/file/s3://); enables replay mode"
+    ),
+    replay_tu: str | None = typer.Option(
+        None, "--replay-tu", help="Archived TU parquet path (dir/file/s3://); optional"
+    ),
+    replay_start: str | None = typer.Option(
+        None, "--replay-start", help="Replay window start (epoch seconds or ISO 8601)"
+    ),
+    replay_end: str | None = typer.Option(
+        None, "--replay-end", help="Replay window end (epoch seconds or ISO 8601)"
+    ),
+    replay_gtfs: Path | None = typer.Option(  # noqa: B008
+        None, "--replay-gtfs", help="Static GTFS zip to use for replay"
+    ),
+    replay_gtfs_dir: Path | None = typer.Option(  # noqa: B008
+        None,
+        "--replay-gtfs-dir",
+        help="Directory of dated GTFS zips (YYYY-MM-DD.zip); newest <= first replay tick is used",
+    ),
+    seed: int | None = typer.Option(
+        None, "--seed", help="Run seed, recorded in provenance (no RNG in the tick loop today)"
+    ),
 ) -> None:
-    """Run headless ETA validation against a live GTFS-RT source.
+    """Run headless ETA validation against a live GTFS-RT source, or replay an archive.
 
-    Downloads the GTFS static zip, polls VP and TU feeds, scores predictions
-    against detected actual arrivals, persists to SQLite, and (optionally)
-    exports results to a Parquet file for reporting.
+    Live mode (default): downloads the GTFS static zip, polls VP and TU feeds,
+    scores predictions against detected actual arrivals, persists to SQLite,
+    and (optionally) exports results to a Parquet file for reporting.
+
+    Replay mode (``--replay-vp`` given): sources snapshots from an archived
+    Hive-partitioned Parquet VP/TU feed instead of live HTTP, wall-clock
+    independent. Requires ``--replay-gtfs`` or ``--replay-gtfs-dir``.
     """
     # ── Parse duration ────────────────────────────────────────────────────────
     try:
@@ -217,6 +258,70 @@ def run(
         raise typer.Exit(code=1)
     predictors: list[Any] = [PREDICTOR_REGISTRY[pid]() for pid in predictor_ids]
 
+    db_path: str = str(db) if db is not None else ":memory:"
+
+    # ── Replay mode ────────────────────────────────────────────────────────────
+    if replay_vp is not None:
+        if replay_gtfs is None and replay_gtfs_dir is None:
+            typer.echo(
+                "Error: --replay-gtfs or --replay-gtfs-dir is required in replay mode", err=True
+            )
+            raise typer.Exit(code=1)
+
+        try:
+            deps = build_replay_run(
+                cfg,
+                vp_path=replay_vp,
+                tu_path=replay_tu,
+                start=replay_start,
+                end=replay_end,
+                routes=list(route) if route else None,
+                predictor_ids=predictor_ids,
+                static_gtfs_zip=replay_gtfs,
+                static_gtfs_dir=replay_gtfs_dir,
+            )
+        except (FileNotFoundError, ValueError, RuntimeError) as exc:
+            typer.echo(f"Error building replay run: {exc}", err=True)
+            raise typer.Exit(code=1) from exc
+
+        route_display = list(route) if route else "all"
+        typer.echo(
+            f"Replaying: source={source!r}, vp={replay_vp!r}, tu={replay_tu!r}, "
+            f"predictors={predictor_ids}, routes={route_display}"
+        )
+
+        gtfs_snapshot = str(replay_gtfs) if replay_gtfs is not None else (
+            str(replay_gtfs_dir) if replay_gtfs_dir is not None else None
+        )
+        provenance = build_run_provenance(
+            source_name=source,
+            source_config=cfg,
+            detectors=deps.detectors,
+            predictor_ids=predictor_ids,
+            seed=seed,
+            gtfs_snapshot=gtfs_snapshot,
+        )
+
+        with SqliteStorage(db_path) as storage:
+            summary = asyncio.run(
+                _run_validation(
+                    deps.feed_source,
+                    deps.static_loader,
+                    deps.predictors,
+                    deps.detectors,
+                    storage,
+                    primary_method="shape_distance",
+                    source_name=source,
+                    seed=seed,
+                    provenance=provenance,
+                )
+            )
+            _report_run(summary)
+            _export_if_requested(storage, out)
+            _write_sidecars_if_requested(summary, out)
+        return
+
+    # ── Live mode ──────────────────────────────────────────────────────────────
     # ── Download GTFS static zip (synchronous; before asyncio.run) ────────────
     typer.echo(f"Downloading GTFS static zip from {cfg.gtfs_static_url} …")
     try:
@@ -237,6 +342,11 @@ def run(
         except OSError:
             pass
 
+    # Give any predictor that exposes attach_static_loader() the run's loader
+    # (e.g. ScheduleBaselinePredictor). See etaval.engine.assembly.build_live_run
+    # for the same wiring used on the assembly-based path.
+    _attach_static_loader(predictors, static_loader)
+
     # ── Build pollers + live feed source ──────────────────────────────────────
     headers: dict[str, str] = dict(cfg.headers)
     vp_poller = VehiclePositionsPoller(cfg.vehicle_positions_url, headers=headers)
@@ -254,14 +364,20 @@ def run(
     # ── Build detectors from source config ────────────────────────────────────
     detectors: list[Any] = build_detectors(cfg)
 
-    # ── Storage ───────────────────────────────────────────────────────────────
-    db_path: str = str(db) if db is not None else ":memory:"
-
     # ── Run ───────────────────────────────────────────────────────────────────
     route_display = list(route) if route else "all"
     typer.echo(
         f"Running: source={source!r}, duration={duration}, "
         f"predictors={predictor_ids}, routes={route_display}"
+    )
+
+    provenance = build_run_provenance(
+        source_name=source,
+        source_config=cfg,
+        detectors=detectors,
+        predictor_ids=predictor_ids,
+        seed=seed,
+        gtfs_snapshot=cfg.gtfs_static_url,
     )
 
     with SqliteStorage(db_path) as storage:
@@ -276,26 +392,80 @@ def run(
                 duration_s=duration_s,
                 poll_interval_s=float(cfg.poll_interval_s),
                 source_name=source,
+                seed=seed,
+                provenance=provenance,
             )
         )
 
-        typer.echo(
-            f"Done. Ticks={summary.ticks} Samples={summary.samples_saved} "
-            f"Arrivals={summary.arrivals_saved} Results={summary.results_saved}"
-        )
-        if summary.predictor_errors:
-            typer.echo(f"Predictor errors: {summary.predictor_errors}")
-        if summary.detector_errors:
-            typer.echo(f"Detector errors: {summary.detector_errors}")
+        _report_run(summary)
+        _export_if_requested(storage, out)
+        _write_sidecars_if_requested(summary, out)
 
-        # ── Parquet export (inside the storage context) ────────────────────────
-        if out is not None:
-            results = storage.load_results()
-            if results:
-                export_results(results, out)
-                typer.echo(f"Exported {len(results)} results → {out}")
-            else:
-                typer.echo("No results to export (0 ValidationResults scored).")
+
+def _format_provenance_stamp(prov: RunProvenance) -> str:
+    """One-line ``etaval sha[dirty] / gtfs-eta sha[dirty] / seed / snapshot`` stamp."""
+
+    def _sha_dirty(sha: str | None, dirty: bool | None) -> str:
+        short = sha[:12] if sha else "unknown"
+        if dirty is None:
+            tag = "?"
+        else:
+            tag = "dirty" if dirty else "clean"
+        return f"{short}[{tag}]"
+
+    etaval_part = _sha_dirty(prov.etaval_git_sha, prov.etaval_dirty)
+    gtfs_eta_part = _sha_dirty(prov.gtfs_eta_git_sha, prov.gtfs_eta_dirty)
+    seed_part = str(prov.seed) if prov.seed is not None else "none"
+    snapshot_part = prov.gtfs_snapshot if prov.gtfs_snapshot is not None else "none"
+    return (
+        f"Provenance: etaval {etaval_part} / gtfs-eta {gtfs_eta_part} / "
+        f"seed={seed_part} / snapshot={snapshot_part}"
+    )
+
+
+def _report_run(summary: RunSummary) -> None:
+    """Echo the standard end-of-run summary line + any swallowed-error counts."""
+    typer.echo(
+        f"Done. Ticks={summary.ticks} Samples={summary.samples_saved} "
+        f"Arrivals={summary.arrivals_saved} Results={summary.results_saved}"
+    )
+    if summary.predictor_errors:
+        typer.echo(f"Predictor errors: {summary.predictor_errors}")
+    if summary.detector_errors:
+        typer.echo(f"Detector errors: {summary.detector_errors}")
+    if summary.provenance is not None:
+        typer.echo(_format_provenance_stamp(summary.provenance))
+
+
+def _write_sidecars_if_requested(summary: RunSummary, out: Path | None) -> None:
+    """Write ``<out>.provenance.json`` and ``<out>.summary.json``, if *out* given.
+
+    The summary sidecar carries the inference-latency block so a later
+    cost/accuracy Pareto analysis can read it without re-running the engine.
+    """
+    if out is None:
+        return
+    if summary.provenance is not None:
+        write_provenance_sidecar(out, summary.provenance)
+        typer.echo(f"Wrote provenance → {out}.provenance.json")
+    summary_path = Path(f"{out}.summary.json")
+    summary_path.write_text(json.dumps(summary.to_dict(), indent=2, sort_keys=True))
+    typer.echo(f"Wrote summary → {summary_path}")
+
+
+def _export_if_requested(storage: SqliteStorage, out: Path | None) -> None:
+    """Export ValidationResults to Parquet at *out*, if given.
+
+    Must be called inside the storage context (before it closes).
+    """
+    if out is None:
+        return
+    results = storage.load_results()
+    if results:
+        export_results(results, out)
+        typer.echo(f"Exported {len(results)} results → {out}")
+    else:
+        typer.echo("No results to export (0 ValidationResults scored).")
 
 
 # ── report ────────────────────────────────────────────────────────────────────
@@ -304,6 +474,12 @@ def run(
 @app.command()
 def report(
     path: Path = typer.Argument(..., help="Parquet file of ValidationResults"),  # noqa: B008
+    sensitivity: bool = typer.Option(
+        False, "--sensitivity", help="Also render a detector-sensitivity table (requires --db)"
+    ),
+    db: Path | None = typer.Option(  # noqa: B008
+        None, "--db", help="SQLite db from the original 'etaval run' (required for --sensitivity)"
+    ),
 ) -> None:
     """Render a metrics report from a Parquet results file.
 
@@ -312,9 +488,29 @@ def report(
     1. Per-predictor MAE / RMSE / MAPE / bias / count.
     2. Error vs horizon bucket (< 2 m, 2–5 m, 5–10 m, > 10 m).
     3. Head-to-head win-rate (when two or more predictors are present).
+
+    With ``--sensitivity --db <sqlite>``, also renders a fourth section
+    showing how scored MAE shifts per predictor when the ground-truth
+    detector method is swapped (see ``etaval.scoring.sensitivity`` for what
+    this can and cannot re-derive from storage). ``--sensitivity`` without
+    ``--db`` is declined — see below.
     """
     # Console created here so CliRunner captures output in tests.
     console = Console(file=sys.stdout, no_color=True)
+
+    if sensitivity and db is None:
+        typer.echo(
+            "Error: --sensitivity requires --db <sqlite path>. Detector sensitivity "
+            "re-scores each ground-truth detector method's arrivals, but only "
+            "'etaval run --db <path>' persists those per-method arrivals (the engine "
+            "saves every configured detector's output, not just the primary one used "
+            "for scoring). The Parquet results file alone carries neither raw "
+            "position history nor per-method arrivals, so true detector "
+            "re-sensitivity cannot be computed from it -- pass --db pointing at the "
+            "SQLite database written by the run that produced this report.",
+            err=True,
+        )
+        raise typer.Exit(code=1)
 
     if not path.exists():
         typer.echo(f"Error: file not found: {path}", err=True)
@@ -384,6 +580,184 @@ def report(
                 f"{w.win_fraction * 100:.1f}",
             )
         console.print(h2h_table)
+
+    # ── 4. Detector sensitivity (optional) ────────────────────────────────────
+    if sensitivity:
+        assert db is not None  # guaranteed by the decline-check above
+        if not db.exists():
+            typer.echo(f"Error: db file not found: {db}", err=True)
+            raise typer.Exit(code=1)
+
+        with SqliteStorage(db) as storage:
+            db_samples = storage.load_samples()
+            db_arrivals = storage.load_arrivals()
+
+        rows = sensitivity_from_persisted_arrivals(db_samples, db_arrivals)
+        if not rows:
+            typer.echo("No detector sensitivity to report (0 persisted arrivals in --db).")
+        else:
+            sens_table = Table(title="Detector Sensitivity", show_lines=True)
+            sens_table.add_column("Detector", no_wrap=True)
+            sens_table.add_column("Predictor", no_wrap=True)
+            sens_table.add_column("MAE (s)", justify="right")
+            sens_table.add_column("Count", justify="right")
+            sens_table.add_column("Δ MAE vs default (s)", justify="right")
+            for row in rows:
+                if not row.metrics_by_predictor:
+                    sens_table.add_row(row.detector_id, "—", "—", "0", "—")
+                    continue
+                for predictor_id, m in row.metrics_by_predictor.items():
+                    delta = row.delta_mae_vs_default
+                    delta_str = "nan" if math.isnan(delta) else f"{delta:.1f}"
+                    sens_table.add_row(
+                        row.detector_id,
+                        predictor_id,
+                        f"{m.mae:.1f}",
+                        str(m.count),
+                        delta_str,
+                    )
+            console.print(sens_table)
+
+
+# ── walk-forward ──────────────────────────────────────────────────────────────
+
+
+@app.command("walk-forward")
+def walk_forward_cmd(
+    out: Path = typer.Argument(..., help="Output JSON path for the WalkForwardResult"),  # noqa: B008
+    source: str = typer.Option(..., "--source", help="Named source (e.g. mbta, bucr)"),
+    replay_vp: str = typer.Option(
+        ..., "--replay-vp", help="Archived VP parquet path (dir/file/s3://)"
+    ),
+    replay_tu: str | None = typer.Option(
+        None, "--replay-tu", help="Archived TU parquet path (dir/file/s3://); optional"
+    ),
+    replay_start: str = typer.Option(
+        ..., "--replay-start", help="Backtest window start (epoch seconds or ISO 8601)"
+    ),
+    replay_end: str = typer.Option(
+        ..., "--replay-end", help="Backtest window end (epoch seconds or ISO 8601)"
+    ),
+    replay_gtfs: Path | None = typer.Option(  # noqa: B008
+        None, "--replay-gtfs", help="Static GTFS zip to use for replay"
+    ),
+    replay_gtfs_dir: Path | None = typer.Option(  # noqa: B008
+        None,
+        "--replay-gtfs-dir",
+        help="Directory of dated GTFS zips (YYYY-MM-DD.zip); newest <= first tick is used",
+    ),
+    route: list[str] | None = typer.Option(  # noqa: B008
+        None, "--route", help="Filter to route ID(s); repeat for multiple"
+    ),
+    predictor: list[str] | None = typer.Option(  # noqa: B008
+        None, "--predictor", help="Predictor ID(s); repeat for multiple (default: both)"
+    ),
+    windows: int | None = typer.Option(
+        None, "--windows", help="Split into this many equal-count windows"
+    ),
+    width: str | None = typer.Option(
+        None, "--width", help="Split into fixed-width windows, e.g. 1h/30m/90s"
+    ),
+    seed: int = typer.Option(0, "--seed", help="Shared run seed for every window"),
+) -> None:
+    """Walk-forward backtest: per-window MAE + CI over an archived replay window.
+
+    Splits ``[--replay-start, --replay-end]`` into windows (``--windows`` for
+    an equal COUNT, or ``--width`` for a fixed WIDTH — exactly one required),
+    runs a fresh replay per window with the SAME ``--seed``, and writes a
+    :class:`~etaval.backtest.WalkForwardResult` (per-window MAE+CI, the
+    cross-window aggregate, provenance, and the M6 split_note) to *out*.
+    """
+    if replay_gtfs is None and replay_gtfs_dir is None:
+        typer.echo(
+            "Error: --replay-gtfs or --replay-gtfs-dir is required for walk-forward", err=True
+        )
+        raise typer.Exit(code=1)
+    if (windows is None) == (width is None):
+        typer.echo("Error: exactly one of --windows or --width is required", err=True)
+        raise typer.Exit(code=1)
+
+    try:
+        cfg = load_named_source(source)
+    except FileNotFoundError:
+        typer.echo(
+            f"Error: source {source!r} not found. Run 'etaval sources' to list available.",
+            err=True,
+        )
+        raise typer.Exit(code=1) from None
+
+    predictor_ids: list[str] = list(predictor) if predictor else DEFAULT_PREDICTOR_IDS
+    unknown = [pid for pid in predictor_ids if pid not in PREDICTOR_REGISTRY]
+    if unknown:
+        typer.echo(f"Error: unknown predictor IDs: {unknown!r}", err=True)
+        typer.echo(f"Known predictor IDs: {sorted(PREDICTOR_REGISTRY)}", err=True)
+        raise typer.Exit(code=1)
+
+    try:
+        width_s = parse_duration(width) if width is not None else None
+    except ValueError as exc:
+        typer.echo(f"Error: {exc}", err=True)
+        raise typer.Exit(code=1) from exc
+
+    typer.echo(
+        f"Walk-forward: source={source!r}, vp={replay_vp!r}, "
+        f"predictors={predictor_ids}, windows={windows}, width={width}"
+    )
+
+    try:
+        result = asyncio.run(
+            walk_forward(
+                cfg,
+                vp_path=replay_vp,
+                tu_path=replay_tu,
+                start=replay_start,
+                end=replay_end,
+                predictor_ids=predictor_ids,
+                n_windows=windows,
+                width=width_s,
+                seed=seed,
+                routes=list(route) if route else None,
+                static_gtfs_zip=replay_gtfs,
+                static_gtfs_dir=replay_gtfs_dir,
+            )
+        )
+    except (FileNotFoundError, ValueError, RuntimeError) as exc:
+        typer.echo(f"Error running walk-forward: {exc}", err=True)
+        raise typer.Exit(code=1) from exc
+
+    written = result.write_json(out)
+    typer.echo(f"Wrote walk-forward result ({len(result.windows)} windows) → {written}")
+
+
+# ── figures ───────────────────────────────────────────────────────────────────
+
+
+@app.command("figures")
+def figures_cmd(
+    parquet: Path = typer.Argument(..., help="Parquet file of ValidationResults"),  # noqa: B008
+    out_dir: Path = typer.Option(  # noqa: B008
+        ..., "--out-dir", help="Directory to write PNG figures into"
+    ),
+    summary: Path | None = typer.Option(  # noqa: B008
+        None,
+        "--summary",
+        help="<...>.summary.json sidecar; enables the cost/accuracy Pareto figure",
+    ),
+) -> None:
+    """Render publication figures (300 dpi PNG) from a Parquet results file."""
+    if not parquet.exists():
+        typer.echo(f"Error: file not found: {parquet}", err=True)
+        raise typer.Exit(code=1)
+    if summary is not None and not summary.exists():
+        typer.echo(f"Error: summary file not found: {summary}", err=True)
+        raise typer.Exit(code=1)
+
+    written = render_all_figures(parquet, out_dir, summary_path=summary)
+    for name, path in written.items():
+        if path is not None:
+            typer.echo(f"Wrote {name} → {path}")
+        else:
+            typer.echo(f"Skipped {name} (no data)")
 
 
 if __name__ == "__main__":

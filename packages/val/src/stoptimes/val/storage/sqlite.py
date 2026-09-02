@@ -189,6 +189,65 @@ class SqliteStorage:
 
     # ── read ──────────────────────────────────────────────────────────────────
 
+    def load_samples(self, predictor_id: str | None = None) -> list[PredictionSample]:
+        """Load PredictionSamples, optionally filtered by predictor_id.
+
+        Used by the A5 detector-sensitivity CLI path (``etaval report
+        --sensitivity --db``), which re-scores every persisted sample against
+        each detector method's already-persisted arrivals — see
+        ``etaval.scoring.sensitivity`` for why raw position history (and
+        therefore true re-detection) is not available from storage.
+        """
+        if predictor_id is not None:
+            rows = self._conn.execute(
+                "SELECT * FROM prediction_samples WHERE predictor_id = ?",
+                (predictor_id,),
+            ).fetchall()
+        else:
+            rows = self._conn.execute("SELECT * FROM prediction_samples").fetchall()
+
+        return [
+            PredictionSample(
+                trip_key=row["trip_key"],
+                predictor_id=row["predictor_id"],
+                stop_id=row["stop_id"],
+                stop_sequence=row["stop_sequence"],
+                predicted_arrival_epoch=row["predicted_arrival_epoch"],
+                made_at_epoch=row["made_at_epoch"],
+                vehicle_progress_m_at_made=row["vehicle_progress_m_at_made"],
+                dist_remaining_m=row["dist_remaining_m"],
+                stops_remaining=row["stops_remaining"],
+            )
+            for row in rows
+        ]
+
+    def load_arrivals(self, method: str | None = None) -> list[ActualArrival]:
+        """Load ActualArrivals, optionally filtered by detector method.
+
+        The engine persists arrivals from *every* configured detector each
+        tick (not just the ``primary_method`` used for scoring), so this
+        returns arrivals for every detector method that ran during the
+        original ``etaval run`` — see ``etaval.scoring.sensitivity``.
+        """
+        if method is not None:
+            rows = self._conn.execute(
+                "SELECT * FROM actual_arrivals WHERE method = ?",
+                (method,),
+            ).fetchall()
+        else:
+            rows = self._conn.execute("SELECT * FROM actual_arrivals").fetchall()
+
+        return [
+            ActualArrival(
+                trip_key=row["trip_key"],
+                stop_id=row["stop_id"],
+                stop_sequence=row["stop_sequence"],
+                actual_arrival_epoch=row["actual_arrival_epoch"],
+                method=row["method"],
+            )
+            for row in rows
+        ]
+
     def load_results(self, predictor_id: str | None = None) -> list[ValidationResult]:
         """Load ValidationResults, optionally filtered by predictor_id."""
         if predictor_id is not None:

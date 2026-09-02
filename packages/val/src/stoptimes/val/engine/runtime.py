@@ -54,6 +54,7 @@ from etaval.feeds.gtfsrt_json import (
 from etaval.feeds.static import GtfsStaticLoader
 from etaval.feeds.tracker import ActiveTripTracker
 from etaval.predictors.gtfsrt_tripupdates import TripUpdateInput
+from etaval.provenance import LatencyRecorder, LatencyStats, RunProvenance
 from etaval.scoring.scorer import Scorer
 from etaval.spatial.polyline import (
     PolylinePoint,
@@ -161,6 +162,8 @@ class RunSummary:
     results_saved: int = 0
     predictor_errors: dict[str, int] = field(default_factory=dict)
     detector_errors: dict[str, int] = field(default_factory=dict)
+    provenance: RunProvenance | None = None
+    inference_latency: dict[str, LatencyStats] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         """Plain-dict representation for persistence / API / CLI serialization."""
@@ -171,7 +174,33 @@ class RunSummary:
             "results_saved": self.results_saved,
             "predictor_errors": dict(self.predictor_errors),
             "detector_errors": dict(self.detector_errors),
+            "provenance": self.provenance.to_dict() if self.provenance is not None else None,
+            "inference_latency": {
+                pid: stats.to_dict() for pid, stats in self.inference_latency.items()
+            },
         }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> RunSummary:
+        """Reconstruct a RunSummary from :meth:`to_dict` output (round-trip safe)."""
+        provenance_raw = data.get("provenance")
+        provenance = (
+            RunProvenance.from_dict(provenance_raw) if provenance_raw is not None else None
+        )
+        latency_raw = data.get("inference_latency") or {}
+        inference_latency = {
+            pid: LatencyStats.from_dict(stats) for pid, stats in latency_raw.items()
+        }
+        return cls(
+            ticks=data.get("ticks", 0),
+            samples_saved=data.get("samples_saved", 0),
+            arrivals_saved=data.get("arrivals_saved", 0),
+            results_saved=data.get("results_saved", 0),
+            predictor_errors=dict(data.get("predictor_errors") or {}),
+            detector_errors=dict(data.get("detector_errors") or {}),
+            provenance=provenance,
+            inference_latency=inference_latency,
+        )
 
 
 @dataclass(frozen=True)
@@ -234,6 +263,8 @@ async def run_engine(
     source_name: str = "",
     on_tick: Callable[[TickEvent], Awaitable[None]] | None = None,
     on_predictor_error: Callable[[str, BaseException], Awaitable[None]] | None = None,
+    seed: int | None = None,
+    provenance: RunProvenance | None = None,
 ) -> RunSummary:
     """Run the validation engine tick loop.
 
@@ -260,6 +291,11 @@ async def run_engine(
             ``(predictor_id, exc)`` whenever a predictor raises.  Called
             BEFORE the exception is swallowed — existing swallow behavior
             (the loop continues to the next predictor) is unchanged.
+        seed: Optional run seed, recorded/threaded only — there is no RNG
+            in the tick loop today, so this does not affect execution.
+        provenance: Optional pre-built :class:`~etaval.provenance.RunProvenance`
+            for this run, carried through unchanged into the returned
+            RunSummary.
 
     Returns:
         :class:`RunSummary` with counts of saved rows.
@@ -286,6 +322,9 @@ async def run_engine(
     # both RunSummary (final) and TickEvent (per-tick cumulative snapshot).
     predictor_errors: dict[str, int] = {}
     detector_errors: dict[str, int] = {}
+
+    # Per-predictor inference-latency tracking.
+    latency_recorder = LatencyRecorder()
 
     summary = RunSummary()
     start_wall = time.monotonic()
@@ -379,6 +418,7 @@ async def run_engine(
 
             # ── 5. Run predictors ─────────────────────────────────────────────
             for predictor in predictors:
+                _predict_start = time.perf_counter()
                 try:
                     if hasattr(predictor, "predict"):
                         # Declarative opt-in: predictors that want position
@@ -398,12 +438,18 @@ async def run_engine(
                     else:
                         continue
                 except Exception as exc:  # noqa: BLE001
+                    latency_recorder.record(
+                        predictor.predictor_id, time.perf_counter() - _predict_start
+                    )
                     predictor_errors[predictor.predictor_id] = (
                         predictor_errors.get(predictor.predictor_id, 0) + 1
                     )
                     if on_predictor_error is not None:
                         await on_predictor_error(predictor.predictor_id, exc)
                     continue
+                latency_recorder.record(
+                    predictor.predictor_id, time.perf_counter() - _predict_start
+                )
 
                 for pred in preds:
                     sample = pred.to_sample(
@@ -487,4 +533,6 @@ async def run_engine(
 
     summary.predictor_errors = dict(predictor_errors)
     summary.detector_errors = dict(detector_errors)
+    summary.provenance = provenance
+    summary.inference_latency = latency_recorder.summary()
     return summary
