@@ -56,8 +56,10 @@ class TestGtfsEtaModelPredictor:
         stops = [_stop("s1", 1), _stop("s2", 2)]
         fake_result = {
             "predictions": [
-                {"stop_id": "s1", "stop_sequence": 1, "eta_seconds": 120.0, "distance_to_stop_m": 500.0},
-                {"stop_id": "s2", "stop_sequence": 2, "eta_seconds": 300.0, "distance_to_stop_m": 1200.0},
+                {"stop_id": "s1", "stop_sequence": 1, "eta_seconds": 120.0,
+                 "distance_to_stop_m": 500.0},
+                {"stop_id": "s2", "stop_sequence": 2, "eta_seconds": 300.0,
+                 "distance_to_stop_m": 1200.0},
             ]
         }
         with patch(
@@ -99,9 +101,12 @@ class TestGtfsEtaModelPredictor:
         assert preds == []
 
     def test_explicit_model_key_passed_through(self):
-        predictor = GtfsEtaModelPredictor("polyreg_time", model_key="polyreg_time_x_y_global_v1")
+        predictor = GtfsEtaModelPredictor(
+            "polyreg_time", model_key="polyreg_time_x_y_global_v1"
+        )
         with patch(
-            "etaval.predictors.gtfs_eta_models.estimate_stop_times", return_value={"predictions": []}
+            "etaval.predictors.gtfs_eta_models.estimate_stop_times",
+            return_value={"predictions": []},
         ) as mock_est:
             predictor.predict(TRIP, [_stop("s1", 1)], STATE, None)
         assert mock_est.call_args.kwargs["model_key"] == "polyreg_time_x_y_global_v1"

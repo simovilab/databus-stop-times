@@ -50,7 +50,7 @@ from __future__ import annotations
 import os
 import sys
 import warnings
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -144,7 +144,7 @@ class GtfsEtaModelPredictor:
             return []
 
         made_at = vehicle_state.epoch
-        vp_iso = datetime.fromtimestamp(made_at, tz=timezone.utc).isoformat()
+        vp_iso = datetime.fromtimestamp(made_at, tz=UTC).isoformat()
 
         vehicle_position = {
             "vehicle_id": trip.vehicle_id,

@@ -207,6 +207,38 @@ def create_app(run_manager: RunManager | None = None) -> FastAPI:
             storage.close()
         return [ResultRow(**r.model_dump()) for r in results[:limit]]
 
+    @app.get("/api/telemetry")
+    async def telemetry() -> dict:
+        """Process-wide + per-run telemetry snapshot ("no silent failures")."""
+        snap = run_manager.telemetry.snapshot()
+        states = {s.id: s for s in run_manager.list_runs()}
+        per_run = []
+        for run_id, rt in snap["per_run"].items():
+            state = states.get(run_id)
+            per_run.append(
+                {
+                    "run_id": run_id,
+                    "status": state.status if state is not None else None,
+                    "ticks": rt["ticks"],
+                    "tick_rate": rt["tick_rate"],
+                    "last_tick_age_s": rt["last_tick_age_s"],
+                    "feed": rt["feed"],
+                    "predictor_errors": rt["predictor_errors"],
+                }
+            )
+        return {
+            "api_uptime_s": snap["api_uptime_s"],
+            "active_runs": sum(1 for s in states.values() if s.status == "running"),
+            "per_run": per_run,
+        }
+
+    @app.get("/api/telemetry/events")
+    async def telemetry_events(
+        limit: Annotated[int, Query(ge=1, le=500)] = 100,
+    ) -> list[dict]:
+        """Return the *limit* most-recent telemetry events, newest-last."""
+        return run_manager.telemetry.events(limit=limit)
+
     @app.delete("/api/runs/{run_id}")
     async def delete_run(run_id: str) -> dict:
         """Cancel a running run (if active) and remove all its data."""

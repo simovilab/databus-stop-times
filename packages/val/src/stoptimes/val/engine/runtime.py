@@ -215,6 +215,7 @@ async def run_engine(
     poll_interval_s: float = 15.0,
     source_name: str = "",
     on_tick: Callable[[TickEvent], Awaitable[None]] | None = None,
+    on_predictor_error: Callable[[str, BaseException], Awaitable[None]] | None = None,
 ) -> RunSummary:
     """Run the validation engine tick loop.
 
@@ -236,6 +237,11 @@ async def run_engine(
         max_ticks:      Max ticks to process.  None = unlimited.
         poll_interval_s: Sleep between ticks in live mode.
         source_name:    Source label forwarded to ActiveTripTracker.
+        on_tick:        Optional async callback invoked once per tick.
+        on_predictor_error: Optional async callback invoked with
+            ``(predictor_id, exc)`` whenever a predictor raises.  Called
+            BEFORE the exception is swallowed — existing swallow behavior
+            (the loop continues to the next predictor) is unchanged.
 
     Returns:
         :class:`RunSummary` with counts of saved rows.
@@ -368,7 +374,9 @@ async def run_engine(
                             )
                     else:
                         continue
-                except Exception:
+                except Exception as exc:  # noqa: BLE001
+                    if on_predictor_error is not None:
+                        await on_predictor_error(predictor.predictor_id, exc)
                     continue
 
                 for pred in preds:

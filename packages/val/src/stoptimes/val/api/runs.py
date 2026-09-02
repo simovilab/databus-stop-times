@@ -17,6 +17,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal
 
+from etaval.api.telemetry import TelemetryCollector
 from etaval.engine.assembly import LiveRunDeps, build_live_run
 from etaval.engine.runtime import RunSummary, TickEvent, run_engine
 from etaval.feeds.source_config import load_named_source
@@ -63,12 +64,14 @@ class RunManager:
         self,
         data_dir: Path,
         deps_builder: Callable[..., LiveRunDeps] = build_live_run,
+        telemetry: TelemetryCollector | None = None,
     ) -> None:
         self._data_dir = Path(data_dir)
         self._runs_dir = self._data_dir / "runs"
         self._runs_dir.mkdir(parents=True, exist_ok=True)
         self._index_path = self._runs_dir / "index.json"
         self._deps_builder = deps_builder
+        self.telemetry = telemetry if telemetry is not None else TelemetryCollector()
 
         # In-memory run states (merged with persisted on init).
         self._runs: dict[str, RunState] = {}
@@ -191,9 +194,30 @@ class RunManager:
                     arrivals_saved=event.arrivals_saved,
                     results_saved=event.results_saved,
                 )
+            self.telemetry.record_tick(run_id)
+            self.telemetry.record_feed_poll(run_id, ok=True)
             await self._publish(run_id, event)
 
         return on_tick
+
+    def _make_on_predictor_error(self, run_id: str) -> Callable:
+        """Return an async on_predictor_error callback bound to *run_id*.
+
+        Records the exception in telemetry and logs a "warn" event, so a
+        predictor exception (which the engine otherwise swallows silently)
+        is visible via GET /api/telemetry and /api/telemetry/events.
+        """
+
+        async def on_predictor_error(predictor_id: str, exc: BaseException) -> None:
+            self.telemetry.record_predictor_error(run_id, predictor_id)
+            self.telemetry.log_event(
+                "warn",
+                source=f"predictor:{predictor_id}",
+                message=f"{type(exc).__name__}: {exc}",
+                run_id=run_id,
+            )
+
+        return on_predictor_error
 
     # ── Run lifecycle ──────────────────────────────────────────────────────────
 
@@ -269,6 +293,7 @@ class RunManager:
                 poll_interval_s=cfg.poll_interval_s,
                 source_name=cfg.name,
                 on_tick=self._make_on_tick(run_id),
+                on_predictor_error=self._make_on_predictor_error(run_id),
             )
 
             state.summary = summary
@@ -279,6 +304,13 @@ class RunManager:
             state.status = "error"
             state.error = str(exc)
             state.ended_at = time.time()
+            self.telemetry.record_feed_poll(run_id, ok=False)
+            self.telemetry.log_event(
+                "error",
+                source="run",
+                message=f"{type(exc).__name__}: {exc}",
+                run_id=run_id,
+            )
 
         finally:
             if storage is not None:

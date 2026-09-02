@@ -1,0 +1,121 @@
+/* etaval ops console — dense, dark, monospace, sharp-cornered. */
+
+$et-bg: #0a0f0d;
+$et-panel: #0d1512;
+$et-border: #1c2a24;
+$et-text: #c7d4cd;
+$et-text-dim: #5b6b64;
+$et-text-bright: #e8f2ec;
+$et-accent: #2fd67b;
+$et-accent-dim: rgba(47, 214, 123, 0.14);
+$et-warn: #e0b040;
+$et-err: #e06060;
+
+Screen {
+    background: $et-bg;
+    color: $et-text;
+}
+
+Header {
+    background: $et-panel;
+    color: $et-text-bright;
+    border-bottom: solid $et-border;
+}
+
+Footer {
+    background: $et-panel;
+    color: $et-text-dim;
+}
+
+.panel {
+    background: $et-panel;
+    border: solid $et-border;
+    padding: 1 2;
+}
+
+.micro-label {
+    color: $et-text-dim;
+    text-style: bold;
+    text-align: left;
+}
+
+.tile {
+    background: $et-panel;
+    border: solid $et-border;
+    padding: 1 2;
+    width: 1fr;
+    height: 5;
+}
+
+.tile-value {
+    color: $et-accent;
+    text-style: bold;
+}
+
+.status-ok {
+    color: $et-accent;
+}
+
+.status-warn {
+    color: $et-warn;
+}
+
+.status-err {
+    color: $et-err;
+}
+
+Button {
+    background: $et-accent-dim;
+    color: $et-accent;
+    border: solid $et-border;
+}
+
+Button:hover {
+    background: $et-accent;
+    color: $et-bg;
+}
+
+Input {
+    background: $et-panel;
+    color: $et-text;
+    border: solid $et-border;
+}
+
+Select {
+    background: $et-panel;
+    color: $et-text;
+    border: solid $et-border;
+}
+
+SelectionList {
+    background: $et-panel;
+    color: $et-text;
+    border: solid $et-border;
+}
+
+DataTable {
+    background: $et-panel;
+    color: $et-text;
+}
+
+DataTable > .datatable--header {
+    background: $et-border;
+    color: $et-text-bright;
+    text-style: bold;
+}
+
+DataTable > .datatable--cursor {
+    background: $et-accent-dim;
+    color: $et-accent;
+}
+
+RichLog {
+    background: $et-panel;
+    color: $et-text;
+    border: solid $et-border;
+}
+
+#status-line {
+    color: $et-text-dim;
+    height: 1;
+}
