@@ -92,7 +92,18 @@ class RunManager:
             raw: dict = json.load(fh)
         for run_id, meta in raw.items():
             summary_raw = meta.get("summary")
-            summary = RunSummary(**summary_raw) if summary_raw is not None else None
+            summary = (
+                RunSummary(
+                    ticks=summary_raw.get("ticks", 0),
+                    samples_saved=summary_raw.get("samples_saved", 0),
+                    arrivals_saved=summary_raw.get("arrivals_saved", 0),
+                    results_saved=summary_raw.get("results_saved", 0),
+                    predictor_errors=summary_raw.get("predictor_errors", {}),
+                    detector_errors=summary_raw.get("detector_errors", {}),
+                )
+                if summary_raw is not None
+                else None
+            )
             self._runs[run_id] = RunState(
                 id=run_id,
                 params=meta["params"],
@@ -110,12 +121,7 @@ class RunManager:
         for run_id, state in self._runs.items():
             summary_dict: dict | None = None
             if state.summary is not None:
-                summary_dict = {
-                    "ticks": state.summary.ticks,
-                    "samples_saved": state.summary.samples_saved,
-                    "arrivals_saved": state.summary.arrivals_saved,
-                    "results_saved": state.summary.results_saved,
-                }
+                summary_dict = state.summary.to_dict()
             index[run_id] = {
                 "params": state.params,
                 "status": state.status,
@@ -193,6 +199,8 @@ class RunManager:
                     samples_saved=event.samples_saved,
                     arrivals_saved=event.arrivals_saved,
                     results_saved=event.results_saved,
+                    predictor_errors=dict(event.predictor_errors),
+                    detector_errors=dict(event.detector_errors),
                 )
             self.telemetry.record_tick(run_id)
             self.telemetry.record_feed_poll(run_id, ok=True)

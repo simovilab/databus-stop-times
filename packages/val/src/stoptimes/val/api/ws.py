@@ -77,6 +77,8 @@ def tick_event_to_dict(ev: TickEvent) -> dict:
         "results_saved": ev.results_saved,
         "new_results": [r.model_dump() for r in ev.new_results],
         "vehicles": vehicles,
+        "predictor_errors": dict(ev.predictor_errors),
+        "detector_errors": dict(ev.detector_errors),
     }
 
 
@@ -84,12 +86,7 @@ def _snapshot_data(state: RunState) -> dict:
     """Minimal JSON-serializable representation of a :class:`~etaval.api.runs.RunState`."""
     summary: dict | None = None
     if state.summary is not None:
-        summary = {
-            "ticks": state.summary.ticks,
-            "samples_saved": state.summary.samples_saved,
-            "arrivals_saved": state.summary.arrivals_saved,
-            "results_saved": state.summary.results_saved,
-        }
+        summary = state.summary.to_dict()
     return {
         "run_id": state.id,
         "status": state.status,
@@ -102,12 +99,7 @@ def _end_data(state: RunState) -> dict:
     """Payload for the ``end`` frame."""
     summary: dict | None = None
     if state.summary is not None:
-        summary = {
-            "ticks": state.summary.ticks,
-            "samples_saved": state.summary.samples_saved,
-            "arrivals_saved": state.summary.arrivals_saved,
-            "results_saved": state.summary.results_saved,
-        }
+        summary = state.summary.to_dict()
     return {
         "status": state.status,
         "summary": summary,

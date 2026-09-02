@@ -49,7 +49,6 @@ PREDICTOR_REGISTRY: dict[str, Any] = {
     "gtfsrt": GtfsRtTripUpdatesPredictor,
     "baseline:constant_speed": ConstantSpeedPredictor,
     "gtfs_eta:historical_mean": lambda: GtfsEtaModelPredictor("historical_mean"),
-    "gtfs_eta:ewma": lambda: GtfsEtaModelPredictor("ewma"),
     "gtfs_eta:polyreg_distance": lambda: GtfsEtaModelPredictor("polyreg_distance"),
     "gtfs_eta:polyreg_time": lambda: GtfsEtaModelPredictor("polyreg_time"),
     "gtfs_eta:xgboost": lambda: GtfsEtaModelPredictor("xgboost"),

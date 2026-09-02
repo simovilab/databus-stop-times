@@ -40,12 +40,7 @@ def _state_to_info(state: RunState) -> RunInfo:
     """Convert a RunState to the RunInfo response schema."""
     summary_dict: dict | None = None
     if state.summary is not None:
-        summary_dict = {
-            "ticks": state.summary.ticks,
-            "samples_saved": state.summary.samples_saved,
-            "arrivals_saved": state.summary.arrivals_saved,
-            "results_saved": state.summary.results_saved,
-        }
+        summary_dict = state.summary.to_dict()
     return RunInfo(
         id=state.id,
         params=state.params,

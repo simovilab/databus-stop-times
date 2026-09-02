@@ -70,20 +70,25 @@ web/
 │   │   ├── useApi.ts            # Typed REST API wrappers ($fetch)
 │   │   └── useRunStream.ts      # WebSocket composable for live run streaming
 │   └── pages/
-│       ├── index.vue            # New Run form (configure + start)
+│       ├── index.vue            # CONSOLE — create + watch runs
+│       ├── explorer.vue         # EXPLORER — cross-filtered analytics
+│       ├── telemetry.vue        # TELEMETRY — system health + event log
 │       └── runs/
-│           ├── index.vue        # History table
+│           ├── index.vue        # LEADERBOARD — run history
 │           └── [id].vue         # Run detail (live + done + error views)
 ├── nuxt.config.ts
 ├── package.json
 └── README.md
 ```
 
-## Phase C2 (coming next)
+## Design language
 
-The `runs/[id].vue` page contains a clearly-marked placeholder section
-(`<!-- C2: analytics dashboard goes here -->`) where `@unovis/vue` charts
-will be wired in: horizon-bucket bar charts, convergence lines,
-head-to-head scatter plots, and error-distribution histograms.
+The UI is a dark ops-console (dense, monospace, sharp corners, green accent).
+Four views mirror the Textual TUI: CONSOLE, LEADERBOARD, EXPLORER, TELEMETRY.
+Theme tokens live in `app/assets/css/main.css` (`@theme` block) and dark mode is
+forced via the top-level `colorMode` key in `nuxt.config.ts`.
 
-Both `@unovis/vue` and `@unovis/ts` are already installed.
+The `runs/[id].vue` done view wires `@unovis/vue` charts (horizon-bucket bars,
+convergence lines, head-to-head scatter, error-distribution histograms) through
+the analytics components under `app/components/analytics/`. Both `@unovis/vue`
+and `@unovis/ts` are installed.

@@ -12,30 +12,54 @@ just adding a YAML source config.
 
 ## Status
 
-Headless vertical slice (build phases **P0–P6**): domain + storage + feed adapters +
-spatial + predictors + ground-truth + scoring + engine + Typer CLI, with tests and
-captured feed fixtures. The FastAPI/WebSocket API and Nuxt/MapLibre UI (P7–P8) are a
-deliberate follow-up.
+Beyond the headless core (domain + storage + feed adapters + spatial + predictors +
+ground-truth + scoring + engine + Typer CLI), etaval now ships:
+
+- a **FastAPI REST + WebSocket API** (`etaval/api/`) for starting/monitoring/streaming
+  live runs, with a process-wide telemetry endpoint (`GET /api/telemetry`,
+  `GET /api/telemetry/events`) that surfaces tick health, feed-poll health, and
+  swallowed predictor/detector error counts;
+- a **Nuxt web UI** (`web/`) with four views — a live-run console, a runs list/detail
+  page, a results explorer, and a telemetry dashboard;
+- a **Textual TUI** (`etaval/tui/`) for monitoring runs from the terminal.
 
 ## Architecture
 
 Three pluggable seams are the design; everything else is plumbing:
 
 - **`Predictor`** — produces arrival predictions (`gtfsrt`, `baseline:constant_speed`,
-  and `gtfs_eta:{historical_mean,ewma,polyreg_distance,polyreg_time,xgboost}` — trained
-  models from the sibling `gtfs-eta` repo, see below).
+  and `gtfs_eta:{historical_mean,polyreg_distance,polyreg_time,xgboost}` — trained
+  models from the sibling `gtfs-eta` repo, see below). A predictor opts into receiving
+  vehicle position history by declaring `accepts_position_history = True` (see
+  `ConstantSpeedPredictor`); the engine dispatches on that attribute rather than
+  inspecting the `predict` signature.
 - **`GroundTruthDetector`** — detects actual arrivals (`shape_distance` default,
   `position_radius`, `stop_status`).
 - **`Storage`** — persists samples / arrivals / results (SQLite, Parquet export).
+
+Predictor and detector exceptions are swallowed per-tick (one flaky predictor must not
+take down a run) but are never silent: `RunSummary.predictor_errors` /
+`.detector_errors` (and the matching `TickEvent` cumulative snapshots) count
+exceptions per predictor-id / detector-method, surfaced through the CLI run summary,
+the REST API (`RunInfo.summary`), the WebSocket stream, and `/api/telemetry`.
 
 ### Validating gtfs-eta's trained models
 
 `etaval/predictors/gtfs_eta_models.py` wraps `eta_service.estimator.estimate_stop_times`
 from `../gtfs-eta` (wired as a `[tool.uv.sources]` path dependency, same pattern as
 `gtfs-rt-pipeline` -> `gtfs-django`) so any model trained there can be scored the same
-way as `gtfsrt`/`baseline:constant_speed`. `models.common.registry.ModelRegistry`'s
-default path resolves via `gtfs-eta`'s own `core.config.get_config()` regardless of
-etaval's cwd, so no `MODEL_REGISTRY_DIR` override is needed.
+way as `gtfsrt`/`baseline:constant_speed`. Note `gtfs_eta:ewma` was retired upstream
+and is not in `PREDICTOR_REGISTRY` — the live model families are `historical_mean`,
+`polyreg_distance`, `polyreg_time`, and `xgboost`.
+
+`GtfsEtaModelPredictor._resolve_model_registry_dir()` locates the trained-model
+registry automatically in a packaged (non-editable) install: it tries, in order, an
+explicit `MODEL_REGISTRY_DIR` env var, a sibling `../gtfs-eta` source checkout, the
+installed `gtfs-eta` distribution's dist-info (`direct_url.json`), and finally the
+installed top-level `models` package — each candidate is verified against a real
+`registry.json` before being trusted. **You normally don't need to set
+`MODEL_REGISTRY_DIR` yourself** — it's just an override for the rare case none of
+those fallbacks locate a real registry (see below).
 
 ```bash
 uv run --no-editable etaval run --source mbta \
@@ -50,10 +74,10 @@ on at least one dev machine.
 
 Model selection is delegated to `models.common.registry.ModelRegistry.get_best_model`
 (route-specific model preferred over global, ranked by `test_mae_seconds`) — nothing
-here to configure beyond which `model_type`s to include. `historical_mean` and `ewma`
-predict per (route, stop_sequence, hour) rather than from live kinematics, so scoring
-them side-by-side with `polyreg_time`/`xgboost` is exactly how to judge whether they're
-worth keeping vs. cutting.
+here to configure beyond which `model_type`s to include. `historical_mean` predicts
+per (route, stop_sequence, hour) rather than from live kinematics, so scoring it
+side-by-side with `polyreg_time`/`xgboost` is exactly how to judge whether it's worth
+keeping vs. cutting.
 
 Per tick: poll VP + TU feeds → update active `TripInstance`s and position history →
 ask every `Predictor` for ETAs to upcoming stops → run every `GroundTruthDetector`
@@ -79,20 +103,21 @@ uv sync --no-editable
 > — there's no live-editable convenience while this workaround is in place.
 >
 > **Knock-on effect for `gtfs_eta:*` predictors:** once `eta_prediction` is physically
-> copied in (rather than editable), `Path(__file__)`-based path resolution inside it —
-> both `core.config._find_project_root()`'s walk-up-for-pyproject.toml and this repo's
-> own `etaval/predictors/gtfs_eta_models.py` — can no longer locate gtfs-eta's real
-> `models/trained/` (the installed copy's file location says nothing about where the
-> source tree lives). `gtfs_eta_models.py` verifies its one in-source guess against a
-> real `registry.json` and refuses to trust a wrong one, but that means **you must
-> export `MODEL_REGISTRY_DIR` yourself** for the `gtfs_eta:*` predictors to find real
-> trained models under this workaround:
+> copied in (rather than editable), naive `Path(__file__)`-based path resolution can no
+> longer locate gtfs-eta's real `models/trained/` (the installed copy's file location
+> says nothing about where the source tree lives). `gtfs_eta_models.py` works around
+> this with `GtfsEtaModelPredictor._resolve_model_registry_dir()` (see above), which
+> checks a sibling source checkout, gtfs-eta's installed dist-info, and the installed
+> `models` package in turn — this is auto-resolved in the common cases (source-tree dev
+> setup, or a fully packaged install) with **no action needed**. Only if none of those
+> fallbacks find a real `registry.json` do you need to override it explicitly:
 > ```bash
 > export MODEL_REGISTRY_DIR=/absolute/path/to/gtfs-eta/models/trained
 > ```
-> Without it, `gtfs_eta:*` predictors emit a `RuntimeWarning` at import time and every
-> prediction comes back empty (`error: 'No trained models found for model_type'`) —
-> not a crash, just silently no predictions, so watch for the warning.
+> Without a resolvable registry, `gtfs_eta:*` predictors emit a `RuntimeWarning` at
+> import time and every prediction comes back empty (`error: 'No trained models found
+> for model_type'`) — not a crash, just silently no predictions, so watch for the
+> warning.
 
 ## Usage
 

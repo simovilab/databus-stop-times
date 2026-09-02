@@ -36,7 +36,7 @@ from __future__ import annotations
 import asyncio
 import time
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 from etaval.domain.models import (
@@ -159,6 +159,19 @@ class RunSummary:
     samples_saved: int = 0
     arrivals_saved: int = 0
     results_saved: int = 0
+    predictor_errors: dict[str, int] = field(default_factory=dict)
+    detector_errors: dict[str, int] = field(default_factory=dict)
+
+    def to_dict(self) -> dict[str, Any]:
+        """Plain-dict representation for persistence / API / CLI serialization."""
+        return {
+            "ticks": self.ticks,
+            "samples_saved": self.samples_saved,
+            "arrivals_saved": self.arrivals_saved,
+            "results_saved": self.results_saved,
+            "predictor_errors": dict(self.predictor_errors),
+            "detector_errors": dict(self.detector_errors),
+        }
 
 
 @dataclass(frozen=True)
@@ -189,6 +202,11 @@ class TickEvent:
     results_saved: int                     # cumulative summary.results_saved
     new_results: list[ValidationResult]    # THIS tick's scored results
     vehicles: list[VehiclePing]            # one ping per active trip this tick
+    # Cumulative (run-to-date) counts of swallowed predictor/detector errors,
+    # keyed by predictor_id / detector method.  Kw-only with safe defaults so
+    # existing positional TickEvent(...) constructions remain valid.
+    predictor_errors: dict[str, int] = field(default_factory=dict, kw_only=True)
+    detector_errors: dict[str, int] = field(default_factory=dict, kw_only=True)
 
 
 # ── Geometry cache entry ──────────────────────────────────────────────────────
@@ -262,6 +280,12 @@ async def run_engine(
 
     # Route-id map for ValidationResult enrichment.
     _route_id_map: dict[str, str] = {}
+
+    # Cumulative counts of swallowed predictor/detector errors, keyed by
+    # predictor_id / detector method.  Shared across ticks; threaded into
+    # both RunSummary (final) and TickEvent (per-tick cumulative snapshot).
+    predictor_errors: dict[str, int] = {}
+    detector_errors: dict[str, int] = {}
 
     summary = RunSummary()
     start_wall = time.monotonic()
@@ -357,10 +381,9 @@ async def run_engine(
             for predictor in predictors:
                 try:
                     if hasattr(predictor, "predict"):
-                        # Constant-speed predictor accepts position_history kwarg.
-                        import inspect
-                        sig = inspect.signature(predictor.predict)
-                        if "position_history" in sig.parameters:
+                        # Declarative opt-in: predictors that want position
+                        # history set accepts_position_history = True.
+                        if getattr(predictor, "accepts_position_history", False):
                             preds = predictor.predict(
                                 trip,
                                 upcoming,
@@ -375,6 +398,9 @@ async def run_engine(
                     else:
                         continue
                 except Exception as exc:  # noqa: BLE001
+                    predictor_errors[predictor.predictor_id] = (
+                        predictor_errors.get(predictor.predictor_id, 0) + 1
+                    )
                     if on_predictor_error is not None:
                         await on_predictor_error(predictor.predictor_id, exc)
                     continue
@@ -394,7 +420,11 @@ async def run_engine(
             for detector in detectors:
                 try:
                     arrivals = detector.detect(trip, enriched_history, stops)
-                except Exception:
+                except Exception:  # noqa: BLE001
+                    detector_method = getattr(detector, "method", type(detector).__name__)
+                    detector_errors[detector_method] = (
+                        detector_errors.get(detector_method, 0) + 1
+                    )
                     continue
 
                 for arrival in arrivals:
@@ -446,6 +476,8 @@ async def run_engine(
                     results_saved=summary.results_saved,
                     new_results=tick_results,
                     vehicles=tick_vehicles,
+                    predictor_errors=dict(predictor_errors),
+                    detector_errors=dict(detector_errors),
                 )
             )
 
@@ -453,4 +485,6 @@ async def run_engine(
         if is_live:
             await asyncio.sleep(poll_interval_s)
 
+    summary.predictor_errors = dict(predictor_errors)
+    summary.detector_errors = dict(detector_errors)
     return summary

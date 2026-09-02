@@ -31,6 +31,12 @@ class Predictor(Protocol):
 
     predictor_id: str
 
+    #: Declarative opt-in for receiving position history.  When ``True`` the
+    #: engine calls ``predict(..., position_history=enriched_history)``;
+    #: otherwise it omits the keyword entirely.  Defaults to ``False`` so
+    #: predictors that don't declare it keep the plain 4-arg call signature.
+    accepts_position_history: bool = False
+
     def predict(
         self,
         trip: TripInstance,

@@ -42,6 +42,10 @@ class ConstantSpeedPredictor:
 
     predictor_id: str = "baseline:constant_speed"
 
+    #: Declares that this predictor wants the engine to pass
+    #: ``position_history`` — see ``Predictor.accepts_position_history``.
+    accepts_position_history: bool = True
+
     def predict(
         self,
         trip: TripInstance,

@@ -1,5 +1,12 @@
 # Plan — ETA Prediction Validation Tool (`etaval`)
 
+> **Status note:** This document records the plan and decisions as locked for the
+> original P0–P6 headless-slice PR. P7 (FastAPI REST + WebSocket API) and P8 (Nuxt web
+> UI), described below as "deferred" / "a follow-up," have since landed — see the
+> top-level `README.md` "Status" section for what exists today (API, web UI, and a
+> Textual TUI). The rest of this file is kept as the historical record of that PR's
+> scope and reasoning.
+
 ## Context
 
 We can produce GTFS-RT trip-update ETAs, but we have **no way to measure how good

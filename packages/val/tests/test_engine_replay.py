@@ -427,3 +427,159 @@ async def test_on_tick_none_is_backward_compatible() -> None:
     assert summary.samples_saved > 0
     assert summary.arrivals_saved > 0
     assert summary.results_saved > 0
+
+
+# ── M2: swallowed predictor/detector error counters ───────────────────────────
+
+
+class _RaisingPredictor:
+    """Fake predictor that always raises -- for testing error counting."""
+
+    predictor_id = "raising_predictor"
+
+    def predict(self, trip, upcoming_stops, vehicle_state, trip_updates):
+        raise ValueError("boom: predictor always fails")
+
+
+class _RaisingDetector:
+    """Fake detector that always raises -- for testing error counting."""
+
+    method = "raising_detector"
+
+    def detect(self, trip, position_history, stops):
+        raise RuntimeError("boom: detector always fails")
+
+
+@pytest.mark.asyncio
+async def test_predictor_errors_are_counted_in_summary() -> None:
+    """A raising predictor increments RunSummary.predictor_errors[predictor_id]
+    while the loop otherwise continues normally (existing swallow behavior)."""
+    static_loader = GtfsStaticLoader(_MINI_GTFS)
+    storage = SqliteStorage(":memory:")
+    snapshots = _build_snapshots()
+
+    summary = await run_engine(
+        feed_source=ReplayFeedSource(snapshots),
+        static_loader=static_loader,
+        predictors=[_RaisingPredictor(), ConstantSpeedPredictor()],
+        detectors=[ShapeDistanceDetector(shape_threshold_m=30.0)],
+        storage=storage,
+        primary_method="shape_distance",
+        source_name="test",
+    )
+
+    assert summary.predictor_errors.get("raising_predictor") == len(snapshots)
+    # The engine kept running -- the healthy predictor still produced samples.
+    assert summary.samples_saved > 0
+
+
+@pytest.mark.asyncio
+async def test_detector_errors_are_counted_in_summary() -> None:
+    """A raising detector increments RunSummary.detector_errors[method]
+    while the loop otherwise continues normally."""
+    static_loader = GtfsStaticLoader(_MINI_GTFS)
+    storage = SqliteStorage(":memory:")
+    snapshots = _build_snapshots()
+
+    summary = await run_engine(
+        feed_source=ReplayFeedSource(snapshots),
+        static_loader=static_loader,
+        predictors=[ConstantSpeedPredictor()],
+        detectors=[_RaisingDetector(), ShapeDistanceDetector(shape_threshold_m=30.0)],
+        storage=storage,
+        primary_method="shape_distance",
+        source_name="test",
+    )
+
+    assert summary.detector_errors.get("raising_detector") == len(snapshots)
+    # The healthy detector still fired arrivals.
+    assert summary.arrivals_saved > 0
+
+
+@pytest.mark.asyncio
+async def test_error_counters_default_empty_when_no_errors() -> None:
+    """No raising predictors/detectors -> both error dicts stay empty."""
+    static_loader = GtfsStaticLoader(_MINI_GTFS)
+    storage = SqliteStorage(":memory:")
+    snapshots = _build_snapshots()
+
+    summary = await run_engine(
+        feed_source=ReplayFeedSource(snapshots),
+        static_loader=static_loader,
+        predictors=[ConstantSpeedPredictor()],
+        detectors=[ShapeDistanceDetector(shape_threshold_m=30.0)],
+        storage=storage,
+        primary_method="shape_distance",
+        source_name="test",
+    )
+
+    assert summary.predictor_errors == {}
+    assert summary.detector_errors == {}
+
+
+def test_run_summary_to_dict_includes_error_counters() -> None:
+    """RunSummary.to_dict() surfaces predictor_errors/detector_errors."""
+    from etaval.engine.runtime import RunSummary
+
+    summary = RunSummary(
+        ticks=3,
+        samples_saved=10,
+        arrivals_saved=2,
+        results_saved=2,
+        predictor_errors={"p1": 4},
+        detector_errors={"d1": 1},
+    )
+    d = summary.to_dict()
+    assert d["predictor_errors"] == {"p1": 4}
+    assert d["detector_errors"] == {"d1": 1}
+
+
+@pytest.mark.asyncio
+async def test_tick_event_carries_cumulative_error_counters() -> None:
+    """TickEvent.predictor_errors/detector_errors are cumulative per-tick
+    snapshots, kw-only with safe defaults for backward compatibility."""
+    static_loader = GtfsStaticLoader(_MINI_GTFS)
+    storage = SqliteStorage(":memory:")
+    snapshots = _build_snapshots()
+
+    from etaval.engine.runtime import TickEvent
+
+    captured: list[TickEvent] = []
+
+    async def on_tick(event: TickEvent) -> None:
+        captured.append(event)
+
+    summary = await run_engine(
+        feed_source=ReplayFeedSource(snapshots),
+        static_loader=static_loader,
+        predictors=[_RaisingPredictor()],
+        detectors=[ShapeDistanceDetector(shape_threshold_m=30.0)],
+        storage=storage,
+        primary_method="shape_distance",
+        source_name="test",
+        on_tick=on_tick,
+    )
+
+    assert captured[-1].predictor_errors == summary.predictor_errors
+    # Cumulative count is non-decreasing tick-over-tick.
+    counts = [e.predictor_errors.get("raising_predictor", 0) for e in captured]
+    assert counts == sorted(counts)
+    assert counts[-1] == len(snapshots)
+
+
+def test_tick_event_default_error_dicts_are_backward_compatible() -> None:
+    """Existing positional TickEvent(...) construction (no error kwargs)
+    still works and defaults both dicts to empty."""
+    from etaval.engine.runtime import TickEvent
+
+    ev = TickEvent(
+        tick=1,
+        header_timestamp=1000.0,
+        samples_saved=0,
+        arrivals_saved=0,
+        results_saved=0,
+        new_results=[],
+        vehicles=[],
+    )
+    assert ev.predictor_errors == {}
+    assert ev.detector_errors == {}

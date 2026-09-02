@@ -110,3 +110,97 @@ class TestGtfsEtaModelPredictor:
         ) as mock_est:
             predictor.predict(TRIP, [_stop("s1", 1)], STATE, None)
         assert mock_est.call_args.kwargs["model_key"] == "polyreg_time_x_y_global_v1"
+
+
+# ---------------------------------------------------------------------------
+# M5 — _resolve_model_registry_dir() resolution order
+# ---------------------------------------------------------------------------
+
+
+class TestResolveModelRegistryDir:
+    def test_env_var_always_wins(self, tmp_path, monkeypatch):
+        """Step 1: MODEL_REGISTRY_DIR env var wins unconditionally, unverified."""
+        monkeypatch.setenv("MODEL_REGISTRY_DIR", str(tmp_path / "does-not-exist"))
+        result = GtfsEtaModelPredictor._resolve_model_registry_dir()
+        assert result == tmp_path / "does-not-exist"
+
+    def test_falls_back_when_env_var_unset(self, monkeypatch):
+        """With no env var, resolution proceeds through the remaining steps
+        without raising -- result is either a real dir or None, never an
+        exception."""
+        monkeypatch.delenv("MODEL_REGISTRY_DIR", raising=False)
+        result = GtfsEtaModelPredictor._resolve_model_registry_dir()
+        assert result is None or result.exists()
+
+    def test_dist_info_step_never_raises_when_package_missing(self, monkeypatch):
+        """Step 3 (dist-info) degrades to None if gtfs-eta isn't an installed
+        distribution -- defensive, never raises."""
+        import importlib.metadata
+
+        from etaval.predictors.gtfs_eta_models import _from_installed_dist_info
+
+        def _raise_not_found(name):
+            raise importlib.metadata.PackageNotFoundError(name)
+
+        monkeypatch.setattr(importlib.metadata, "distribution", _raise_not_found)
+        assert _from_installed_dist_info() is None
+
+    def test_dist_info_step_parses_direct_url_json(self, tmp_path, monkeypatch):
+        """Step 3: a monkeypatched dist-info direct_url.json pointing at a dir
+        with a real registry.json is trusted."""
+        import json
+
+        from etaval.predictors.gtfs_eta_models import _from_installed_dist_info
+
+        fake_source_root = tmp_path / "gtfs-eta-src"
+        trained_dir = fake_source_root / "models" / "trained"
+        trained_dir.mkdir(parents=True)
+        (trained_dir / "registry.json").write_text("{}")
+
+        class _FakeDist:
+            def read_text(self, filename):
+                assert filename == "direct_url.json"
+                return json.dumps({"url": f"file://{fake_source_root}"})
+
+        import importlib.metadata
+
+        monkeypatch.setattr(
+            importlib.metadata, "distribution", lambda name: _FakeDist()
+        )
+        result = _from_installed_dist_info()
+        assert result == trained_dir
+
+    def test_dist_info_step_rejects_dir_without_registry(self, tmp_path, monkeypatch):
+        """A resolved directory lacking registry.json is not trusted -- falls
+        through to None rather than returning an empty/wrong directory."""
+        import json
+
+        from etaval.predictors.gtfs_eta_models import _from_installed_dist_info
+
+        empty_root = tmp_path / "empty-gtfs-eta"
+        (empty_root / "models" / "trained").mkdir(parents=True)
+
+        class _FakeDist:
+            def read_text(self, filename):
+                return json.dumps({"url": f"file://{empty_root}"})
+
+        import importlib.metadata
+
+        monkeypatch.setattr(
+            importlib.metadata, "distribution", lambda name: _FakeDist()
+        )
+        assert _from_installed_dist_info() is None
+
+    def test_resolver_chain_never_raises(self, monkeypatch):
+        """Even if every individual resolver misbehaves, the chain degrades
+        to None instead of propagating an exception."""
+        import etaval.predictors.gtfs_eta_models as mod
+
+        def _boom():
+            raise RuntimeError("boom")
+
+        monkeypatch.setattr(mod, "_from_env", _boom)
+        monkeypatch.setattr(mod, "_from_source_tree", _boom)
+        monkeypatch.setattr(mod, "_from_installed_dist_info", _boom)
+        monkeypatch.setattr(mod, "_from_installed_models_package", _boom)
+        assert GtfsEtaModelPredictor._resolve_model_registry_dir() is None

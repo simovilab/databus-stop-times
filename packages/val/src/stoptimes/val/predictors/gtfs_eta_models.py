@@ -47,6 +47,8 @@ best by ``test_mae_seconds``) is delegated entirely to ``estimate_stop_times``.
 
 from __future__ import annotations
 
+import importlib.metadata
+import json
 import os
 import sys
 import warnings
@@ -63,41 +65,123 @@ from etaval.predictors.base import StopPrediction
 _SOURCE_TREE_GTFS_ETA_ROOT = Path(__file__).resolve().parents[3] / "gtfs-eta"
 
 
-def _resolve_model_registry_dir() -> Path | None:
-    """Return a verified gtfs-eta models/trained/ dir, or None if unverifiable.
+def _has_registry(candidate: Path) -> bool:
+    """True if *candidate* looks like a real gtfs-eta models/trained/ dir."""
+    try:
+        return (candidate / "registry.json").is_file()
+    except OSError:
+        return False
 
-    Only trusts ``_SOURCE_TREE_GTFS_ETA_ROOT`` after confirming it actually
-    contains a real ``registry.json`` -- never returns a plausible-looking
-    guess that turns out to point at an empty directory.
+
+def _from_env() -> Path | None:
+    """Step 1: ``MODEL_REGISTRY_DIR`` env var, if set. Always wins when present.
+
+    Trusted as-is (not verified against registry.json) -- an explicit
+    operator override always wins, even if it points somewhere unexpected.
     """
-    candidate = _SOURCE_TREE_GTFS_ETA_ROOT / "models" / "trained"
-    if (candidate / "registry.json").exists():
-        return candidate
+    value = os.environ.get("MODEL_REGISTRY_DIR")
+    if not value:
+        return None
+    try:
+        return Path(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _from_source_tree() -> Path | None:
+    """Step 2: sibling source checkout of gtfs-eta (…/gtfs-eta/models/trained).
+
+    Only trusted after confirming it actually contains a real
+    ``registry.json`` -- never returns a plausible-looking guess that turns
+    out to point at an empty directory.
+    """
+    try:
+        candidate = _SOURCE_TREE_GTFS_ETA_ROOT / "models" / "trained"
+    except OSError:
+        return None
+    return candidate if _has_registry(candidate) else None
+
+
+def _from_installed_dist_info() -> Path | None:
+    """Step 3: gtfs-eta's installed dist-info ``direct_url.json``.
+
+    Under a non-editable install, ``etaval`` is a uv-rebuilt wheel so its own
+    ``__file__`` says nothing about the source tree -- but the ``gtfs-eta``
+    distribution's dist-info still records its source path (editable or not)
+    in ``direct_url.json`` as a ``file://`` URL. Parse that instead of
+    guessing from etaval's own installed location. Defensive throughout:
+    any failure (package not installed, no direct_url.json, malformed JSON,
+    non-file:// URL) degrades to None rather than raising.
+    """
+    try:
+        dist = importlib.metadata.distribution("gtfs-eta")
+    except importlib.metadata.PackageNotFoundError:
+        return None
+    except Exception:  # noqa: BLE001
+        return None
+
+    try:
+        raw = dist.read_text("direct_url.json")
+    except Exception:  # noqa: BLE001
+        return None
+    if not raw:
+        return None
+
+    try:
+        info = json.loads(raw)
+        url = info.get("url", "")
+    except (json.JSONDecodeError, AttributeError):
+        return None
+
+    if not url.startswith("file://"):
+        return None
+
+    try:
+        from urllib.parse import unquote, urlparse
+
+        source_root = Path(unquote(urlparse(url).path))
+    except Exception:  # noqa: BLE001
+        return None
+
+    candidate = source_root / "models" / "trained"
+    return candidate if _has_registry(candidate) else None
+
+
+def _from_installed_models_package() -> Path | None:
+    """Step 4: the installed top-level ``models`` package directory.
+
+    gtfs-eta's ``models/`` (containing ``trained/``) is installed as its own
+    top-level package alongside ``eta_service`` and ``gtfs_eta`` when
+    packaged. Locate it via ``importlib.metadata`` rather than relative
+    ``__file__`` walks, which are meaningless in a non-editable install.
+    """
+    try:
+        dist = importlib.metadata.distribution("gtfs-eta")
+    except importlib.metadata.PackageNotFoundError:
+        return None
+    except Exception:  # noqa: BLE001
+        return None
+
+    try:
+        files = dist.files
+    except Exception:  # noqa: BLE001
+        return None
+    if not files:
+        return None
+
+    try:
+        locate = dist.locate_file
+        for f in files:
+            parts = Path(str(f)).parts
+            if parts and parts[0] == "models" and "trained" in parts:
+                trained_idx = parts.index("trained")
+                rel = Path(*parts[: trained_idx + 1])
+                candidate = Path(str(locate(rel)))
+                if _has_registry(candidate):
+                    return candidate
+    except Exception:  # noqa: BLE001
+        return None
     return None
-
-
-if "MODEL_REGISTRY_DIR" not in os.environ:
-    _resolved = _resolve_model_registry_dir()
-    if _resolved is not None:
-        os.environ["MODEL_REGISTRY_DIR"] = str(_resolved)
-    else:
-        warnings.warn(
-            "MODEL_REGISTRY_DIR is not set and gtfs-eta's models/trained/ "
-            "could not be located automatically (this file is likely running "
-            "from a non-editable install, where its own path says nothing "
-            "about the source tree). gtfs_eta:* predictors will report 'No "
-            "trained models found' until you export MODEL_REGISTRY_DIR "
-            "pointing at gtfs-eta's models/trained/ directory -- see README.",
-            RuntimeWarning,
-            stacklevel=2,
-        )
-
-try:
-    from eta_service.estimator import estimate_stop_times
-except ModuleNotFoundError:
-    if str(_SOURCE_TREE_GTFS_ETA_ROOT) not in sys.path:
-        sys.path.insert(0, str(_SOURCE_TREE_GTFS_ETA_ROOT))
-    from eta_service.estimator import estimate_stop_times
 
 
 class GtfsEtaModelPredictor:
@@ -111,6 +195,36 @@ class GtfsEtaModelPredictor:
             ``estimate_stop_times`` picks the best model for ``model_type`` —
             preferring a route-specific model over the global one.
     """
+
+    @staticmethod
+    def _resolve_model_registry_dir() -> Path | None:
+        """Return a verified gtfs-eta models/trained/ dir, or ``None`` if unresolvable.
+
+        Tries, in order, returning the first that exists (verified via a real
+        ``registry.json`` — except the explicit env-var override, which
+        always wins as-is):
+
+        1. ``MODEL_REGISTRY_DIR`` env var.
+        2. A sibling source checkout of gtfs-eta (``…/gtfs-eta/models/trained``).
+        3. gtfs-eta's installed dist-info ``direct_url.json`` ``file://`` path.
+        4. The installed top-level ``models`` package directory.
+
+        Every step is defensive — it never raises, only degrades to the next
+        option, finally returning ``None`` if nothing resolves.
+        """
+        for resolver in (
+            _from_env,
+            _from_source_tree,
+            _from_installed_dist_info,
+            _from_installed_models_package,
+        ):
+            try:
+                result = resolver()
+            except Exception:  # noqa: BLE001
+                result = None
+            if result is not None:
+                return result
+        return None
 
     def __init__(self, model_type: str, model_key: str | None = None) -> None:
         self.model_type = model_type
@@ -193,3 +307,29 @@ class GtfsEtaModelPredictor:
             )
 
         return predictions
+
+
+if "MODEL_REGISTRY_DIR" not in os.environ:
+    _resolved = GtfsEtaModelPredictor._resolve_model_registry_dir()
+    if _resolved is not None:
+        os.environ["MODEL_REGISTRY_DIR"] = str(_resolved)
+    else:
+        warnings.warn(
+            "MODEL_REGISTRY_DIR is not set and gtfs-eta's models/trained/ "
+            "could not be located automatically (checked a sibling source "
+            "checkout, gtfs-eta's installed dist-info, and the installed "
+            "models/ package). gtfs_eta:* predictors will report 'No "
+            "trained models found' until you export MODEL_REGISTRY_DIR "
+            "pointing at gtfs-eta's models/trained/ directory -- see README. "
+            "In a packaged install this is normally auto-resolved; this "
+            "warning means none of the fallbacks found a real registry.json.",
+            RuntimeWarning,
+            stacklevel=2,
+        )
+
+try:
+    from eta_service.estimator import estimate_stop_times
+except ModuleNotFoundError:
+    if str(_SOURCE_TREE_GTFS_ETA_ROOT) not in sys.path:
+        sys.path.insert(0, str(_SOURCE_TREE_GTFS_ETA_ROOT))
+    from eta_service.estimator import estimate_stop_times

@@ -349,3 +349,124 @@ class TestStopPredictionToSample:
         expected_key = TRIP.trip_key  # "test:t1:v1:20240101"
         sample = pred.to_sample(trip_key=expected_key, predictor_id="gtfsrt")
         assert sample.trip_key == expected_key
+
+
+# ---------------------------------------------------------------------------
+# R1 — PREDICTOR_REGISTRY contents (gtfs_eta:ewma retired upstream)
+# ---------------------------------------------------------------------------
+
+
+class TestPredictorRegistry:
+    def test_registry_contains_expected_ids(self) -> None:
+        """PREDICTOR_REGISTRY exposes the live gtfsrt/baseline/gtfs_eta predictors."""
+        from etaval.engine.assembly import PREDICTOR_REGISTRY
+
+        expected = {
+            "gtfsrt",
+            "baseline:constant_speed",
+            "gtfs_eta:historical_mean",
+            "gtfs_eta:polyreg_distance",
+            "gtfs_eta:polyreg_time",
+            "gtfs_eta:xgboost",
+        }
+        assert expected <= set(PREDICTOR_REGISTRY)
+
+    def test_registry_does_not_contain_retired_ewma(self) -> None:
+        """gtfs_eta:ewma was retired upstream and must not be selectable."""
+        from etaval.engine.assembly import PREDICTOR_REGISTRY
+
+        assert "gtfs_eta:ewma" not in PREDICTOR_REGISTRY
+
+
+# ---------------------------------------------------------------------------
+# M3 — declarative accepts_position_history opt-in
+# ---------------------------------------------------------------------------
+
+
+class TestAcceptsPositionHistory:
+    def test_constant_speed_opts_in(self) -> None:
+        assert ConstantSpeedPredictor.accepts_position_history is True
+        assert ConstantSpeedPredictor().accepts_position_history is True
+
+    def test_default_predictor_does_not_opt_in(self) -> None:
+        """GtfsRtTripUpdatesPredictor does not declare it -> defaults False."""
+        predictor = GtfsRtTripUpdatesPredictor()
+        assert getattr(predictor, "accepts_position_history", False) is False
+
+    @pytest.mark.asyncio
+    async def test_engine_passes_history_only_when_opted_in(self) -> None:
+        """run_engine dispatches position_history via getattr, not signature sniffing."""
+        from pathlib import Path
+
+        from etaval.engine.runtime import FeedSnapshot, ReplayFeedSource, run_engine
+        from etaval.feeds.gtfsrt_json import parse_tu_feed, parse_vp_feed
+        from etaval.feeds.static import GtfsStaticLoader
+        from etaval.groundtruth.shape_distance import ShapeDistanceDetector
+        from etaval.storage.sqlite import SqliteStorage
+
+        fixtures = Path(__file__).parent / "fixtures"
+        static_loader = GtfsStaticLoader(fixtures / "mini_gtfs.zip")
+        storage = SqliteStorage(":memory:")
+
+        calls: list[bool] = []
+
+        class RecordingPredictor:
+            predictor_id = "recording"
+            accepts_position_history = True
+
+            def predict(self, trip, upcoming_stops, vehicle_state, trip_updates, **kwargs):
+                calls.append("position_history" in kwargs)
+                return []
+
+        class NonOptedPredictor:
+            predictor_id = "non_opted"
+
+            def predict(self, trip, upcoming_stops, vehicle_state, trip_updates):
+                calls.append(False)
+                return []
+
+        vp_dict = {
+            "header": {"timestamp": 1000.0},
+            "entity": [
+                {
+                    "id": "e1",
+                    "vehicle": {
+                        "trip": {
+                            "trip_id": "trip1",
+                            "route_id": "r1",
+                            "direction_id": 0,
+                            "start_date": "20240101",
+                        },
+                        "vehicle": {"id": "v1"},
+                        "position": {
+                            "latitude": 42.3601,
+                            "longitude": -71.0589,
+                            "speed": 3.0,
+                        },
+                        "timestamp": 1000.0,
+                        "current_status": "IN_TRANSIT_TO",
+                        "current_stop_sequence": 1,
+                    },
+                }
+            ],
+        }
+        tu_dict = {"header": {"timestamp": 1000.0}, "entity": []}
+        vp_ts, vp_records = parse_vp_feed(vp_dict)
+        tu_ts, tu_records = parse_tu_feed(tu_dict)
+        snap = FeedSnapshot(
+            header_timestamp=vp_ts,
+            vp_records=vp_records,
+            tu_header_timestamp=tu_ts,
+            tu_records=tu_records,
+        )
+
+        await run_engine(
+            feed_source=ReplayFeedSource([snap]),
+            static_loader=static_loader,
+            predictors=[RecordingPredictor(), NonOptedPredictor()],
+            detectors=[ShapeDistanceDetector(shape_threshold_m=30.0)],
+            storage=storage,
+            source_name="test",
+        )
+
+        assert calls == [True, False]

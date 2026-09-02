@@ -283,6 +283,10 @@ def run(
             f"Done. Ticks={summary.ticks} Samples={summary.samples_saved} "
             f"Arrivals={summary.arrivals_saved} Results={summary.results_saved}"
         )
+        if summary.predictor_errors:
+            typer.echo(f"Predictor errors: {summary.predictor_errors}")
+        if summary.detector_errors:
+            typer.echo(f"Detector errors: {summary.detector_errors}")
 
         # ── Parquet export (inside the storage context) ────────────────────────
         if out is not None:
