@@ -16,17 +16,25 @@ dependencies = [
     "pyyaml>=6.0",
     # gtfs-eta's inference-only package (eta_service, models.common.registry,
     # feature_engineering.temporal, core) — see etaval/predictors/gtfs_eta_models.py.
-    "eta_prediction",
-    # eta_prediction's base dependencies deliberately exclude xgboost (see the
+    "gtfs-eta",
+    # gtfs-eta's base dependencies deliberately exclude xgboost (see the
     # comment in gtfs-eta/pyproject.toml — it's a training-only extra there),
     # but unpickling a trained models.xgb.train.XGBTimeModel needs the real
     # xgboost.XGBRegressor class available, so it's a direct dependency here.
     "xgboost>=3.1.2",
+    # Statistical layer (bootstrap CIs, Wilcoxon / Diebold-Mariano, Holm/BH).
+    "scipy>=1.13",
+    # Textual TUI (etaval-tui) and its WebSocket client for run streaming.
+    "textual>=0.85",
+    "websockets>=12",
+    # Publication figures (Agg backend, colorblind-safe palette).
+    "matplotlib>=3.9",
 ]
 
 [project.scripts]
 etaval = "etaval.cli.main:app"
 etaval-api = "etaval.api.app:main"
+etaval-tui = "etaval.tui.app:main"
 
 [project.optional-dependencies]
 api = ["fastapi>=0.115", "uvicorn[standard]>=0.30"]
@@ -35,12 +43,13 @@ api = ["fastapi>=0.115", "uvicorn[standard]>=0.30"]
 dev = [
     "pytest>=8.2",
     "pytest-asyncio>=0.23",
+    "pytest-cov>=5.0",
     "respx>=0.21",
     "ruff>=0.5",
 ]
 
 [tool.uv.sources]
-eta_prediction = { path = "../gtfs-eta", editable = true }
+gtfs-eta = { path = "../gtfs-eta", editable = true }
 
 [build-system]
 requires = ["hatchling"]
@@ -52,6 +61,9 @@ packages = ["etaval"]
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
+# `tests` must be a real package (see tests/__init__.py); importlib mode keeps
+# collection from colliding with gtfs-eta's `models/tests` on sys.path.
+addopts = "--import-mode=importlib"
 
 [tool.ruff]
 line-length = 100
@@ -59,3 +71,15 @@ target-version = "py311"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B"]
+
+[tool.coverage.run]
+source_pkgs = ["etaval"]
+branch = false
+omit = [
+    # macOS iCloud file-provider duplicates (e.g. "app 2.py") under git.no_sync.
+    "*/* [0-9].py",
+]
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = false
