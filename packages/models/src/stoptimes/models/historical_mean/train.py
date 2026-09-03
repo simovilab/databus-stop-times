@@ -17,6 +17,7 @@ from common.metrics import compute_all_metrics
 from common.keys import ModelKey
 from common.registry import get_registry
 from common.utils import print_metrics_table, train_test_summary
+from common.preprocessing import prepare_features, clip_predictions
 
 
 class HistoricalMeanModel:
@@ -27,38 +28,62 @@ class HistoricalMeanModel:
     mean ETA for each group. At prediction time, looks up the appropriate group mean.
     """
     
-    def __init__(self, group_by: List[str] = ['route_id', 'stop_sequence', 'hour']):
+    def __init__(self, group_by: List[str] = ['route_id', 'stop_sequence', 'hour'],
+                 handle_nan: str = 'drop'):
         """
         Initialize model.
-        
+
         Args:
             group_by: List of columns to group by for computing means
+            handle_nan: How to handle NaN in group_by columns - 'drop',
+                'impute', or 'error' (see common.preprocessing.prepare_features)
         """
         self.group_by = group_by
+        self.handle_nan = handle_nan
         self.lookup_table = None
         self.global_mean = None
         self.feature_cols = None
-        
+        self.impute_stats: Dict = {}
+
     def fit(self, train_df: pd.DataFrame, target_col: str = 'time_to_arrival_seconds'):
         """
         Train model by computing historical means.
-        
+
         Args:
             train_df: Training dataframe with features and target
             target_col: Name of target column
         """
         # Store feature columns for later
         self.feature_cols = self.group_by
-        
+
+        # Unify NaN handling with the other families: drop/impute/error on
+        # the group_by columns, fitting imputation stats on TRAIN only.
+        X_train, kept_index, stats = prepare_features(
+            train_df, self.group_by, handle_nan=self.handle_nan
+        )
+        self.impute_stats = stats or self.impute_stats
+        train_clean = train_df.loc[kept_index].copy()
+        train_clean[self.group_by] = X_train
+
         # Compute global mean as fallback
-        self.global_mean = train_df[target_col].mean()
-        
+        self.global_mean = train_clean[target_col].mean()
+
         # Compute group means
-        self.lookup_table = train_df.groupby(self.group_by)[target_col].agg([
+        self.lookup_table = train_clean.groupby(self.group_by)[target_col].agg([
             ('mean', 'mean'),
             ('std', 'std'),
             ('count', 'count')
         ]).reset_index()
+
+        # Predict-time fallback stats: always available (train-fit, never
+        # from the evaluation split) regardless of handle_nan, so predict()
+        # can safely fill residual NaN without ever dropping a row (this
+        # model must return exactly one prediction per input row so
+        # downstream evaluation/leaderboard code stays aligned with y).
+        if not self.impute_stats:
+            _, _, self.impute_stats = prepare_features(
+                train_df, self.group_by, handle_nan="impute"
+            )
 
     def predict(self, X: pd.DataFrame) -> np.ndarray:
         """
@@ -72,18 +97,31 @@ class HistoricalMeanModel:
         """
         if self.lookup_table is None:
             raise ValueError("Model not trained. Call fit() first.")
-        
+
+        # predict() must always return one prediction per input row (other
+        # families' evaluation/leaderboard code assumes len(preds) ==
+        # len(X)), so NaN in group_by columns is always filled here with
+        # train-fit stats — never dropped, never re-derived from X itself.
+        if self.handle_nan == "error":
+            if X[[c for c in self.group_by if c in X.columns]].isna().any().any():
+                raise ValueError("NaN values found and handle_nan='error'")
+            X_clean = X[self.group_by]
+        else:
+            X_clean, _, _ = prepare_features(
+                X, self.group_by, handle_nan="impute", impute_stats=self.impute_stats
+            )
+
         # Merge with lookup table
-        merged = X[self.group_by].merge(
+        merged = X_clean[self.group_by].merge(
             self.lookup_table,
             on=self.group_by,
             how='left'
         )
-        
+
         # Use group mean, fallback to global mean
         predictions = merged['mean'].fillna(self.global_mean).values
-        
-        return predictions
+
+        return clip_predictions(predictions)
     
     def get_coverage(self, X: pd.DataFrame) -> float:
         """
@@ -108,6 +146,7 @@ class HistoricalMeanModel:
 def train_historical_mean(dataset_name: str = "sample_dataset",
                          route_id: Optional[str] = None,
                          group_by: List[str] = ['route_id', 'stop_sequence', 'hour'],
+                         handle_nan: str = 'drop',
                          test_size: float = 0.2,
                          save_model: bool = True,
                          pre_split: Optional[Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]] = None) -> Dict:
@@ -150,7 +189,7 @@ def train_historical_mean(dataset_name: str = "sample_dataset",
     train_test_summary(train_df, test_df, val_df)
 
     # Train model
-    model = HistoricalMeanModel(group_by=group_by)
+    model = HistoricalMeanModel(group_by=group_by, handle_nan=handle_nan)
     model.fit(train_df)
 
     # Evaluate on validation set
@@ -173,6 +212,7 @@ def train_historical_mean(dataset_name: str = "sample_dataset",
         'dataset': dataset_name,
         'route_id': route_id,
         'group_by': group_by,
+        'handle_nan': handle_nan,
         'n_samples': len(train_df) + len(val_df) + len(test_df),
         'n_trips': dataset.df['trip_id'].nunique() if route_id else None,
         'train_samples': len(train_df),

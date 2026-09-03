@@ -83,16 +83,24 @@ def clip_predictions(predictions: np.ndarray,
                      max_value: float = 7200.0) -> np.ndarray:
     """
     Clip predictions to reasonable range.
-    
+
+    .. deprecated::
+        Thin re-export kept for backwards compatibility. The canonical
+        implementation (with documented bounds/rationale) now lives in
+        ``models.common.preprocessing.clip_predictions`` — import from
+        there in new code. All five model families (ewma, historical_mean,
+        polyreg_distance, polyreg_time, xgb) call that implementation.
+
     Args:
         predictions: Raw predictions
         min_value: Minimum ETA (seconds)
         max_value: Maximum ETA (seconds, default 2 hours)
-        
+
     Returns:
         Clipped predictions
     """
-    return np.clip(predictions, min_value, max_value)
+    from .preprocessing import clip_predictions as _clip_predictions
+    return _clip_predictions(predictions, min_value, max_value)
 
 
 def add_lag_features(df: pd.DataFrame,

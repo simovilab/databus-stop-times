@@ -16,7 +16,8 @@ from common.data import load_dataset
 from common.metrics import compute_all_metrics
 from common.keys import ModelKey
 from common.registry import get_registry
-from common.utils import print_metrics_table, train_test_summary, clip_predictions
+from common.utils import print_metrics_table, train_test_summary
+from common.preprocessing import clip_predictions
 
 
 class EWMAModel:
@@ -110,6 +111,54 @@ class EWMAModel:
         
         return clip_predictions(np.array(predictions))
     
+    def predict_and_advance(self, X: pd.DataFrame,
+                             target_col: str = 'time_to_arrival_seconds') -> np.ndarray:
+        """
+        Causally score `X`: for each row (processed in time order), predict
+        using ONLY the state accumulated so far, then advance the state
+        with that row's own observed value before moving to the next row.
+
+        This lets the model warm up online through a chronologically later
+        split (e.g. val, ahead of test) the way a deployed EWMA would, while
+        never letting a row's own label leak into its own prediction — the
+        state used to predict row i reflects only rows strictly before it.
+        Unlike `update()` (used for interactive online-learning demos in
+        predict.py), this processes rows in vp_ts order rather than
+        whatever order the caller passed them in, which is required for
+        "causally" to actually mean something.
+
+        Args:
+            X: DataFrame with group_by columns, target_col, and 'vp_ts'.
+            target_col: Target column name (used only to advance state).
+
+        Returns:
+            Array of predictions aligned to X's original row order.
+        """
+        df_sorted = X.sort_values('vp_ts')
+        preds = np.empty(len(df_sorted))
+
+        for i, (_, row) in enumerate(df_sorted.iterrows()):
+            key = self._make_key(row)
+
+            # Predict using state as of *before* this row is seen.
+            if key in self.ewma_values and self.observation_counts[key] >= self.min_observations:
+                preds[i] = self.ewma_values[key]
+            else:
+                preds[i] = self.global_mean
+
+            # Now causally advance state with this row's own label.
+            observed = row[target_col]
+            if key not in self.ewma_values:
+                self.ewma_values[key] = observed
+                self.observation_counts[key] = 1
+            else:
+                old_ewma = self.ewma_values[key]
+                self.ewma_values[key] = self.alpha * observed + (1 - self.alpha) * old_ewma
+                self.observation_counts[key] += 1
+
+        preds_series = pd.Series(clip_predictions(preds), index=df_sorted.index)
+        return preds_series.reindex(X.index).values
+
     def update(self, X: pd.DataFrame, y: np.ndarray):
         """
         Update EWMA values with new observations (online learning).
@@ -210,21 +259,26 @@ def train_ewma(dataset_name: str = "sample_dataset",
     )
     model.fit(train_df)
 
-    # Evaluate on validation (with optional online updates)
+    # Evaluate on validation. get_coverage/predict must run BEFORE
+    # predict_and_advance mutates state, since coverage reflects the
+    # train-only fit and predict() must never see a label it's scored on.
     y_val = val_df['time_to_arrival_seconds'].values
-    val_preds = model.predict(val_df)
+    val_coverage = model.get_coverage(val_df)
+    # Causal warm-up: score each val row using only state from strictly
+    # before it (never its own label, never any other val/test label),
+    # then advance the state with that row's own observed value. This is
+    # NOT a leak — by the time test is scored, the model has only ever
+    # used information causally available before each prediction.
+    val_preds = model.predict_and_advance(val_df)
     val_metrics = compute_all_metrics(y_val, val_preds, prefix="val_")
     print_metrics_table(val_metrics, "Validation Metrics")
-    val_coverage = model.get_coverage(val_df)
 
-    # Update model with validation data (online), then evaluate on test
-    model.update(val_df, y_val)
-
+    # Evaluate on test using the state causally warmed up through val.
     y_test = test_df['time_to_arrival_seconds'].values
-    test_preds = model.predict(test_df)
+    test_coverage = model.get_coverage(test_df)
+    test_preds = model.predict_and_advance(test_df)
     test_metrics = compute_all_metrics(y_test, test_preds, prefix="test_")
     print_metrics_table(test_metrics, "Test Metrics")
-    test_coverage = model.get_coverage(test_df)
 
     # Prepare metadata
     metadata = {

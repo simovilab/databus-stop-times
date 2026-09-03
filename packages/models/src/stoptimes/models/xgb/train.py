@@ -20,7 +20,8 @@ from common.data import load_dataset
 from common.metrics import compute_all_metrics
 from common.keys import ModelKey
 from common.registry import get_registry
-from common.utils import print_metrics_table, train_test_summary, clip_predictions
+from common.utils import print_metrics_table, train_test_summary
+from common.preprocessing import prepare_features, clip_predictions
 
 
 def _make_one_hot_encoder() -> OneHotEncoder:
@@ -100,6 +101,7 @@ class XGBTimeModel:
         self.preprocessor: Optional[ColumnTransformer] = None
         self.categorical_features: List[str] = []
         self.numeric_features: List[str] = []
+        self.impute_stats: Dict = {}
 
     def _get_feature_groups(self) -> Dict[str, List[str]]:
         """Define feature groups (all computable online for serving parity)."""
@@ -187,30 +189,28 @@ class XGBTimeModel:
         # Store available features
         self.available_features = available
 
-        # Handle NaN based on strategy
-        if self.handle_nan == "error":
-            check_cols = available + [target_col]
-            if df[check_cols].isna().sum().sum() > 0:
-                raise ValueError("NaN values found and handle_nan='error'")
-            df_clean = df
+        # Unify NaN handling with the other families via the shared
+        # policy implementation. Imputation stats are fit HERE, on
+        # whatever `df` is passed in — callers must only pass the
+        # training split so val/test never leak their own statistics
+        # (see predict(), which reuses self.impute_stats instead of
+        # recomputing from the eval split).
+        X_feat, kept_index, stats = prepare_features(
+            df, available, handle_nan=self.handle_nan
+        )
+        if self.handle_nan == "impute":
+            self.impute_stats = stats
+        df_clean = df.loc[kept_index].copy()
+        df_clean[available] = X_feat
+        # Target NaN is expected to already be filtered out upstream by
+        # ETADataset.clean_data(drop_missing_target=True), but guard anyway.
+        df_clean = df_clean.dropna(subset=[target_col])
 
-        elif self.handle_nan == "drop":
-            check_cols = available + [target_col]
-            df_clean = df.dropna(subset=check_cols)
-
-        elif self.handle_nan == "impute":
-            df_clean = df.copy()
-            for feat in available:
-                if df_clean[feat].isna().sum() > 0:
-                    if pd.api.types.is_numeric_dtype(df_clean[feat]):
-                        df_clean[feat] = df_clean[feat].fillna(df_clean[feat].median())
-                    else:
-                        df_clean[feat] = df_clean[feat].fillna(df_clean[feat].mode()[0])
-            # Still drop rows with target NaN
-            df_clean = df_clean.dropna(subset=[target_col])
-
-        else:
-            raise ValueError(f"Invalid handle_nan: {self.handle_nan}")
+        # Always keep a train-fit fallback available for predict()-time
+        # safety, regardless of handle_nan policy (predict() must return
+        # one row per input row and can never drop).
+        if not self.impute_stats:
+            _, _, self.impute_stats = prepare_features(df, available, handle_nan="impute")
 
         # Validate no NaN remains
         remaining_nan = df_clean[available + [target_col]].isna().sum().sum()
@@ -324,25 +324,21 @@ class XGBTimeModel:
         if missing:
             raise ValueError(f"Missing features in input: {missing}")
 
-        # Handle NaN in prediction data
-        X_pred = X[self.feature_cols].copy()
-
-        if self.handle_nan == "impute":
-            for col in self.numeric_features:
-                if X_pred[col].isna().any():
-                    X_pred[col] = X_pred[col].fillna(X_pred[col].median())
-            for col in self.categorical_features:
-                if X_pred[col].isna().any():
-                    mode_series = X_pred[col].mode()
-                    filler = mode_series.iloc[0] if not mode_series.empty else "missing"
-                    X_pred[col] = X_pred[col].fillna(filler)
-        elif self.handle_nan == "drop":
-            for col in self.numeric_features:
-                if X_pred[col].isna().any():
-                    X_pred[col] = X_pred[col].fillna(0.0)
-            for col in self.categorical_features:
-                if X_pred[col].isna().any():
-                    X_pred[col] = X_pred[col].fillna("missing")
+        # predict() must always return one prediction per input row (other
+        # families' evaluation/leaderboard code assumes len(preds) ==
+        # len(X)), so NaN is always filled here with TRAIN-fit stats —
+        # never dropped, never re-derived from X itself. This replaces the
+        # old behavior where 'impute' recomputed medians from the eval
+        # split (a stats leak) and 'drop' silently filled with a magic 0.0
+        # instead of actually dropping.
+        if self.handle_nan == "error":
+            if X[self.feature_cols].isna().any().any():
+                raise ValueError("NaN values found and handle_nan='error'")
+            X_pred = X[self.feature_cols].copy()
+        else:
+            X_pred, _, _ = prepare_features(
+                X, self.feature_cols, handle_nan="impute", impute_stats=self.impute_stats
+            )
 
         X_transformed = self.preprocessor.transform(X_pred[self.feature_cols])
         predictions = self.model.predict(X_transformed)

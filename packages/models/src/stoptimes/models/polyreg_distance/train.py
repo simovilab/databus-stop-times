@@ -18,7 +18,8 @@ from common.data import load_dataset, prepare_features_target
 from common.metrics import compute_all_metrics
 from common.keys import ModelKey
 from common.registry import get_registry
-from common.utils import print_metrics_table, train_test_summary, clip_predictions
+from common.utils import print_metrics_table, train_test_summary
+from common.preprocessing import prepare_features, clip_predictions
 
 
 class PolyRegDistanceModel:
@@ -29,24 +30,29 @@ class PolyRegDistanceModel:
     Can fit separate models per route for better performance.
     """
     
-    def __init__(self, 
+    def __init__(self,
                  degree: int = 2,
                  alpha: float = 1.0,
-                 route_specific: bool = False):
+                 route_specific: bool = False,
+                 handle_nan: str = 'drop'):
         """
         Initialize model.
-        
+
         Args:
             degree: Polynomial degree (2 or 3 recommended)
             alpha: Ridge regression alpha (regularization strength)
             route_specific: Whether to fit separate model per route
+            handle_nan: How to handle NaN in distance_to_stop - 'drop',
+                'impute', or 'error' (see common.preprocessing.prepare_features)
         """
         self.degree = degree
         self.alpha = alpha
         self.route_specific = route_specific
+        self.handle_nan = handle_nan
         self.models = {}  # route_id -> model mapping
         self.global_model = None
         self.feature_cols = ['distance_to_stop']
+        self.impute_stats = {}
         
     def _create_pipeline(self) -> Pipeline:
         """Create sklearn pipeline with polynomial features and ridge regression."""
@@ -65,21 +71,37 @@ class PolyRegDistanceModel:
         """
         if 'distance_to_stop' not in train_df.columns:
             raise ValueError("distance_to_stop column required")
-        
+
+        # Unify NaN handling with the other families: drop/impute/error on
+        # distance_to_stop, fitting imputation stats on TRAIN only. Also
+        # keep a train-fit fallback around for predict()-time safety net
+        # regardless of policy (predict() must never drop rows).
+        X_feat, kept_index, stats = prepare_features(
+            train_df, self.feature_cols, handle_nan=self.handle_nan
+        )
+        if self.handle_nan == "impute":
+            self.impute_stats = stats
+        else:
+            _, _, self.impute_stats = prepare_features(
+                train_df, self.feature_cols, handle_nan="impute"
+            )
+        train_clean = train_df.loc[kept_index].copy()
+        train_clean[self.feature_cols] = X_feat
+
         if self.route_specific:
             # Fit separate model per route
-            for route_id, route_df in train_df.groupby('route_id'):
+            for route_id, route_df in train_clean.groupby('route_id'):
                 X = route_df[['distance_to_stop']].values
                 y = route_df[target_col].values
-                
+
                 model = self._create_pipeline()
                 model.fit(X, y)
                 self.models[route_id] = model
         else:
             # Fit single global model
-            X = train_df[['distance_to_stop']].values
-            y = train_df[target_col].values
-            
+            X = train_clean[['distance_to_stop']].values
+            y = train_clean[target_col].values
+
             self.global_model = self._create_pipeline()
             self.global_model.fit(X, y)
 
@@ -93,13 +115,28 @@ class PolyRegDistanceModel:
         Returns:
             Array of predicted ETAs in seconds
         """
+        # predict() must always return one prediction per input row
+        # (Ridge would error on NaN, and other families' evaluation code
+        # assumes len(preds) == len(X)), so NaN is always filled here with
+        # train-fit stats — never dropped, never re-derived from X itself.
+        if self.handle_nan == "error":
+            if X[self.feature_cols].isna().any().any():
+                raise ValueError("NaN values found and handle_nan='error'")
+            X = X.copy()
+        else:
+            X_clean, _, _ = prepare_features(
+                X, self.feature_cols, handle_nan="impute", impute_stats=self.impute_stats
+            )
+            X = X.copy()
+            X[self.feature_cols] = X_clean
+
         if self.route_specific:
             if 'route_id' not in X.columns:
                 raise ValueError("route_id required for route-specific model")
-            
+
             # Create predictions array matching input length
             predictions = np.zeros(len(X))
-            
+
             # Reset index to get positional indices
             X_reset = X.reset_index(drop=True)
             
@@ -158,18 +195,20 @@ def train_polyreg_distance(dataset_name: str = "sample_dataset",
                           degree: int = 2,
                           alpha: float = 1.0,
                           route_specific: bool = False,
+                          handle_nan: str = 'drop',
                           test_size: float = 0.2,
                           save_model: bool = True,
                           pre_split: Optional[Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]] = None) -> Dict:
     """
     Train and evaluate polynomial regression distance model.
-    
+
     Args:
         dataset_name: Name of dataset in datasets/ directory
         route_id: Optional route ID for route-specific training (overrides route_specific)
         degree: Polynomial degree
         alpha: Ridge regularization strength
         route_specific: Whether to fit per-route models (ignored if route_id specified)
+        handle_nan: 'drop', 'impute', or 'error' for distance_to_stop NaN
         test_size: Fraction of data for testing
         save_model: Whether to save to registry
         pre_split: Optional (train, val, test) DataFrames to reuse
@@ -207,7 +246,8 @@ def train_polyreg_distance(dataset_name: str = "sample_dataset",
     model = PolyRegDistanceModel(
         degree=degree,
         alpha=alpha,
-        route_specific=route_specific
+        route_specific=route_specific,
+        handle_nan=handle_nan
     )
     model.fit(train_df)
 
@@ -231,6 +271,7 @@ def train_polyreg_distance(dataset_name: str = "sample_dataset",
         'degree': degree,
         'alpha': alpha,
         'route_specific': route_specific,
+        'handle_nan': handle_nan,
         'n_models': len(model.models) if route_specific else 1,
         'n_samples': len(train_df) + len(val_df) + len(test_df),
         'n_trips': dataset.df['trip_id'].nunique() if route_id else None,
