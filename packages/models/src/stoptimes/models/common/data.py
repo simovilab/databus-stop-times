@@ -9,6 +9,10 @@ from pathlib import Path
 from typing import Tuple, List, Optional, Dict
 from datetime import datetime, timedelta
 
+import warnings
+
+from .splits import fraction_split, service_day
+
 
 class ETADataset:
     """
@@ -106,30 +110,86 @@ class ETADataset:
         # Return only columns that exist
         return [f for f in features if f in self.df.columns]
     
-    def temporal_split(self, 
+    def temporal_split(self,
                        train_frac: float = 0.7,
-                       val_frac: float = 0.15) -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+                       val_frac: float = 0.15,
+                       group_cols: Tuple[str, ...] = ('trip_id',),
+                       purge: bool = False,
+                       service_offset_h: Optional[int] = None,
+                       ) -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
         """
         Split dataset by time (avoids data leakage).
-        
+
+        Delegates to `models.common.splits.fraction_split` (roadmap 3.2):
+        rows are sorted by `vp_ts` with a stable, deterministic secondary
+        key (independent of input row order), cut at the given fractions,
+        then any group in `group_cols` that straddles a split boundary is
+        purged from the earlier split so no `trip_id` (by default) leaks
+        across train/val/test. See `splits.py` for the full report this
+        produces (day-independent here since this is the fraction-based
+        split, not the calendar-boundary `day_grouped_split`).
+
         Args:
             train_frac: Fraction for training
             val_frac: Fraction for validation (remainder goes to test)
-            
+            group_cols: Columns identifying a group that must not straddle
+                a split boundary (default: trip_id).
+            purge: Whether to purge group overlap. **Defaults to False**, which
+                reproduces the historical behaviour of this method, because
+                purging on `trip_id` alone is actively wrong for MBTA-shaped
+                data -- see the warning below. Opt in deliberately.
+            service_offset_h: Local service-day boundary in hours (MBTA 7,
+                bUCR 6). Required when `purge=True` unless the caller has
+                already put a per-day column in `group_cols`; a service-day
+                column is derived and appended to `group_cols` so that groups
+                are per-*run*, not per-schedule-id.
+
+        Warning:
+            MBTA `trip_id` is a reused *schedule* identifier: the segment corpus
+            has 1,130 distinct trip_ids across 153,498 rows and 16 service days,
+            so nearly every trip_id recurs in every window. Purging on
+            `('trip_id',)` alone therefore collapses the MBTA validation split
+            from 32,534 rows to 189. The unit of leakage is a trip *instance*
+            -- `(trip_id, service_day)` -- which is what `service_offset_h`
+            constructs. bUCR is unaffected either way (3,061 distinct trip_ids
+            for 17,499 rows, near-zero reuse), but pass the offset regardless.
+
         Returns:
             train_df, val_df, test_df
         """
-        # Sort by timestamp
-        df_sorted = self.df.sort_values('vp_ts').reset_index(drop=True)
-        
-        n = len(df_sorted)
-        train_end = int(n * train_frac)
-        val_end = int(n * (train_frac + val_frac))
-        
-        train_df = df_sorted.iloc[:train_end].copy()
-        val_df = df_sorted.iloc[train_end:val_end].copy()
-        test_df = df_sorted.iloc[val_end:].copy()
+        df = self.df
+        if purge and service_offset_h is not None:
+            day_col = '_service_day'
+            df = df.copy()
+            df[day_col] = service_day(df['vp_ts'], offset_hours=service_offset_h)
+            if day_col not in group_cols:
+                group_cols = (*group_cols, day_col)
 
+        result = fraction_split(
+            df,
+            ts_col='vp_ts',
+            train_frac=train_frac,
+            val_frac=val_frac,
+            group_cols=group_cols,
+            purge=purge,
+        )
+        self.last_split_report = result.report
+        train_df, val_df, test_df = result.as_tuple()
+        if purge:
+            dropped = len(df) - (len(train_df) + len(val_df) + len(test_df))
+            if dropped > 0.05 * len(df):
+                warnings.warn(
+                    f"temporal_split purged {dropped:,} of {len(df):,} rows "
+                    f"({dropped / len(df):.1%}) on group_cols={group_cols}. That is "
+                    "usually the reused-schedule-id hazard, not real leakage -- pass "
+                    "service_offset_h so groups are per trip instance.",
+                    RuntimeWarning,
+                    stacklevel=2,
+                )
+        for col in ('_service_day',):
+            for part in (train_df, val_df, test_df):
+                if col in part.columns:
+                    part.drop(columns=col, inplace=True)
         return train_df, val_df, test_df
     
     def route_split(self,
