@@ -90,3 +90,43 @@ verify: build
 	docker compose down
 	@echo ""
 	@echo "All checks passed!"
+
+# ---------------------------------------------------------------------------
+# Local (non-Docker) test targets
+#
+# The suite CANNOT run in a single pytest process: torch and xgboost fight over
+# native OpenMP on macOS, and exercising both in one interpreter segfaults
+# inside xgboost's DMatrix label construction. It is not a test bug -- it
+# reproduces with just models/tests/test_lstm.py plus any xgboost-touching test
+# file, and with KMP_DUPLICATE_LIB_OK=TRUE set. So the deep-learning tests run
+# in their own process.
+#
+# PY_DL is the dedicated Python 3.12 environment the LSTM needs: torch dropped
+# macOS x86_64 wheels after 2.2.2, which in turn requires CPython <=3.12, while
+# the repo's default .venv is 3.14. See models/lstm/README.md.
+# ---------------------------------------------------------------------------
+PY_DL := PYTHONPATH=.:models .venv-dl/bin/python
+
+.PHONY: test-local test-models test-lstm test-features
+
+# Everything except the torch tests (one process).
+test-models:
+	$(PY_DL) -m pytest models/tests --ignore=models/tests/test_lstm.py -q
+
+# The torch tests, isolated (separate process -- see the note above).
+test-lstm:
+	$(PY_DL) -m pytest models/tests/test_lstm.py -q
+
+# feature_engineering + core run under the DEFAULT venv, not PY_DL: they need
+# Django, etaval and rt_pipeline, which .venv-dl deliberately does not carry.
+# test_dataset_builder.py is excluded because it imports the sibling
+# gtfs-django repo's `gtfs` app through sch_pipeline.models -- the standalone
+# -reproducibility gap roadmap 1.8(a) exists to close, not a broken test.
+test-features:
+	PYTHONPATH=.:gtfs-rt-pipeline uv run --group bucr --extra train \
+		--with pytest --with duckdb python -m pytest \
+		feature_engineering/tests core/tests -q \
+		--ignore=feature_engineering/tests/test_dataset_builder.py
+
+# The full local suite, in the process split that actually works.
+test-local: test-models test-lstm test-features
