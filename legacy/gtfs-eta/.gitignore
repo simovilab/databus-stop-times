@@ -61,3 +61,8 @@ datasets/*.parquet
 .mypy_cache/
 .pyre/
 .pytype/
+
+# Dedicated deep-learning venv: torch has no macOS x86_64 wheels for cp313+,
+# so models/lstm/ runs under a separate Python 3.12 environment (.venv-dl)
+# rather than the repo's default .venv. See models/lstm/README.md.
+.venv-dl/

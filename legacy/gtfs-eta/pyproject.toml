@@ -83,6 +83,14 @@ package = true
 bucr = [
     "etaval",
 ]
+# Deep-learning models (models/lstm/): the recurrent segment-sequence model of
+# roadmap 5.2. Kept in its own group so the inference base install stays free of
+# a ~200 MB torch wheel; only the LSTM trainer and its tests need it.
+dl = [
+    # Pinned <2.3: torch dropped macOS x86_64 wheels after 2.2.2, and this repo
+    # is developed on an Intel Mac. Linux/arm64 CI resolves the same pin fine.
+    "torch>=2.2,<2.3",
+]
 
 [tool.uv.sources]
 # Non-editable: real installed files under .venv/site-packages, immune to
