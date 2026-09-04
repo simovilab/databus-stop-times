@@ -66,3 +66,15 @@ datasets/*.parquet
 # so models/lstm/ runs under a separate Python 3.12 environment (.venv-dl)
 # rather than the repo's default .venv. See models/lstm/README.md.
 .venv-dl/
+
+# scratchpad/ holds the analysis and experiment scripts the roadmap and
+# RESULTS ledger cite by path, so those are tracked -- a paper artifact whose
+# own references dangle on a fresh clone is not reproducible. What they read
+# and write is not: raw data, GTFS archives, run logs and build outputs are
+# regenerable and large.
+scratchpad/**/*.parquet
+scratchpad/**/*.zip
+scratchpad/**/*.log
+scratchpad/logs/
+scratchpad/navsat_full/
+scratchpad/navsat_sample/
