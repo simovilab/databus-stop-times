@@ -284,7 +284,7 @@
       (MBTA, data-rich; bUCR, data-poor), the segment-traversal formulation, and every baseline it is held against.
       Numbers here are pipeline-correctness results on the rehearsal corpora, not the final 90-day replication.</p>
     <div class="meta-row">
-      <span><b>Updated</b> 2026-08-30</span>
+      <span><b>Updated</b> 2026-09-03</span>
       <span><b>Corpus</b> rehearsal (28-day MBTA / 55-day bUCR)</span>
       <span><b>Formulation</b> stop-to-stop segment traversal</span>
       <span><b>Leakage probe</b> <span class="pill good">PASS</span></span>
@@ -543,7 +543,266 @@
       further needs a live rolling-conditions signal (a serving-side feature store), not another static feature.</p>
   </div>
 
-  <footer>
+  <!-- LSTM section goes here -->
+
+  <!-- 8 -->
+  <div class="section-head">
+    <span class="idx">08</span>
+    <h2>Formal splits &mdash; and the purge trap that would have wrecked MBTA</h2>
+    <span class="tag">roadmap 3.2 &middot; models/common/splits.py &middot; 21 tests</span>
+  </div>
+  <p class="section-note">A shared <code>day_grouped_split</code>/<code>fraction_split</code> now backs every split in
+    the repo (calendar-boundary cut, optional group purge, optional embargo, a content-hash tiebreaker so shuffled
+    input reproduces byte-identical splits). It reproduces every published split exactly &mdash; no number above
+    moves. The reason it took a dedicated module: the obvious &ldquo;fix&rdquo; (purge on <code>trip_id</code>) is
+    wrong for MBTA and would have silently thrown away almost the entire validation set.</p>
+  <div class="card">
+    <h3>Splits reproduced unchanged</h3>
+    <p class="cap"><code>ETADataset.temporal_split</code> now delegates to <code>fraction_split</code></p>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>Corpus</th><th>train</th><th>val</th><th>test</th></tr></thead>
+        <tbody>
+          <tr><td>MBTA segments</td><td>92,618</td><td>32,534</td><td>28,346</td></tr>
+          <tr><td>bUCR segments</td><td>10,991</td><td>3,304</td><td>3,201</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+  <div class="callout" style="--warn:var(--tail)">
+    <h3>The unit of leakage is the trip <i>instance</i>, not the trip id</h3>
+    <p>MBTA reuses one <code>trip_id</code> across every weekday it runs (1,130 distinct ids across 153,498 rows /
+      16 service days &mdash; the same fact that drove the service-date fix in §05). Purging on <code>trip_id</code>
+      alone therefore treats nearly the whole corpus as one giant group: the val split collapses from
+      <b>32,534 rows to 189</b>. The leakage unit that actually matters is <code>(trip_id, service_day)</code> &mdash;
+      one concrete trip running on one concrete day. <code>temporal_split</code> defaults to <code>purge=False</code>
+      and instead takes a <code>service_offset_h</code> to compute service-day boundaries correctly; with it, MBTA
+      purges <b>314 rows</b> of genuine cross-boundary leakage rather than ~88,000 rows of nothing. A purge removing
+      more than 5% of a split now raises a <code>RuntimeWarning</code> so this doesn't silently recur elsewhere.</p>
+  </div>
+
+  <!-- 9 -->
+  <div class="section-head">
+    <span class="idx">09</span>
+    <h2>Statistics layer &mdash; CIs, paired tests, correction</h2>
+    <span class="tag">roadmap 4.3 &middot; models/evaluation/stats.py &middot; 37 tests</span>
+  </div>
+  <p class="section-note">Bootstrap CIs (i.i.d. and cluster/group), paired significance tests (Wilcoxon,
+    Diebold&ndash;Mariano with Newey&ndash;West HAC variance, cluster-aware paired bootstrap), and Holm /
+    Benjamini&ndash;Hochberg multiple-comparison correction, plus a <code>compare_all()</code> that emits the paper's
+    comparison table directly. This is the machinery every result from §10 onward is scored through, and it is what
+    powers the live-validation table in §14.</p>
+  <div class="card">
+    <div class="takeaway" style="margin-top:0"><b>The cluster bootstrap is the correct estimator here, but its effect
+      is smaller than assumed.</b> On the real MBTA test split, cluster-bootstrap CIs (grouped by trip) do <i>not</i>
+      systematically widen versus i.i.d. bootstrap CIs &mdash; the ratio of CI widths ranges <b>0.74&ndash;1.02</b>
+      across the metrics checked, even though the same estimator widens CIs by <b>&gt;1.5&times;</b> on a synthetic
+      case built with strong within-cluster correlation. Use the cluster estimator as the default (it is never wrong
+      to use it), but don't assume it will visibly change a conclusion &mdash; on this dataset it mostly doesn't, and
+      that should be reported rather than assumed away.</div>
+  </div>
+
+  <!-- 10 -->
+  <div class="section-head">
+    <span class="idx">10</span>
+    <h2>Apples-to-apples &mdash; one preprocessing path, four defects fixed</h2>
+    <span class="tag">roadmap 5.3 &middot; models/common/preprocessing.py &middot; 19 tests</span>
+  </div>
+  <p class="section-note">All five model families now share one NaN-imputation policy (statistics fit on train only,
+    passed forward &mdash; never recomputed from whatever frame a family happens to be handed) and one prediction-clipping
+    policy. A row-set-equality test proves all five families now score the identical set of rows &mdash; the leaderboards
+    in §01 and §05 were comparing models that were, in a small but real way, not all being asked the same question.</p>
+  <div class="card">
+    <h3>What the audit found</h3>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>Family</th><th>Defect</th></tr></thead>
+        <tbody>
+          <tr><td>historical_mean</td><td>predictions never clipped &mdash; NaN propagated silently</td></tr>
+          <tr><td>polyreg_distance</td><td>Ridge raised on the same NaN input other families tolerated</td></tr>
+          <tr><td>polyreg_time / xgb</td><td>imputation medians computed from whatever frame was passed (including
+            val/test), filled with a magic <code>0.0</code> at predict time</td></tr>
+          <tr class="best"><td>ewma</td><td>called <code>model.update(val_df, y_val)</code> before scoring test &mdash;
+            test metrics came from a model that had already absorbed every validation label</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="takeaway"><b>Fixing the EWMA leak improved its test MAE: 43.27 s &rarr; 37.75 s.</b> The bulk val
+      update was pulling per-key averages toward transient val-period noise &mdash; the leak was making EWMA look
+      <i>worse</i>, not flattering it. EWMA now uses a causal <code>predict_and_advance()</code>. The other four
+      families moved &le;0.05 s under the same unification &mdash; their leakage was a correctness bug, not a
+      metrics-moving one.</div>
+  </div>
+
+  <!-- 11 -->
+  <div class="section-head">
+    <span class="idx">11</span>
+    <h2>Live rolling-conditions features &mdash; nudging the MBTA plateau</h2>
+    <span class="tag">feature_engineering/rolling_conditions.py &middot; 7 features, 4 families &middot; 10 tests</span>
+  </div>
+  <p class="section-note">§06's feature probe showed a <i>static</i> feature (scheduled duration) can't move MBTA's
+    plateau; this asks whether a <i>live</i> one can. Seven features across four families &mdash; recent segment
+    traversal EWMA + ratio, headway/leader-bunching, route congestion index, vehicle recent delay &mdash; computed as
+    one chronological pass with a genuine point-in-time <code>merge_asof</code> join (a traversal enters state only
+    once completed; baselines are causal expanding means, never a whole-corpus mean). The headline test perturbs every
+    observation after time <i>t</i> and asserts the features computed at <i>t</i> are byte-identical.</p>
+  <div class="card">
+    <h3>Test MAE, identical rows/splits (reproducing the tuned §06 baselines)</h3>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>Corpus</th><th>base</th><th>all 7 features</th><th>best single family</th></tr></thead>
+        <tbody>
+          <tr><td>MBTA</td><td>23.97 s / R&sup2; 0.655</td><td class="best">23.67 s / R&sup2; 0.682 (+1.3%)</td>
+            <td>headway/leader &mdash; 23.41 s / R&sup2; 0.689 (+2.3%)</td></tr>
+          <tr><td>bUCR</td><td>25.72 s / R&sup2; 0.818</td><td class="best">24.91 s / R&sup2; 0.836 (+3.2%)</td>
+            <td>route congestion &mdash; 24.43 s (+5.0%)</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="takeaway"><b>Roadmap 5.1's claim &mdash; &ldquo;only a live rolling-conditions signal can move it&rdquo;
+      &mdash; is only <i>partially</i> supported.</b> A live signal does move MBTA, but modestly, and the driver is
+      cross-vehicle <b>headway/bunching</b>, not &ldquo;how fast is this segment running right now&rdquo; (the
+      traversal-EWMA family), which ranks 2nd in feature importance yet <b>hurts on its own (&minus;2.1%)</b> &mdash;
+      it is redundant with <code>progress_ratio</code>, the feature that already dominates the model (see §06). The
+      plateau is nudged, not broken. None of this is wired into the production schema; it needs a serving-side feature
+      store, and only headway/leader looks worth the cost.</div>
+  </div>
+
+  <!-- 12 -->
+  <div class="section-head">
+    <span class="idx">12</span>
+    <h2>Cost instrumentation &mdash; and a serving defect it surfaced</h2>
+    <span class="tag">roadmap 5.4 &middot; models/evaluation/cost.py &middot; 17 tests</span>
+  </div>
+  <p class="section-note">Training cost (wall-clock, CPU, peak RSS) and inference latency measured <b>through the
+    serving path</b> &mdash; one <code>estimate_stop_times()</code> call per vehicle position, not a vectorised batch
+    &mdash; with cold-start reported separately from warm.</p>
+  <div class="grid-2">
+    <div class="card">
+      <h3>Inference latency &middot; bUCR-corpus models, 199 warm calls</h3>
+      <div class="table-scroll">
+        <table>
+          <thead><tr><th>Model</th><th>p50</th><th>p95</th></tr></thead>
+          <tbody>
+            <tr class="best"><td>polyreg_distance</td><td>23.0 ms</td><td>28.2 ms</td></tr>
+            <tr><td>xgboost</td><td>85.9 ms</td><td>111.1 ms</td></tr>
+            <tr><td>historical_mean</td><td>89.2 ms</td><td>106.5 ms</td></tr>
+            <tr><td>polyreg_time</td><td>109.3 ms</td><td>180.3 ms</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="takeaway">Tuned MBTA XGBoost training: <b>56 s wall / 129 s CPU / 1.3 GB peak RSS</b>.</div>
+    </div>
+    <div class="card">
+      <h3>Serving defect found &amp; fixed</h3>
+      <p class="cap"><code>ModelRegistry.load_model</code> &middot; models/common/registry.py</p>
+      <p style="font-size:14px;color:var(--ink-soft);margin:0 0 10px">Instrumenting latency surfaced that the registry
+        unpickled from disk on <b>every</b> call &mdash; no in-process cache &mdash; so the &ldquo;warm&rdquo; numbers
+        at left are dominated by model loading, not inference. Fixed in a follow-up commit: an in-process cache keyed
+        by model key, invalidated by artifact mtime + size.</p>
+      <div class="takeaway" style="margin-top:0">Caching made loads <b>~74&times; faster: 4.2 ms &rarr; 0.06 ms</b>.
+        <span class="pill good">FIXED</span></div>
+    </div>
+  </div>
+
+  <!-- 13 -->
+  <div class="section-head">
+    <span class="idx">13</span>
+    <h2>Per-route vs global models</h2>
+    <span class="tag">MBTA segment corpus &middot; tuned config &middot; groups=trip_id, Holm-adjusted</span>
+  </div>
+  <p class="section-note">A long-standing open item in the roadmap's &ldquo;what's next&rdquo; list, never run until
+    this session. One global XGBoost vs. one per-route XGBoost, same split, same tuned hyperparameters, significance
+    via §09's stats module.</p>
+  <div class="card">
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>Route</th><th>train rows</th><th>per-route MAE</th><th>global MAE</th><th>diff</th><th>p</th></tr></thead>
+        <tbody>
+          <tr><td>222</td><td>23,906</td><td>16.44 s</td><td>17.22 s</td><td>&minus;4.5%</td><td>~0</td></tr>
+          <tr><td>37</td><td>13,133</td><td>20.95 s</td><td>21.34 s</td><td>&minus;1.8%</td><td>0.083</td></tr>
+          <tr><td>15</td><td>55,579</td><td>28.85 s</td><td>29.00 s</td><td>&minus;0.5%</td><td>0.20</td></tr>
+          <tr class="best"><td>pooled</td><td>92,618</td><td>24.17 s</td><td>24.52 s</td><td>&minus;1.4%</td><td>0.0002</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="takeaway">Significant pooled, but small, and <b>not</b> explained by sample size &mdash; route 15 has
+      the most training rows yet shows no difference, while route 222 gains the most. Reads as route 222 having
+      genuinely different dynamics the global model averages away. Does not clear the bar for per-route serving by
+      default; worth revisiting for 222-like cases. bUCR has exactly one route, so the comparison is degenerate there
+      (checked programmatically).</div>
+  </div>
+
+  <!-- 14 -->
+  <div class="section-head">
+    <span class="idx">14</span>
+    <h2>Live validation &mdash; the served models, measured against the real feed</h2>
+    <span class="tag">roadmap 1.2 &middot; etaval vs live MBTA GTFS-RT &middot; the finding that changes what we believe</span>
+  </div>
+  <p class="section-note">Everything above is offline, on held-out rows of a corpus this repo built. This section is
+    different: <code>etaval</code> (sibling repo) was pointed at the <b>live MBTA GTFS-RT feed</b> and scored the
+    <i>registered, served</i> models &mdash; through <code>eta_service.estimator.estimate_stop_times</code>, the real
+    serving path &mdash; against independently detected arrivals, over a 45-minute run (2,107 scored rows). CIs are
+    the cluster bootstrap over <code>trip_key</code>; model-vs-baseline comparisons are a paired Wilcoxon test against
+    the agency's own GTFS-RT feed, Holm-corrected. Analysis: <code>scratchpad/analyze_live_validation.py</code>.</p>
+  <div class="card">
+    <h3>Pre-fix &middot; 45-minute live run, 2,107 rows</h3>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>horizon</th><th>predictor</th><th>MAE</th><th>95% CI</th><th>vs <code>gtfsrt</code>, Holm-adj</th></tr></thead>
+        <tbody>
+          <tr><td>&lt;2 m</td><td>polyreg_time</td><td>8.7 s</td><td>[6.6, 11.0]</td><td>&minus;65.8%, p=0.44 <b>n.s.</b></td></tr>
+          <tr class="base"><td>&lt;2 m</td><td>gtfsrt</td><td>40.5 s</td><td>[15.2, 71.3]</td><td>&mdash;</td></tr>
+          <tr><td>&lt;2 m</td><td>xgboost</td><td>65.7 s</td><td>[62.4, 69.3]</td><td>+42.9%, p=1e-25 (worse)</td></tr>
+          <tr><td>&gt;10 m</td><td>polyreg_time</td><td>1230.6 s</td><td>[1194, 1266]</td><td>+453%, p=8.4e-20</td></tr>
+          <tr><td>&gt;10 m</td><td>xgboost</td><td>1066.1 s</td><td>[1048, 1081]</td><td>+380%, p=8.4e-20</td></tr>
+          <tr class="base"><td>&gt;10 m</td><td>gtfsrt</td><td>222.0 s</td><td>[191, 253]</td><td>&mdash;</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="takeaway"><b>Discipline point:</b> <code>polyreg_time</code>'s apparent 4.7&times; short-horizon
+      advantage over the agency feed is <b>not statistically significant</b> (p=0.44) &mdash; exactly the overclaim
+      the §09 statistics layer exists to prevent. Report the CI, not the point estimate.</div>
+  </div>
+
+  <div class="callout" style="--warn:var(--tail)">
+    <h3>Root cause &mdash; established by evidence, two hypotheses tested, one falsified</h3>
+    <p><b>Hypothesis 1, falsified:</b> &ldquo;the models were trained on a 5-stops-ahead window, so they never saw
+      long horizons.&rdquo; The stop-level training set (2,030,210 rows) has <b>14.4%</b> of rows above 10 minutes,
+      p99 = 48 min, max = 116 min. Offline, on held-out rows, the models track long horizons fine (true 1884 s &rarr;
+      xgboost predicts 1730 s in the 20&ndash;50 min bucket). The models are not the problem.</p>
+    <p><b>Hypothesis 2, confirmed:</b> &ldquo;the serving path computes different features than training did.&rdquo;
+      Two concrete defects: <b>(a)</b> <code>stops_ahead</code> was served as <code>idx+1</code> while the dataset
+      builder labels the closest upcoming stop <code>0</code> &mdash; a one-off, fixed this session. <b>(b)</b> far
+      more consequential: when no route shape is supplied, the estimator falls back to straight-line haversine
+      distance, hardcodes <code>cross_track_error=0.0</code>, and leaves <code>is_at_stop</code> False where training
+      saw it True 67% of the time. Measured shape&divide;haversine distance ratio by horizon: <b>1.00 at &lt;2 min,
+      1.10 at 2&ndash;5 min, 1.24 at 5&ndash;10 min, 0.28&ndash;0.34 at 20&ndash;50 min</b> (where the route loops
+      back). The fallback is harmless at short horizon and diverges badly exactly where the collapse happens; distance
+      is the dominant feature (§06, §11), so a wrong distance yields a wrong time in one direction &mdash; which is
+      why bias &asymp; &minus;MAE.</p>
+    <p><span class="pill good">FIXED</span> (a) only &mdash; <code>eta_service/estimator.py</code>, with a regression
+      test, plus a fix to a pre-existing test-isolation bug where <code>test_shape_hook.py</code> reset only one of
+      the two registry singletons. A 30-minute post-fix run shows the short-horizon sign flip: <code>xgboost</code>
+      went from <b>+42.9% worse</b> than the agency feed to <b>&minus;38.4% better</b> (p=1.5e-18), while &gt;10 min
+      remains ~4&ndash;5&times; worse as expected. <b>Caveat:</b> the two runs are different 30&ndash;45 minute
+      windows on different traffic &mdash; this is directional, not a controlled A/B.</p>
+    <p><span class="pill warn">OPEN</span> (b) is <b>not</b> fixed and is the important remaining item. The shape hook
+      already exists in <code>estimator.py</code> and databus populates it in production; nothing populates it for
+      any other caller. Production may well be fine while every standalone caller is silently degraded &mdash; that
+      needs confirming separately. This is squarely roadmap 1.2 and overlaps 1.7.</p>
+  </div>
+
+  <div class="card" style="margin-top:18px">
+    <div class="takeaway" style="margin-top:0">
+      <b>Which artifact this measures.</b> The registered/served MBTA xgboost artifact records
+      <code>test_mae_seconds = 109.99</code> in its own metadata &mdash; it is a <b>stop-level</b> model from
+      2026-08-18, not the 24.6 s tuned <i>segment</i> model of §06. The live numbers above measure the stale
+      artifact, not the segment-corpus leaderboard elsewhere in this ledger. Stated explicitly so no one reconciles
+      71 s against 24.6 s again.
+    </div>
+  </div>
+
     <div class="prov">
       <h3>Provenance &amp; caveats</h3>
       <ul>
@@ -554,7 +813,9 @@
         <li>MBTA segment corpus is 153,498 segments / 16 days (all service-days; trip instances split by service date &mdash; see §05); the schedule baseline covers 70% of test segments.</li>
         <li>Every saved model now stamps git SHA, library versions, dataset SHA-256, and seed (<code>models/common/provenance.py</code>); fixed-seed reruns reproduce metrics.</li>
         <li>HPO (§06) tunes on the validation split only; the test set is evaluated once for the val-selected config. Seed 42, 120 TPE trials/agency over 9 params (structural + <code>min_child_weight</code>/<code>reg_alpha</code>/<code>reg_lambda</code>/<code>gamma</code>) plus early stopping on val (patience 50, cap 3000; the tree count is chosen, not tuned) &mdash; all wired through <code>train_xgboost</code>, all trials recorded to <code>scratchpad/hpo_trials_*.csv</code>. bUCR improved at every step (10.8&rarr;14.9&rarr;16.4%); MBTA plateaued near 24.6&nbsp;s / R² 0.65, indicating its remaining error is feature-limited, not tuning-limited. Tuned configs are not yet promoted to the served registry.</li>
-        <li>Sources: <code>docs/SESSION_2026-08-24_BUCR_ETA_MODELS.md</code>, <code>models/evaluation/leakage_probe.py</code>, roadmap §3 tables.</li>
+        <li>§08&ndash;§13 splits and metrics all run through the shared <code>models/common/splits.py</code> (day-grouped, purge=False by default, embargo via <code>service_offset_h</code>) and <code>models/evaluation/stats.py</code> (i.i.d. and cluster bootstrap, Wilcoxon / Diebold&ndash;Mariano, Holm / BH correction) &mdash; the same machinery, not a one-off script, so numbers across sections are comparable.</li>
+        <li>§14's live-validation run is <b>not</b> reproducible from this repo alone: it depends on the sibling <code>etaval</code> repo, a live 30&ndash;45 minute window against the real MBTA GTFS-RT feed, and whatever traffic happened to exist during that window. Treat it as a point-in-time measurement of the <i>currently registered</i> artifacts, not a number that will replay identically on a re-run &mdash; the pre-fix/post-fix comparison in §14 is explicitly caveated as directional for exactly this reason.</li>
+        <li>Sources: <code>docs/SESSION_2026-08-24_BUCR_ETA_MODELS.md</code>, <code>models/evaluation/leakage_probe.py</code>, <code>scratchpad/analyze_live_validation.py</code>, <code>scratchpad/by_route_comparison.py</code>, roadmap §3&ndash;§5 tables.</li>
       </ul>
       <div class="maint">
         <b>Keeping this current &mdash; for future agents.</b> This ledger is the canonical results surface. When you land a
