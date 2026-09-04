@@ -216,7 +216,11 @@ def test_flush_empty_spool_is_a_noop(tmp_path):
     sp = _spool(tmp_path)
     base_uri = str(tmp_path / "staging")
     result = flush_to_staging(sp, base_uri, dt.datetime(2025, 1, 1, tzinfo=dt.timezone.utc))
-    assert result == {"flushed": 0, "days": [], "written": 0}
+    assert result["flushed"] == 0
+    assert result["days"] == []
+    assert result["written"] == 0
+    # A small, healthy spool is nowhere near the compaction thresholds.
+    assert result["compaction"] == {"compacted": False}
     assert not (tmp_path / "staging").exists()
 
 

@@ -532,8 +532,29 @@ def flush_tu_spool_s3(self) -> dict[str, Any]:
         last_flush_rows=result["flushed"],
         last_flush_rows_written=result["written"],
         spool_rows=spool_stats["rows"], spool_bytes=spool_stats["bytes"],
+        **_spool_compaction_status(result),
     )
     return result
+
+
+def _spool_compaction_status(result: dict[str, Any]) -> dict[str, Any]:
+    """Status fields for the spool-file rewrite the flush may have done.
+
+    Only recorded when a rewrite actually happened or failed, so a status file
+    keeps the LAST rewrite's numbers across the many flushes that skip it.
+    """
+    info = result.get("compaction") or {}
+    if info.get("compacted"):
+        return {
+            "last_spool_compaction_utc": _now().isoformat(),
+            "last_spool_compaction_bytes_before": info.get("bytes_before"),
+            "last_spool_compaction_bytes_after": info.get("bytes_after"),
+            "last_spool_compaction_error": None,
+        }
+    if info.get("error"):
+        logger.warning("spool file compaction failed: %s", info["error"])
+        return {"last_spool_compaction_error": info["error"]}
+    return {}
 
 
 # ---- Spool -> S3 staging flush ----
@@ -579,6 +600,7 @@ def flush_vp_spool_s3(self) -> dict[str, Any]:
         last_flush_key=",".join(result["days"]),
         last_flush_rows=result["flushed"],
         spool_rows=spool_stats["rows"], spool_bytes=spool_stats["bytes"],
+        **_spool_compaction_status(result),
     )
     return result
 

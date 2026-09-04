@@ -177,6 +177,34 @@ def next_flush(now: datetime, minute: int) -> datetime:
     return cand
 
 
+def spool_file_line(st: dict, now, row) -> None:
+    """Report the last spool-file rewrite, and flag a file that looks bloated.
+
+    DuckDB never hands freed blocks back to the filesystem, so the spool file
+    only shrinks when the flush rewrites it. A large file holding few rows is
+    the symptom that used to go unnoticed for weeks (2.38 GB / 146 rows).
+    """
+    err = st.get("last_spool_compaction_error")
+    if err:
+        row("spool file", red("rewrite failed"), str(err).split("\n")[0][:60])
+        return
+    ts = parse_ts(st.get("last_spool_compaction_utc"))
+    if ts:
+        before = st.get("last_spool_compaction_bytes_before")
+        after = st.get("last_spool_compaction_bytes_after")
+        detail = ""
+        if isinstance(before, int) and isinstance(after, int):
+            detail = f"{human_bytes(before)} → {human_bytes(after)} reclaimed"
+        row("spool file", f"rewritten {ago(ts, now)}", detail)
+        return
+    rows_, bytes_ = st.get("spool_rows"), st.get("spool_bytes")
+    if isinstance(rows_, int) and isinstance(bytes_, int) and bytes_ > 256 * 1024 ** 2:
+        per_row = bytes_ / rows_ if rows_ else float("inf")
+        if per_row > 4096:
+            row("spool file", red(f"{human_bytes(bytes_)} for {rows_:,} rows"),
+                "bloated; the next flush will rewrite it")
+
+
 def feed_panel(title: str, name: str, now: datetime, *, cadence: str,
                flush_minute: int, windowed: bool = False,
                extra_lines: list[tuple[str, str, str]] | None = None) -> str:
@@ -226,6 +254,8 @@ def feed_panel(title: str, name: str, now: datetime, *, cadence: str,
     row("spool",
         f"{spool_rows:,} rows · {human_bytes(spool_bytes)}" if isinstance(spool_rows, int) else "?",
         f"next flush {nf:%H:%M} ({until(nf, now)})")
+
+    spool_file_line(st, now, row)
 
     lf = parse_ts(st.get("last_flush_utc"))
     lf_rows = st.get("last_flush_rows")
@@ -320,6 +350,8 @@ def tu_panel(now: datetime, *, flush_minute: int = 7) -> str:
         f"{spool_rows:,} rows · {human_bytes(spool_bytes)}"
         if isinstance(spool_rows, int) else "?",
         f"next flush {nf:%H:%M} ({until(nf, now)})")
+
+    spool_file_line(st, now, row)
 
     lf = parse_ts(st.get("last_flush_utc"))
     drained, written = st.get("last_flush_rows"), st.get("last_flush_rows_written")

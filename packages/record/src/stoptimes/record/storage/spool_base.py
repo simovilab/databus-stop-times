@@ -38,6 +38,26 @@ import pandas as pd
 DEFAULT_COLUMN_TYPE = "VARCHAR"
 COMPRESSION = "zstd"  # better ratio than snappy for cold S3 storage
 
+# --- spool file compaction thresholds ---------------------------------------
+# DuckDB grows its database file to the high-water mark of live data and never
+# shrinks it: a DELETE frees blocks for reuse but returns nothing to the
+# filesystem, and the free list is not always reused across checkpoints. The VP
+# spool reached 2.38 GB while holding 146 rows after ~3 weeks of poll/flush
+# cycles. Rewriting the file into a fresh database is the only way to reclaim
+# the space, so the flush does that when the file is both large in absolute
+# terms and mostly dead space.
+COMPACT_MIN_BYTES = 256 * 1024 * 1024
+# Bytes of file per live row, above which the file is judged mostly dead space.
+# Every spool row in this codebase serializes to a few hundred bytes; a healthy
+# spool measures ~110 B/row after a rewrite. 4 KiB/row is therefore a generous
+# ceiling that a real backlog (many rows, large file) stays far below, while the
+# observed failure -- 2.38 GB holding 146 rows, ~16 MB/row -- clears it by four
+# orders of magnitude. DuckDB's own PRAGMA database_size is deliberately NOT
+# used: it reported 16 of 29 blocks "used" for a file that rewrote from 4.4 MB
+# to 1.6 MB, because most of the reclaimed space is row-group fragmentation
+# inside used blocks rather than free-list slack.
+COMPACT_MAX_BYTES_PER_ROW = 4096
+
 
 @dataclass(frozen=True)
 class SpoolSpec:
@@ -59,6 +79,12 @@ class SpoolSpec:
 
     def missing_columns(self, df: pd.DataFrame) -> list[str]:
         return [c for c in self.columns if c not in df.columns]
+
+
+def _sql_literal(value: str) -> str:
+    """Single-quoted SQL string literal (ATTACH takes no bind parameters)."""
+    escaped = value.replace("'", "''")
+    return f"'{escaped}'"
 
 
 def as_utc_naive(ts: dt.datetime) -> dt.datetime:
@@ -241,6 +267,134 @@ class BaseSpool:
             "bytes": size_bytes,
         }
 
+    # --- file compaction ---------------------------------------------------
+
+    def should_compact_file(
+        self,
+        *,
+        min_bytes: int = COMPACT_MIN_BYTES,
+        max_bytes_per_row: int = COMPACT_MAX_BYTES_PER_ROW,
+    ) -> bool:
+        """True when the file is worth rewriting.
+
+        Both gates must hold. The size gate keeps the rewrite off the hourly
+        path entirely for a healthy spool; the bytes-per-row gate stops us from
+        rewriting a spool that is large because it legitimately holds a lot (a
+        long S3 outage backlog), where the rewrite would be expensive and
+        reclaim little. An empty spool in a large file always qualifies -- that
+        is the clearest possible case of dead space.
+        """
+        try:
+            size_bytes = os.path.getsize(self.path)
+        except OSError:
+            return False
+        if size_bytes < min_bytes:
+            return False
+        con = self._connect()
+        try:
+            rows = con.execute(f"SELECT count(*) FROM {self.spec.table}").fetchone()[0]
+        finally:
+            con.close()
+        rows = int(rows or 0)
+        return rows == 0 or (size_bytes / rows) > max_bytes_per_row
+
+    def compact_file(self) -> dict[str, Any]:
+        """Rewrite the spool into a fresh database file, reclaiming dead space.
+
+        Copies the live rows into a new DuckDB file next to this one, verifies
+        the row count matches, and only then swaps it in with an atomic
+        ``os.replace``. If anything raises, the temp file is removed and the
+        original is left exactly as it was -- the spool's contents are never at
+        risk, only its size.
+
+        Requires the same exclusive access as every other method: one
+        read-write process per file, i.e. the ``fetch`` worker at
+        ``--concurrency=1``.
+        """
+        spec = self.spec
+        src = Path(self.path)
+        bytes_before = os.path.getsize(src)
+        tmp = src.with_name(f"{src.name}.compact-{uuid.uuid4().hex}")
+        tmp_wal = Path(f"{tmp}.wal")
+        cols_sql = ", ".join(f"{c} {spec.column_type(c)}" for c in spec.columns)
+        key_sql = ", ".join(spec.natural_key)
+        names_sql = ", ".join(spec.columns)
+        target = _sql_literal(str(tmp))
+
+        try:
+            con = self._connect()
+            try:
+                expected = con.execute(
+                    f"SELECT count(*) FROM {spec.table}"
+                ).fetchone()[0]
+                con.execute(f"ATTACH {target} AS compact_target")
+                try:
+                    con.execute(
+                        f"CREATE TABLE compact_target.{spec.table} "
+                        f"({cols_sql}, UNIQUE ({key_sql}))"
+                    )
+                    con.execute(
+                        f"INSERT INTO compact_target.{spec.table} ({names_sql}) "
+                        f"SELECT {names_sql} FROM {spec.table}"
+                    )
+                    got = con.execute(
+                        f"SELECT count(*) FROM compact_target.{spec.table}"
+                    ).fetchone()[0]
+                finally:
+                    con.execute("DETACH compact_target")
+                if int(got) != int(expected):
+                    raise RuntimeError(
+                        f"spool compaction verify mismatch: {expected} rows in "
+                        f"{self.path}, {got} in the rewrite"
+                    )
+            finally:
+                con.close()
+
+            # A leftover WAL beside either file would be replayed against the
+            # wrong database after the swap. Both connections were closed
+            # cleanly, so this should never fire; if it does, abandon the
+            # rewrite rather than risk the spool.
+            if Path(f"{src}.wal").exists() or tmp_wal.exists():
+                raise RuntimeError(
+                    "WAL present after a clean close; skipping spool compaction"
+                )
+            os.replace(tmp, src)
+        except Exception:
+            for leftover in (tmp, tmp_wal):
+                try:
+                    leftover.unlink()
+                except OSError:
+                    pass
+            raise
+
+        return {
+            "compacted": True,
+            "rows": int(expected),
+            "bytes_before": int(bytes_before),
+            "bytes_after": int(os.path.getsize(src)),
+        }
+
+    def maybe_compact_file(
+        self,
+        *,
+        min_bytes: int = COMPACT_MIN_BYTES,
+        max_bytes_per_row: int = COMPACT_MAX_BYTES_PER_ROW,
+    ) -> dict[str, Any]:
+        """:meth:`compact_file` behind :meth:`should_compact_file`, fail-safe.
+
+        Reclaiming disk is housekeeping, never a reason to fail a flush that
+        already wrote and verified its rows, so a failure here is reported in
+        the return value instead of raised.
+        """
+        try:
+            if not self.should_compact_file(
+                min_bytes=min_bytes, max_bytes_per_row=max_bytes_per_row
+            ):
+                return {"compacted": False}
+            return self.compact_file()
+        except Exception as exc:  # noqa: BLE001 - housekeeping must not fail a flush
+            return {"compacted": False, "error": f"{type(exc).__name__}: {exc}"}
+
     # --- flush hook --------------------------------------------------------
 
     def prepare_flush_frame(self, df: pd.DataFrame) -> pd.DataFrame:
@@ -280,14 +434,22 @@ def flush_spool_to_staging(
     ``connect_fn`` is injected rather than imported here so each feed's module
     owns (and tests can monkeypatch) its own S3 connection factory.
 
-    Returns ``{"flushed": 0, "days": [], "written": 0}`` when there is nothing
-    to drain, else the rows deleted from the spool, the days touched, and the
-    rows actually written (which is smaller than ``flushed`` whenever
-    ``prepare_flush_frame`` compacts).
+    Returns the rows deleted from the spool, the days touched, the rows
+    actually written (smaller than ``flushed`` whenever ``prepare_flush_frame``
+    compacts), and a ``compaction`` report from
+    :meth:`BaseSpool.maybe_compact_file` -- the spool file is rewritten after a
+    successful drain when it has grown mostly-empty.
     """
     df = spool.select_before(cutoff)
     if df.empty:
-        return {"flushed": 0, "days": [], "written": 0}
+        # Nothing to drain, but a spool that has been idle since its last big
+        # flush is exactly the one worth shrinking.
+        return {
+            "flushed": 0,
+            "days": [],
+            "written": 0,
+            "compaction": spool.maybe_compact_file(),
+        }
 
     prepared = spool.prepare_flush_frame(df)
     if prepared.empty:  # pragma: no cover - a compactor must keep >=1 row
@@ -330,9 +492,18 @@ def flush_spool_to_staging(
 
     # Only reached once the write is verified -> safe to delete.
     deleted = spool.delete_before(cutoff)
+    # The delete freed blocks inside the file but returned nothing to the
+    # filesystem; reclaim it here, after the rows are safely in staging and
+    # gone from the spool, so a rewrite can never race a pending flush.
+    compaction = spool.maybe_compact_file()
     days_df = pdf[["year", "month", "day"]].drop_duplicates()
     days = [
         f"{int(y):04d}-{int(m):02d}-{int(d):02d}"
         for y, m, d in days_df.itertuples(index=False)
     ]
-    return {"flushed": deleted, "days": days, "written": int(len(pdf))}
+    return {
+        "flushed": deleted,
+        "days": days,
+        "written": int(len(pdf)),
+        "compaction": compaction,
+    }

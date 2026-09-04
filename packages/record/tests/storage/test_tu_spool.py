@@ -219,7 +219,11 @@ def test_flush_keeps_the_first_row_of_each_window(tmp_path):
 def test_flush_empty_spool_is_a_noop(tmp_path):
     sp = _spool(tmp_path)
     result = flush_tu_to_staging(sp, str(tmp_path / "tu_staging"), BASE)
-    assert result == {"flushed": 0, "days": [], "written": 0}
+    assert result["flushed"] == 0
+    assert result["days"] == []
+    assert result["written"] == 0
+    # A small, healthy spool is nowhere near the compaction thresholds.
+    assert result["compaction"] == {"compacted": False}
 
 
 def test_flush_leaves_spool_intact_when_write_raises(tmp_path, monkeypatch):

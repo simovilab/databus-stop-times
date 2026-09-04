@@ -40,6 +40,13 @@ batch) and that fan-out is what exhausted MinIO's inodes. The current path:
    `s3://transit/feeds/mbta/vehicle_positions_staging/year=/month=/day=/`.
    Write-then-verify-then-delete from the spool, so a crash mid-flush never
    loses rows.
+   The spool file itself is rewritten here when it has grown mostly dead
+   space (>256 MB *and* >4 KiB per live row): DuckDB never returns freed
+   blocks to the filesystem, so a `DELETE` shrinks the table but not the
+   file. Left alone the VP spool reached 2.38 GB holding 146 rows. The
+   rewrite copies the live rows into a fresh database, verifies the count,
+   and swaps it in atomically; a failure leaves the spool exactly as it was
+   and never fails the flush that already succeeded.
 3. **Daily compaction** (`compact_vp_day`, `COMPACT_HOUR_UTC:COMPACT_MINUTE`
    UTC, `rt_pipeline.compaction`) closes out each finished UTC day: unions
    that day's staging objects with anything already curated for it, dedups
