@@ -543,7 +543,102 @@
       further needs a live rolling-conditions signal (a serving-side feature store), not another static feature.</p>
   </div>
 
-  <!-- LSTM section goes here -->
+  <!-- 7 -->
+  <div class="section-head">
+    <span class="idx">07</span>
+    <h2>LSTM over segment sequences &mdash; a split decision</h2>
+    <span class="tag">roadmap 5.2 &middot; causal GRU/LSTM &middot; tuned on val, tested once</span>
+  </div>
+  <p class="section-note">The segment reformulation was chosen partly because it gives a <b>natural sequence for a
+    recurrent model to consume</b>: one trip instance, keyed <code>(trip_id, service_day)</code> and ordered by
+    <code>segment_index</code>, so the prediction at each stop can see the trip's own upstream history. The model is
+    <b>unidirectional by construction</b> &mdash; the prediction at segment <i>t</i> may depend only on segments
+    0..<i>t</i> &mdash; which is what keeps the offline metric something serving could actually reproduce; a
+    perturb-at-<i>t</i> test enforces it. Splits, rows and metric keys are identical to the XGBoost study, so the two
+    families are directly comparable.</p>
+
+  <div class="callout">
+    <h3>The first result was a bug in the loss, not in the architecture</h3>
+    <p>Untuned smoke runs looked hopeless &mdash; MBTA <b>35.5&nbsp;s</b> / R²&nbsp;0.035, bUCR <b>75.4&nbsp;s</b> /
+      R²&nbsp;<b>&minus;0.431</b> (worse than predicting the mean). Neither was an architecture failure. The target is
+      right-skewed seconds and the loss was unstandardized, so large errors were under-weighted, and both runs were
+      still improving at the 30-epoch cap. Adding a <code>target_transform</code> and letting the run converge
+      (300 epochs, patience 25) reached MBTA <b>25.5&nbsp;s</b> / R²&nbsp;0.601 and bUCR <b>26.9&nbsp;s</b> /
+      R²&nbsp;0.801 <i>before any hyperparameter search at all</i>. <code>standardize</code> beat <code>log1p</code>
+      beat <code>none</code> on both agencies.</p>
+    <p>This also settles an open question: bUCR's negative R² was <b>under-training, not insufficient data</b>. The
+      worry that ~5.7-segment sequences over 11k rows are too short and too few for a recurrent model to learn from
+      turned out to be wrong &mdash; they were sufficient once the target was scaled.</p>
+  </div>
+
+  <div class="grid-2">
+    <div class="card">
+      <h3>Tuned LSTM vs tuned XGBoost &middot; test</h3>
+      <p class="cap">identical day-grouped splits &middot; test scored once per agency</p>
+      <div class="table-scroll">
+        <table>
+          <thead><tr><th>Agency</th><th>Untuned smoke</th><th>Tuned LSTM</th><th>Tuned XGBoost</th></tr></thead>
+          <tbody>
+            <tr><td>MBTA MAE</td><td>35.5 s</td><td>25.06 s</td><td class="best">24.57 s</td></tr>
+            <tr><td>MBTA R²</td><td>0.035</td><td>0.573</td><td class="best">0.652</td></tr>
+            <tr><td>bUCR MAE</td><td>75.4 s</td><td class="best">26.03 s</td><td>27.97 s</td></tr>
+            <tr><td>bUCR R²</td><td>&minus;0.431</td><td class="best">0.818</td><td>0.783</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="takeaway">Not a uniform win, and the split is the interesting part. <b>MBTA: the LSTM loses</b>
+        (25.06 vs 24.57&nbsp;s, and a wider R² gap). <b>bUCR: the LSTM wins by 7%</b> (26.03 vs 27.97&nbsp;s,
+        R² 0.818 vs 0.783). bUCR's shorter, noisier segments benefit from trip context; MBTA's residual is
+        geometry-dominated &mdash; the same feature-limited plateau of §06 &mdash; and trees handle that better.</div>
+    </div>
+    <div class="card">
+      <h3>Best configuration by agency</h3>
+      <p class="cap">Optuna TPE + MedianPruner &middot; selected by validation MAE</p>
+      <div class="table-scroll">
+        <table>
+          <thead><tr><th>Param</th><th>MBTA</th><th>bUCR</th></tr></thead>
+          <tbody>
+            <tr><td>rnn_type</td><td>gru</td><td>lstm</td></tr>
+            <tr><td>hidden_size</td><td>99</td><td>42</td></tr>
+            <tr><td>num_layers</td><td>1</td><td>2</td></tr>
+            <tr><td>dropout</td><td>0.39</td><td>0.21</td></tr>
+            <tr><td>learning_rate</td><td>0.0062</td><td>0.0059</td></tr>
+            <tr><td>batch_size</td><td>64</td><td>64</td></tr>
+            <tr><td>loss</td><td>mse</td><td>huber</td></tr>
+            <tr><td>target_transform</td><td>log1p</td><td>standardize</td></tr>
+            <tr><td>trials (complete / pruned)</td><td>8 (7 / 1)</td><td>44 (34 / 10)</td></tr>
+            <tr><td>training wall-clock</td><td>113 s, 57 epochs</td><td>22 s, 54 epochs</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="takeaway"><b>The MBTA comparison carries a real caveat.</b> Its sweep completed only <b>8 trials</b>
+        against bUCR's 44, because 92k rows cost 10&ndash;14 minutes per unpruned trial on a CPU-only budget &mdash;
+        the study barely cleared its own warm-up phase. MBTA is <b>under-searched, not conclusively beaten</b>.
+        Pruning is new here: roadmap 5.1 notes the XGBoost study never used it.</div>
+    </div>
+  </div>
+
+  <div class="callout">
+    <h3>The ensemble is the arm that actually wins</h3>
+    <p>Sequence models and trees make different mistakes, so blending them was the arm most likely to pay off, and it
+      did. A ridge blend fit on the <b>validation</b> split (test scored once) beats every single-model arm on R² for
+      both agencies:</p>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>Agency</th><th>LSTM</th><th>XGBoost</th><th>Average</th><th>Ridge blend</th></tr></thead>
+        <tbody>
+          <tr><td>MBTA</td><td>25.06 s / 0.573</td><td>24.52 s / 0.649</td><td>24.09 s / 0.648</td>
+              <td class="best">24.34 s / <b>0.662</b></td></tr>
+          <tr><td>bUCR</td><td>26.03 s / 0.818</td><td>28.40 s / 0.774</td><td>25.96 s / 0.810</td>
+              <td class="best">25.61 s / <b>0.830</b></td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>On MBTA the plain average edges the blend on MAE (24.09 vs 24.34&nbsp;s) while the blend wins on R²; on bUCR the
+      blend wins on both. Neither ensemble is wired into serving &mdash; running two model families per prediction
+      roughly doubles inference cost (§12), for roughly 1&ndash;2% MAE, and that trade has not been made.</p>
+  </div>
+
 
   <!-- 8 -->
   <div class="section-head">
