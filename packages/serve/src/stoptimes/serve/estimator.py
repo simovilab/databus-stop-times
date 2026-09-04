@@ -437,7 +437,15 @@ def estimate_stop_times(
             'shape_progress': shape_progress,
             'cross_track_error': cross_track_error,
             'progress_ratio': progress_ratio,
-            'stops_ahead': idx + 1,
+            # 0-indexed to match the training-side convention: the dataset
+            # builder assigns stops_ahead=0 to the closest upcoming stop
+            # (feature_engineering/dataset_builder.py, `stops_ahead =
+            # int(stop_order_arr[j] - closest_stop_order)` starting at
+            # j=closest_idx). upcoming_stops[0] is that same closest stop,
+            # so it must be served as stops_ahead=0, not 1 (roadmap 1.2:
+            # this off-by-one was the primary driver of the measured
+            # +71s served-model bias).
+            'stops_ahead': idx,
             'current_speed_kmh': current_speed_kmh,
             'bearing_to_stop': bearing_to_stop,
             'bearing_diff': bearing_diff,
