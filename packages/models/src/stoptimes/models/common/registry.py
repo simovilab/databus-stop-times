@@ -7,7 +7,7 @@ import json
 import os
 import pickle
 from pathlib import Path
-from typing import Dict, Any, Optional, List
+from typing import Dict, Any, Optional, List, Tuple
 from datetime import datetime
 import pandas as pd
 
@@ -47,6 +47,8 @@ class ModelRegistry:
         self.base_dir.mkdir(parents=True, exist_ok=True)
         
         self.registry_file = self.base_dir / "registry.json"
+        # model_key -> ((mtime_ns, size), unpickled object). See load_model().
+        self._model_cache: Dict[str, Tuple[Tuple[int, int], Any]] = {}
         self._load_registry()
     
     def _load_registry(self):
@@ -164,25 +166,52 @@ class ModelRegistry:
 
         return self.base_dir / path.name
 
-    def load_model(self, model_key: str) -> Any:
+    def load_model(self, model_key: str, use_cache: bool = True) -> Any:
         """
-        Load model from registry.
+        Load model from registry, caching the unpickled object in process.
 
         Args:
             model_key: Unique model identifier
+            use_cache: Reuse an already-loaded object for this key. Set False
+                to force a fresh unpickle (tests that mutate a loaded model,
+                or a re-read after the artifact on disk changed).
 
         Returns:
             Loaded model object
+
+        Note:
+            Without the cache this unpickled from disk on *every* call, so a
+            serving path that calls it per prediction paid model-load cost per
+            prediction -- measured at 23-109 ms p50 through
+            eta_service.estimator, dominated by loading rather than inference
+            (see models/evaluation/cost.py). The cache is keyed by model key
+            and invalidated by the artifact's mtime and size, so replacing a
+            .pkl on disk is picked up without a restart.
         """
         if model_key not in self.registry:
             raise KeyError(f"Model {model_key} not found in registry")
 
         model_path = self._resolve_artifact_path(self.registry[model_key]['model_path'])
 
+        stat = model_path.stat()
+        stamp = (stat.st_mtime_ns, stat.st_size)
+
+        if use_cache:
+            cached = self._model_cache.get(model_key)
+            if cached is not None and cached[0] == stamp:
+                return cached[1]
+
         with open(model_path, 'rb') as f:
             model = pickle.load(f)
 
+        if use_cache:
+            self._model_cache[model_key] = (stamp, model)
+
         return model
+
+    def clear_cache(self) -> None:
+        """Drop every in-process cached model object."""
+        self._model_cache.clear()
 
     def load_metadata(self, model_key: str) -> Dict[str, Any]:
         """
