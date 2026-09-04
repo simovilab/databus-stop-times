@@ -175,10 +175,13 @@ sequence and make the replay reconstruct the wrong middle. The first row of
 each hourly window is always kept, so "the most recent row with `ts <= T`" —
 the only question a replay asks — stays correct across file boundaries.
 
-Measured end-to-end against the live feed (2026-09-04, ~02:20 EDT, 5 unscoped
-polls): 411 kB of protobuf → 9,224 spool rows → 2,160 written (77% compacted
-away) → 24.0 kB Parquet+zstd, 11.1 B/row. Night service is unusually stable;
-re-measure before quoting a compaction rate for daytime.
+Measured end-to-end against the live feed twice, and the difference is the
+point: **77%** of rows were repeats over 5 unscoped night polls (2026-09-04
+~02:20 EDT; 411 kB protobuf → 9,224 spool rows → 2,160 written → 24.0 kB
+Parquet+zstd, 11.1 B/row), but only **47%** over a full daytime hour on the
+scoped routes (2026-09-04 12:07 UTC, 73,727 drained → 38,720 written).
+Predictions churn roughly twice as fast in service as they do overnight, so
+size the archive from the daytime figure.
 
 ## Credentials (never hardcode)
 
