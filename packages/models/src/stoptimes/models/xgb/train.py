@@ -21,7 +21,7 @@ from common.metrics import compute_all_metrics
 from common.keys import ModelKey
 from common.registry import get_registry
 from common.utils import print_metrics_table, train_test_summary
-from common.preprocessing import prepare_features, clip_predictions
+from common.preprocessing import LegacyPickleDefaults, legacy_impute_stats, prepare_features, clip_predictions
 
 
 def _make_one_hot_encoder() -> OneHotEncoder:
@@ -32,7 +32,7 @@ def _make_one_hot_encoder() -> OneHotEncoder:
         return OneHotEncoder(handle_unknown="ignore", sparse=False)
 
 
-class XGBTimeModel:
+class XGBTimeModel(LegacyPickleDefaults):
     """
     Gradient boosted tree model (XGBoost) with temporal/spatial features.
     
@@ -44,6 +44,9 @@ class XGBTimeModel:
     - Kinematic: current_speed_kmh, bearing_to_stop, bearing_diff
     - Status: is_at_stop
     """
+
+    _POST_PICKLE_DEFAULTS = {"impute_stats": dict, "handle_nan": lambda: "drop"}
+
 
     def __init__(
         self,
@@ -337,7 +340,8 @@ class XGBTimeModel:
             X_pred = X[self.feature_cols].copy()
         else:
             X_pred, _, _ = prepare_features(
-                X, self.feature_cols, handle_nan="impute", impute_stats=self.impute_stats
+                X, self.feature_cols, handle_nan="impute",
+                impute_stats=legacy_impute_stats(self.impute_stats, X, self.feature_cols)
             )
 
         X_transformed = self.preprocessor.transform(X_pred[self.feature_cols])

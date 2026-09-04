@@ -19,16 +19,19 @@ from common.metrics import compute_all_metrics
 from common.keys import ModelKey
 from common.registry import get_registry
 from common.utils import print_metrics_table, train_test_summary
-from common.preprocessing import prepare_features, clip_predictions
+from common.preprocessing import LegacyPickleDefaults, legacy_impute_stats, prepare_features, clip_predictions
 
 
-class PolyRegDistanceModel:
+class PolyRegDistanceModel(LegacyPickleDefaults):
     """
     Polynomial regression on distance with optional route-specific models.
     
     Features: distance_to_stop, (distance)^2, (distance)^3, ...
     Can fit separate models per route for better performance.
     """
+
+    _POST_PICKLE_DEFAULTS = {"impute_stats": dict, "handle_nan": lambda: "drop"}
+
     
     def __init__(self,
                  degree: int = 2,
@@ -125,7 +128,8 @@ class PolyRegDistanceModel:
             X = X.copy()
         else:
             X_clean, _, _ = prepare_features(
-                X, self.feature_cols, handle_nan="impute", impute_stats=self.impute_stats
+                X, self.feature_cols, handle_nan="impute",
+                impute_stats=legacy_impute_stats(self.impute_stats, X, self.feature_cols)
             )
             X = X.copy()
             X[self.feature_cols] = X_clean

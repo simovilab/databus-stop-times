@@ -17,16 +17,19 @@ from common.metrics import compute_all_metrics
 from common.keys import ModelKey
 from common.registry import get_registry
 from common.utils import print_metrics_table, train_test_summary
-from common.preprocessing import prepare_features, clip_predictions
+from common.preprocessing import LegacyPickleDefaults, legacy_impute_stats, prepare_features, clip_predictions
 
 
-class HistoricalMeanModel:
+class HistoricalMeanModel(LegacyPickleDefaults):
     """
     Baseline model using historical mean ETAs.
     
     Groups data by route, stop, and temporal features, then computes
     mean ETA for each group. At prediction time, looks up the appropriate group mean.
     """
+
+    _POST_PICKLE_DEFAULTS = {"impute_stats": dict, "handle_nan": lambda: "drop"}
+
     
     def __init__(self, group_by: List[str] = ['route_id', 'stop_sequence', 'hour'],
                  handle_nan: str = 'drop'):
@@ -108,7 +111,8 @@ class HistoricalMeanModel:
             X_clean = X[self.group_by]
         else:
             X_clean, _, _ = prepare_features(
-                X, self.group_by, handle_nan="impute", impute_stats=self.impute_stats
+                X, self.group_by, handle_nan="impute",
+                impute_stats=legacy_impute_stats(self.impute_stats, X, self.group_by)
             )
 
         # Merge with lookup table

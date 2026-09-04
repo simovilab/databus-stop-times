@@ -17,6 +17,8 @@ routes through this module so the leaderboard compares like with like.
 
 from typing import Any, Dict, List, Optional, Tuple
 
+import warnings
+
 import numpy as np
 import pandas as pd
 
@@ -153,3 +155,63 @@ def assert_same_row_set(
             f"{len(set_a - set_b)} row(s) only in {name_a!r} (e.g. {only_a}), "
             f"{len(set_b - set_a)} row(s) only in {name_b!r} (e.g. {only_b})"
         )
+
+
+class LegacyPickleDefaults:
+    """
+    Backfill attributes that were added to a model class *after* an artifact
+    was pickled.
+
+    The registry stores fitted models as pickles, and a pickle carries only
+    ``__dict__`` -- not the class. So adding an attribute that ``predict()``
+    reads silently breaks every artifact already on disk with an
+    ``AttributeError`` at serving time, which is how the shared-preprocessing
+    change (roadmap 5.3) broke the registered 2026-08-18 MBTA model: it added
+    ``impute_stats``, and the served pickle predates it.
+
+    Subclasses declare ``_POST_PICKLE_DEFAULTS`` as ``{attribute: factory}``.
+    Anything missing from a restored ``__dict__`` is filled from the factory,
+    which must reproduce the *old* behaviour -- an empty ``impute_stats`` makes
+    predict() fall back to fitting stats on the frame it is given, which is
+    exactly what these models did before 5.3.
+    """
+
+    _POST_PICKLE_DEFAULTS: Dict[str, Any] = {}
+
+    def __setstate__(self, state: Dict[str, Any]) -> None:
+        self.__dict__.update(state)
+        for name, factory in self._POST_PICKLE_DEFAULTS.items():
+            if name not in self.__dict__:
+                setattr(self, name, factory())
+
+
+def legacy_impute_stats(
+    impute_stats: Optional[Dict[str, float]],
+    df: pd.DataFrame,
+    feature_cols: List[str],
+) -> Dict[str, float]:
+    """
+    Resolve imputation statistics for a model restored from a legacy pickle.
+
+    A model fitted under this module always carries train-fit ``impute_stats``.
+    An artifact pickled before roadmap 5.3 does not, and
+    :class:`LegacyPickleDefaults` backfills it as ``{}`` -- which would leave
+    NaN in place and make Ridge raise at serving time.
+
+    Empty stats therefore mean "legacy artifact": fall back to deriving them
+    from the frame being predicted, which is precisely what these models did
+    before 5.3. That is a statistics leak if the frame is an evaluation split,
+    so it warns, and it never applies to a model fitted by current code.
+    """
+    if impute_stats:
+        return impute_stats
+    warnings.warn(
+        "Model has no train-fit impute_stats -- it was pickled before roadmap "
+        "5.3. Falling back to statistics derived from the frame being "
+        "predicted (the pre-5.3 behaviour). Re-train and re-save the artifact "
+        "to get train-only statistics.",
+        RuntimeWarning,
+        stacklevel=3,
+    )
+    _, _, stats = prepare_features(df, feature_cols, handle_nan="impute")
+    return stats

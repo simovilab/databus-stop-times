@@ -9,6 +9,8 @@ Run with:
 
 from __future__ import annotations
 
+import pickle
+
 import numpy as np
 import pandas as pd
 import pytest
@@ -45,6 +47,16 @@ def _small_pre_split(train_n=600, val_n=150, test_n=150):
 # ---------------------------------------------------------------------------
 # prepare_features: handle_nan modes
 # ---------------------------------------------------------------------------
+
+# (class, ctor kwargs) for the families whose fitted state is pickled into the
+# registry. polyreg_distance is included via its own minimal feature set.
+_LEGACY_PICKLE_CASES = [
+    (XGBTimeModel, dict(n_estimators=10, max_depth=3)),
+    (PolyRegTimeModel, dict()),
+    (PolyRegDistanceModel, dict(degree=1)),
+    (HistoricalMeanModel, dict()),
+]
+
 
 class TestPrepareFeaturesModes:
     def _df(self):
@@ -365,3 +377,49 @@ class TestEWMANoValidationLeak:
         metrics = result["metrics"]
         assert np.isfinite(metrics["val_mae_seconds"])
         assert np.isfinite(metrics["test_mae_seconds"])
+
+
+class TestLegacyPickleDefaults:
+    """
+    Artifacts pickled before an attribute existed must keep loading.
+
+    The registry stores fitted models as pickles carrying only __dict__, so
+    adding an attribute that predict() reads breaks every artifact already on
+    disk. That is not hypothetical: the roadmap 5.3 change added
+    `impute_stats`, and the registered 2026-08-18 MBTA xgboost model -- the one
+    actually served -- started raising AttributeError on predict().
+    """
+
+    @staticmethod
+    def _fitted(model_cls, **kwargs):
+        # Real dataset rows -- the synthetic frames elsewhere in this file are
+        # deliberately thin, and these families each need their own full
+        # feature set to fit.
+        train_df, _, test_df = _small_pre_split(train_n=400, val_n=100, test_n=100)
+        model = model_cls(**kwargs)
+        model.fit(train_df)
+        return model, test_df
+
+    @pytest.mark.parametrize("model_cls,kwargs", _LEGACY_PICKLE_CASES)
+    def test_pickle_missing_new_attribute_still_predicts(self, model_cls, kwargs):
+        model, df = self._fitted(model_cls, **kwargs)
+
+        # Simulate an artifact pickled before the attribute existed.
+        state = dict(model.__dict__)
+        for name in model_cls._POST_PICKLE_DEFAULTS:
+            state.pop(name, None)
+        restored = model_cls.__new__(model_cls)
+        restored.__setstate__(state)
+
+        for name in model_cls._POST_PICKLE_DEFAULTS:
+            assert hasattr(restored, name), f"{name} was not backfilled"
+
+        preds = restored.predict(df)
+        assert len(preds) == len(df)
+        assert np.isfinite(preds).all()
+
+    @pytest.mark.parametrize("model_cls,kwargs", _LEGACY_PICKLE_CASES)
+    def test_roundtrip_through_real_pickle(self, model_cls, kwargs):
+        model, df = self._fitted(model_cls, **kwargs)
+        restored = pickle.loads(pickle.dumps(model))
+        np.testing.assert_allclose(restored.predict(df), model.predict(df))
