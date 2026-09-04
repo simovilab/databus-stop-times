@@ -617,6 +617,17 @@ def compact_vp_day(self) -> dict[str, Any]:
         )
         return {"error": "compaction run failed"}
 
+    # `run_compaction` covers every feed in one pass and returns a per-feed
+    # breakdown under "feeds"; recording only the aggregate meant
+    # `simovi-status` could say how much was compacted but never *whose*, and
+    # a feed that silently stopped being compacted looked identical to one
+    # that had nothing to do. Kept as a narrow dict (no `details` list, which
+    # is unbounded) so the status file stays cat-able.
+    per_feed = {
+        name: {k: stats.get(k) for k in ("compacted", "errors", "rows_in",
+                                         "rows_out", "dupes_removed")}
+        for name, stats in (result.get("feeds") or {}).items()
+    }
     status.update(
         _STATUS_NAME, _status_dir(), event=True,
         last_compaction_utc=_now().isoformat(),
@@ -626,6 +637,7 @@ def compact_vp_day(self) -> dict[str, Any]:
         last_compaction_rows_out=result.get("rows_out"),
         last_compaction_dupes_removed=result.get("dupes_removed"),
         last_compaction_errors=result.get("errors"),
+        last_compaction_feeds=per_feed,
     )
     return result
 

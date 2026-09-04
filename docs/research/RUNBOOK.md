@@ -143,10 +143,24 @@ the expected state until `TU_ARCHIVE_ENABLED=true`. Its `scope` row renders
 Source:
 `gtfs-rt-pipeline/ops/simovi-status` — install a change with
 `sudo cp ops/simovi-status /usr/local/bin/simovi-status` on the VPS after
-syncing the repo (it is not run from the repo checkout directly). **Unverified
-2026-08-18:** this path was written pre-extraction as `eta_prediction/gtfs-rt-pipeline/...`;
-corrected here to match this repo's current layout, but the actual VPS checkout's path
-was not confirmed via SSH this pass — check `ssh jae@hetzner` before trusting it blindly.
+syncing (it is not run from the repo checkout directly).
+
+**Verified over SSH 2026-09-04 — and the path is NOT what this file previously
+guessed.** The running deployment is the *pre-extraction* layout:
+
+```
+/home/jae/git/gtfs-django/eta_prediction/gtfs-rt-pipeline    ← what actually runs
+/home/jae/git/gtfs-eta                                       ← a newer checkout that runs NOTHING
+```
+
+`docker inspect gtfs-rt-pipeline-celery-worker-1 --format '{{index .Config.Labels "com.docker.compose.project.working_dir"}}'`
+is the authoritative answer; do not infer it from what is checked out. That
+`gtfs-django` checkout is on branch `refactor/schema-alignment-and-s3` with the
+entire spool/compaction/status/ops work present only as **uncommitted local
+modifications and untracked files** — it has drifted from both git remotes, so
+`git pull` there will not deliver changes and may conflict. Deploys are file
+copies (`scp`) into that tree; the code is bind-mounted into the containers, so
+a `docker compose up -d --no-build <service>` picks changes up with no rebuild.
 
 Per-collector status files, atomic + `cat`/`tail -f`-able, at
 `$STATUS_DIR` (`/var/lib/simovi/status` in prod): `mbta.json`/`.txt`,

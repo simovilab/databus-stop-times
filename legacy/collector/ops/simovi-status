@@ -97,9 +97,15 @@ def pct_change(before, after) -> str | None:
     if not isinstance(before, int) or not isinstance(after, int) or before <= 0:
         return None
     delta = (after - before) / before * 100
-    # A run that removed 0.3% must not render as "(-0%)" -- on a dedupe job
-    # that reads as "did nothing" when it in fact removed a thousand rows.
-    fmt = f"{delta:+.1f}%" if abs(delta) < 1 else f"{delta:+.0f}%"
+    # A dedupe run that removed 508 of 4.2M rows is 0.012% and rounds to
+    # "(-0.0%)", which reads as "did nothing" on the one job whose entire
+    # purpose is removing rows. Below 0.1%, show the row count instead.
+    if abs(delta) < 0.1:
+        fmt = f"{after - before:+,} rows"
+    elif abs(delta) < 1:
+        fmt = f"{delta:+.1f}%"
+    else:
+        fmt = f"{delta:+.0f}%"
     return f"{human_count(before)} → {human_count(after)} ({fmt})"
 
 
@@ -172,7 +178,8 @@ def next_flush(now: datetime, minute: int) -> datetime:
 
 
 def feed_panel(title: str, name: str, now: datetime, *, cadence: str,
-               flush_minute: int, extra_lines: list[tuple[str, str, str]] | None = None) -> str:
+               flush_minute: int, windowed: bool = False,
+               extra_lines: list[tuple[str, str, str]] | None = None) -> str:
     st = read_status(name)
     if not st:
         print(f"  {dot('bad')} {bold(title.ljust(14))}{red('no status file')} {dim(STATUS_DIR)}")
@@ -184,6 +191,20 @@ def feed_panel(title: str, name: str, now: datetime, *, cadence: str,
 
     # A collector is judged on whether data is still arriving, nothing else.
     # A stale poll is the failure that matters; everything else is detail.
+    #
+    # ...except for a windowed collector outside its window. bUCR stops at
+    # 23:00 Costa Rica by design, so every overnight run of this report used
+    # to shout STALLED and exit 1 for ~7 hours a night. An alarm that is
+    # expected to fire nightly is an alarm nobody reads.
+    if windowed and not st.get("in_window"):
+        print(f"  {dim('○')} {bold(title.ljust(14))}"
+              f"{dim('idle — outside its polling window')}")
+        row("last poll", ago(last_poll, now), "resumes when the window opens")
+        for lbl, val, ext in (extra_lines or []):
+            row(lbl, val, ext)
+        print()
+        return "off"
+
     if age is None:
         state, verdict = "bad", "never polled"
     elif age > 300:
@@ -332,35 +353,14 @@ def tu_panel(now: datetime, *, flush_minute: int = 7) -> str:
 
 # ── compaction ────────────────────────────────────────────────────────────────
 
-def compaction_row(label: str, name: str, now: datetime) -> str:
-    """One feed's nightly staging → curated run.
+def compaction_detail(stats: dict) -> str:
+    """"12 files · 4.2M → 4.2M (-508 rows) · 508 dupes removed" for one feed."""
+    files = stats.get("compacted")
+    dupes = stats.get("dupes_removed")
+    rows = pct_change(stats.get("rows_in"), stats.get("rows_out"))
+    errors = stats.get("errors")
 
-    Compaction is the failure nobody notices: polls and flushes keep looking
-    perfectly healthy while staging quietly piles up and the curated dataset
-    goes stale. So it gets judged on its own age -- a daily job that has not
-    run in over 26h is broken, whatever the rest of the report says.
-    """
-    st = read_status(name)
-    lc = parse_ts(st.get("last_compaction_utc"))
-    if not lc:
-        row(label, dim("never run"), "no compaction recorded for this feed")
-        return "unknown"
-
-    errors = st.get("last_compaction_errors")
-    age = (now - lc).total_seconds()
-    if age > 26 * 3600:
-        state, when = "bad", red(ago(lc, now))
-    elif errors:
-        state, when = "warn", yellow(ago(lc, now))
-    else:
-        state, when = "ok", ago(lc, now)
-
-    day = st.get("last_compaction_day") or "?"
-    files = st.get("last_compaction_files")
-    dupes = st.get("last_compaction_dupes_removed")
-    rows = pct_change(st.get("last_compaction_rows_in"), st.get("last_compaction_rows_out"))
-
-    detail = [f"day {day}"]
+    detail = []
     if isinstance(files, int):
         detail.append(f"{files} file{'s' if files != 1 else ''}")
     if rows:
@@ -369,16 +369,55 @@ def compaction_row(label: str, name: str, now: datetime) -> str:
         detail.append(f"{dupes:,} dupes removed")
     if errors:
         detail.append(red(f"{errors} error(s)"))
-
-    row(label, when, " · ".join(detail))
-    return state
+    return " · ".join(detail) or dim("nothing to do")
 
 
 def compaction_panel(now: datetime) -> str:
-    print(f"  {bold('COMPACTION')}  {dim('staging → curated, nightly')}")
+    """The nightly staging → curated run.
 
-    states = [compaction_row("mbta", "mbta", now),
-              compaction_row("bucr", "navsat", now)]
+    Compaction is the failure nobody notices: polls and flushes keep looking
+    perfectly healthy while staging quietly piles up and the curated dataset
+    goes stale. So it is judged on its own age -- a daily job that has not run
+    in over 26h is broken, whatever the rest of the report says.
+
+    It is ONE job covering every feed (`run_compaction(feeds=None)`), recorded
+    once under the `mbta` status name, with a per-feed breakdown inside it.
+    Reading each feed's own status file instead would report bUCR as "never
+    run" forever -- it is compacted, it just does not write that record.
+    """
+    print(f"  {bold('COMPACTION')}  {dim('staging → curated, nightly · all feeds, one job')}")
+
+    st = read_status("mbta")
+    lc = parse_ts(st.get("last_compaction_utc"))
+    if not lc:
+        row("last run", dim("never"), "no compaction has been recorded")
+        states = ["unknown"]
+    else:
+        errors = st.get("last_compaction_errors")
+        age = (now - lc).total_seconds()
+        if age > 26 * 3600:
+            states, when = ["bad"], red(ago(lc, now))
+        elif errors:
+            states, when = ["warn"], yellow(ago(lc, now))
+        else:
+            states, when = ["ok"], ago(lc, now)
+        row("last run", when, f"day {st.get('last_compaction_day') or '?'}")
+
+        per_feed = st.get("last_compaction_feeds")
+        if isinstance(per_feed, dict) and per_feed:
+            for feed_name in sorted(per_feed):
+                stats = per_feed[feed_name]
+                if isinstance(stats, dict):
+                    row(f"  {feed_name}", "", compaction_detail(stats))
+        else:
+            # Pre-2026-09-04 status files carry only the aggregate.
+            row("  all feeds", "", compaction_detail({
+                "compacted": st.get("last_compaction_files"),
+                "errors": st.get("last_compaction_errors"),
+                "rows_in": st.get("last_compaction_rows_in"),
+                "rows_out": st.get("last_compaction_rows_out"),
+                "dupes_removed": st.get("last_compaction_dupes_removed"),
+            }))
 
     # Staging backlog is the corroborating signal: a stale last_compaction_utc
     # says the job did not run, a growing staging count says it is not keeping
@@ -516,8 +555,9 @@ def main() -> int:
     states = [
         feed_panel("MBTA", "mbta", now, cadence="5s", flush_minute=2),
         feed_panel("bUCR", "navsat", now, cadence="15s", flush_minute=0,
+                   windowed=True,
                    extra_lines=[("window", "06:00–23:00 Costa Rica",
-                                 "open" if read_status("navsat").get("in_window") else "CLOSED — not polling")]),
+                                 "open" if read_status("navsat").get("in_window") else "closed until 06:00")]),
     ]
     states.append(tu_panel(now))
     states.append(compaction_panel(now))
