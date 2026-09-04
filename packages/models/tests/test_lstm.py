@@ -338,3 +338,92 @@ class TestRegistryRoundTrip:
         preds_after = loaded_model.predict(test_df)
 
         np.testing.assert_allclose(preds_before, preds_after, rtol=1e-6, atol=1e-6)
+
+
+# --------------------------------------------------------------------------
+# 8. target_transform
+# --------------------------------------------------------------------------
+
+class TestTargetTransform:
+    @pytest.mark.parametrize("transform", ["none", "log1p", "standardize"])
+    def test_metrics_always_reported_in_raw_seconds(self, transform):
+        """Whatever space the network trains in, val/test MAE must land in
+        the same raw-seconds ballpark as the target itself (roughly
+        [0, 4 * max target]) -- a transform that isn't inverted correctly
+        would blow this up or collapse it near zero."""
+        df = make_synthetic_df(n_trips=18, seq_len=5, seed=50)
+        train_df, val_df, test_df = _pre_split(df, n_train=10, n_val=4, n_test=4, seq_len=5)
+        max_target = df["time_to_arrival_seconds"].max()
+
+        out = train_lstm(
+            pre_split=(train_df, val_df, test_df),
+            hidden_size=8, num_layers=1, max_epochs=5, patience=5,
+            target_transform=transform, save_model=False, seed=11,
+        )
+        m = out["metrics"]
+        assert 0.0 <= m["val_mae_seconds"] <= 4 * max_target
+        assert 0.0 <= m["test_mae_seconds"] <= 4 * max_target
+
+    def test_standardize_fits_stats_on_train_targets_only(self):
+        df = make_synthetic_df(n_trips=18, seq_len=5, seed=51)
+        train_df, val_df, test_df = _pre_split(df, n_train=10, n_val=4, n_test=4, seq_len=5)
+
+        out = train_lstm(
+            pre_split=(train_df, val_df, test_df),
+            hidden_size=8, num_layers=1, max_epochs=2, patience=2,
+            target_transform="standardize", save_model=False, seed=12,
+        )
+        stats = out["metadata"]["target_stats"]
+        assert set(stats.keys()) == {"mean", "std"}
+
+        expected_mean = train_df["time_to_arrival_seconds"].mean()
+        expected_std = train_df["time_to_arrival_seconds"].std(ddof=0)
+        assert stats["mean"] == pytest.approx(expected_mean, rel=1e-4)
+        assert stats["std"] == pytest.approx(expected_std, rel=1e-4)
+
+    def test_log1p_records_no_stats(self):
+        df = make_synthetic_df(n_trips=14, seq_len=4, seed=52)
+        train_df, val_df, test_df = _pre_split(df, n_train=8, n_val=3, n_test=3, seq_len=4)
+
+        out = train_lstm(
+            pre_split=(train_df, val_df, test_df),
+            hidden_size=8, num_layers=1, max_epochs=2, patience=2,
+            target_transform="log1p", save_model=False, seed=13,
+        )
+        assert out["metadata"]["target_stats"] == {}
+        assert out["metadata"]["target_transform"] == "log1p"
+
+    def test_invalid_target_transform_raises(self):
+        df = make_synthetic_df(n_trips=6, seq_len=4, seed=53)
+        train_df, val_df, test_df = _pre_split(df, n_train=4, n_val=1, n_test=1, seq_len=4)
+
+        with pytest.raises(ValueError):
+            train_lstm(
+                pre_split=(train_df, val_df, test_df),
+                hidden_size=8, num_layers=1, max_epochs=1, patience=1,
+                target_transform="bogus", save_model=False, seed=14,
+            )
+
+    def test_saved_model_predict_matches_pretransform_predictions(self, tmp_path):
+        """A model trained with target_transform="standardize" must, once
+        wrapped/persisted and reloaded, keep producing predictions in raw
+        seconds identical to the in-memory model's -- the transform/inverse
+        round trip must survive serialization."""
+        df = make_synthetic_df(n_trips=10, seq_len=4, seed=54)
+        train_df, val_df, test_df = _pre_split(df, n_train=6, n_val=2, n_test=2, seq_len=4)
+
+        out = train_lstm(
+            pre_split=(train_df, val_df, test_df),
+            hidden_size=8, num_layers=1, max_epochs=2, patience=2,
+            target_transform="standardize", save_model=False, seed=15,
+        )
+        model: LSTMSegmentModel = out["model"]
+        assert model.target_transform == "standardize"
+        preds_before = model.predict(test_df)
+
+        registry = ModelRegistry(base_dir=str(tmp_path))
+        registry.save_model("lstm_transform_test_key", model, dict(out["metadata"]))
+        loaded_model = registry.load_model("lstm_transform_test_key")
+
+        preds_after = loaded_model.predict(test_df)
+        np.testing.assert_allclose(preds_before, preds_after, rtol=1e-6, atol=1e-6)

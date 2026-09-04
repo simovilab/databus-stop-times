@@ -22,6 +22,7 @@ import copy
 import random
 import sys
 import time
+from dataclasses import replace
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
@@ -87,6 +88,56 @@ def _flatten_masked(preds: np.ndarray, target: np.ndarray, mask: np.ndarray) -> 
     return target[m], preds[m]
 
 
+_VALID_TARGET_TRANSFORMS = ("none", "log1p", "standardize")
+
+
+def _fit_target_stats(train_seqs: List, target_transform: str) -> Dict[str, float]:
+    """Fit whatever parameters `target_transform` needs, from TRAIN targets
+    only (never val/test -- that would leak)."""
+    if target_transform not in _VALID_TARGET_TRANSFORMS:
+        raise ValueError(f"target_transform must be one of {_VALID_TARGET_TRANSFORMS}, got {target_transform!r}")
+    if target_transform == "standardize":
+        all_t = np.concatenate([s.target for s in train_seqs if s.target is not None])
+        mean = float(np.mean(all_t))
+        std = float(np.std(all_t))
+        if std < 1e-6:
+            std = 1.0
+        return {"mean": mean, "std": std}
+    return {}
+
+
+def _forward_target(y: np.ndarray, target_transform: str, stats: Dict[str, float]) -> np.ndarray:
+    """Map raw seconds -> the space the network is trained/predicts in."""
+    if target_transform == "log1p":
+        return np.log1p(np.clip(y, a_min=0.0, a_max=None))
+    if target_transform == "standardize":
+        return (y - stats["mean"]) / stats["std"]
+    return y
+
+
+def _invert_target(y: np.ndarray, target_transform: str, stats: Dict[str, float]) -> np.ndarray:
+    """Inverse of `_forward_target`: model-space -> raw seconds."""
+    if target_transform == "log1p":
+        return np.expm1(y)
+    if target_transform == "standardize":
+        return y * stats["std"] + stats["mean"]
+    return y
+
+
+def _transform_sequence_targets(sequences: List, target_transform: str, stats: Dict[str, float]) -> List:
+    """Return copies of `sequences` with `.target` mapped through
+    `_forward_target`. Used ONLY to build the training loss batches -- eval
+    keeps raw-seconds targets and instead inverts the model's predictions,
+    so metrics are always reported in real seconds."""
+    out = []
+    for s in sequences:
+        if s.target is None:
+            out.append(s)
+            continue
+        out.append(replace(s, target=_forward_target(s.target, target_transform, stats).astype(np.float32)))
+    return out
+
+
 def _jsonable_metrics(metrics: Dict[str, float]) -> Dict[str, float]:
     """compute_all_metrics can return numpy scalar types (e.g. float32, from
     our torch->numpy predictions); the registry writes metadata straight to
@@ -95,9 +146,20 @@ def _jsonable_metrics(metrics: Dict[str, float]) -> Dict[str, float]:
 
 
 @torch.no_grad()
-def _run_eval(model: SegmentSequenceModel, sequences, batch_size: int) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+def _run_eval(
+    model: SegmentSequenceModel,
+    sequences,
+    batch_size: int,
+    target_transform: str = "none",
+    target_stats: Optional[Dict[str, float]] = None,
+) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
     """Run the model over `sequences` in eval mode, returning flattened
-    (unmasked-only) (y_true, y_pred, row_pos) arrays in a single pass."""
+    (unmasked-only) (y_true, y_pred, row_pos) arrays in a single pass.
+
+    `sequences[i].target` is assumed to be raw seconds (never
+    transform-space) -- the model's raw output is inverted via
+    `_invert_target` before being returned, so `y_true`/`y_pred` are always
+    comparable in real seconds regardless of `target_transform`."""
     model.eval()
     all_true: List[np.ndarray] = []
     all_pred: List[np.ndarray] = []
@@ -107,6 +169,7 @@ def _run_eval(model: SegmentSequenceModel, sequences, batch_size: int) -> Tuple[
         mask_np = batch.mask.numpy()
         y_np = batch.y.numpy()
         y_true, y_pred = _flatten_masked(preds, y_np, mask_np)
+        y_pred = _invert_target(y_pred, target_transform, target_stats or {})
         all_true.append(y_true)
         all_pred.append(y_pred)
         all_row_pos.append(batch.row_pos[mask_np])
@@ -135,12 +198,16 @@ class LSTMSegmentModel:
         preprocessor: Preprocessor,
         service_offset_h: float,
         batch_size: int = 64,
+        target_transform: str = "none",
+        target_stats: Optional[Dict[str, float]] = None,
     ) -> None:
         self.state_dict = {k: v.detach().cpu().clone() for k, v in state_dict.items()}
         self.config = dict(config)
         self.preprocessor = preprocessor
         self.service_offset_h = service_offset_h
         self.batch_size = batch_size
+        self.target_transform = target_transform
+        self.target_stats = dict(target_stats or {})
 
     def _build_network(self) -> SegmentSequenceModel:
         net = SegmentSequenceModel(
@@ -174,6 +241,7 @@ class LSTMSegmentModel:
         with torch.no_grad():
             for batch in iter_batches(sequences, batch_size=self.batch_size, shuffle=False):
                 preds = net(batch.x, batch.lengths).numpy()
+                preds = _invert_target(preds, self.target_transform, self.target_stats)
                 mask_np = batch.mask.numpy()
                 rp = batch.row_pos[mask_np]
                 out[rp] = preds[mask_np]
@@ -200,6 +268,7 @@ def train_lstm(
     weight_decay: float = 0.0,
     grad_clip: float = 1.0,
     loss: str = "huber",
+    target_transform: str = "none",
     service_offset_h: float = 7,
     save_model: bool = True,
     pre_split: Optional[Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]] = None,
@@ -218,6 +287,13 @@ def train_lstm(
             on validation MAE (seconds) with `patience` epochs of no
             improvement; the best-val-MAE weights are restored before
             scoring test.
+        target_transform: "none" (default), "log1p", or "standardize". The
+            network is trained/predicts in the transformed space; all
+            reported metrics (val/test MAE, R², etc.) and early stopping are
+            always computed in raw seconds -- predictions are inverted
+            before comparison. Stats needed for the transform (e.g.
+            standardize's mean/std) are fit on TRAIN targets only and
+            persisted on the saved model for serving-time inversion.
         service_offset_h: hours subtracted from vp_ts before taking the
             calendar date, to fold cross-midnight trips onto the correct
             service day when grouping rows into sequences.
@@ -263,6 +339,9 @@ def train_lstm(
     val_seqs = apply_preprocessor(val_seqs_raw, preprocessor) if val_seqs_raw else []
     test_seqs = apply_preprocessor(test_seqs_raw, preprocessor) if test_seqs_raw else []
 
+    target_stats = _fit_target_stats(train_seqs, target_transform)
+    train_seqs_loss = _transform_sequence_targets(train_seqs, target_transform, target_stats)
+
     n_features = len(preprocessor.feature_cols)
     model = SegmentSequenceModel(
         n_features=n_features,
@@ -282,7 +361,7 @@ def train_lstm(
 
     for epoch in range(max_epochs):
         model.train()
-        for batch in iter_batches(train_seqs, batch_size=batch_size, shuffle=True, rng=rng):
+        for batch in iter_batches(train_seqs_loss, batch_size=batch_size, shuffle=True, rng=rng):
             optimizer.zero_grad()
             preds = model(batch.x, batch.lengths)
             batch_loss = masked_loss(preds, batch.y, batch.mask, loss=loss)
@@ -293,7 +372,7 @@ def train_lstm(
         epochs_trained = epoch + 1
 
         if val_seqs:
-            y_true, y_pred, _ = _run_eval(model, val_seqs, batch_size)
+            y_true, y_pred, _ = _run_eval(model, val_seqs, batch_size, target_transform, target_stats)
             val_mae = float(np.mean(np.abs(y_true - clip_predictions(y_pred))))
         else:
             val_mae = float("nan")
@@ -318,7 +397,7 @@ def train_lstm(
 
     # Validation metrics (full metric set, on best weights).
     if val_seqs:
-        y_val, val_preds, _ = _run_eval(model, val_seqs, batch_size)
+        y_val, val_preds, _ = _run_eval(model, val_seqs, batch_size, target_transform, target_stats)
         val_preds = clip_predictions(val_preds)
         val_metrics = _jsonable_metrics(compute_all_metrics(y_val, val_preds, prefix="val_"))
         print_metrics_table(val_metrics, "Validation")
@@ -327,7 +406,7 @@ def train_lstm(
 
     # Test metrics.
     if test_seqs:
-        y_test, test_preds, _ = _run_eval(model, test_seqs, batch_size)
+        y_test, test_preds, _ = _run_eval(model, test_seqs, batch_size, target_transform, target_stats)
         test_preds = clip_predictions(test_preds)
         test_metrics = _jsonable_metrics(compute_all_metrics(y_test, test_preds, prefix="test_"))
         print_metrics_table(test_metrics, "Test")
@@ -347,6 +426,8 @@ def train_lstm(
         preprocessor=preprocessor,
         service_offset_h=service_offset_h,
         batch_size=batch_size,
+        target_transform=target_transform,
+        target_stats=target_stats,
     )
 
     metadata = {
@@ -364,6 +445,8 @@ def train_lstm(
         "weight_decay": weight_decay,
         "grad_clip": grad_clip,
         "loss": loss,
+        "target_transform": target_transform,
+        "target_stats": target_stats,
         "service_offset_h": service_offset_h,
         "n_features": n_features,
         "features": list(preprocessor.feature_cols),
