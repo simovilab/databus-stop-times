@@ -108,7 +108,7 @@ name = "cffi"
 version = "2.0.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "pycparser", marker = "implementation_name != 'PyPy'" },
+    { name = "pycparser" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/eb/56/b1ba7935a17738ae8453301356628e8147c79dbb825bcbc73dc7401f9846/cffi-2.0.0.tar.gz", hash = "sha256:44d1b5909021139fe36001ae048dbdde8214afa20200eda0f64c068cac5d5529", size = 523588, upload-time = "2025-09-08T23:24:04.541Z" }
 wheels = [
@@ -471,7 +471,7 @@ wheels = [
 [[package]]
 name = "gtfs-django"
 version = "0.1.0"
-source = { editable = "../../" }
+source = { editable = "../../gtfs-django" }
 dependencies = [
     { name = "django" },
     { name = "gtfs-realtime-bindings" },
@@ -566,7 +566,7 @@ requires-dist = [
     { name = "django-environ", specifier = ">=0.11" },
     { name = "duckdb", specifier = ">=1.1.0" },
     { name = "fastparquet", specifier = ">=2024.11.0" },
-    { name = "gtfs-django", editable = "../../" },
+    { name = "gtfs-django", editable = "../../gtfs-django" },
     { name = "gtfs-realtime-bindings", specifier = ">=1.0.0" },
     { name = "ipython", marker = "extra == 'dev'" },
     { name = "mypy", marker = "extra == 'dev'" },
