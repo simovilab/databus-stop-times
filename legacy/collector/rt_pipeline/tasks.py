@@ -456,11 +456,12 @@ def poll_trip_updates_s3(self):
 
         feed = gtfs_realtime_pb2.FeedMessage()
         feed.ParseFromString(r.content)
+        routes = _tu_routes()
         records = feed_records(
             feed,
             feed_name=settings.FEED_NAME,
             ingested_at=ingested,
-            routes=_tu_routes(),
+            routes=routes,
             max_horizon_seconds=settings.TU_MAX_HORIZON_SECONDS,
         )
         df = pd.DataFrame.from_records(records) if records else pd.DataFrame()
@@ -474,6 +475,13 @@ def poll_trip_updates_s3(self):
             fetch_ok=True, fetch_fail=False,
             rows_fetched=len(records), rows_new=spooled,
             spool_rows=spool_stats["rows"], spool_bytes=spool_stats["bytes"],
+            # Reported so `simovi-status` can show the archive's actual scope.
+            # "Am I storing three routes or the whole feed" is the question
+            # that decides whether this costs 250 MB or 20 GB, and it is
+            # otherwise invisible from outside the container.
+            archive_routes=",".join(sorted(routes)) if routes else "ALL ROUTES",
+            archive_horizon_s=settings.TU_MAX_HORIZON_SECONDS,
+            poll_seconds=settings.TU_POLL_SECONDS,
         )
         return {"fetched": len(records), "spooled": spooled}
     except Exception as exc:

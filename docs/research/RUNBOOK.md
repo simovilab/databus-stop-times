@@ -123,10 +123,24 @@ uv run celery -A ingestproj beat -l INFO                          # terminal 3
 ```bash
 ssh jae@hetzner simovi-status
 ```
-One screen, both collectors: last poll age, spool size, next/last flush,
-last static-GTFS snapshot, MinIO disk/inode/object counts with a runway
-projection, staging build-up (a nightly-compaction health signal), VPS
-resources. Exits 1 if a collector has stalled. Source:
+One screen: last poll age, spool size, next/last flush and last static-GTFS
+snapshot per collector; the TripUpdates replay archive (its **scope** — routes
+and horizon — plus how much of each flush was run-length encoded away); a
+COMPACTION panel with each feed's last nightly staging→curated run (day, files,
+rows in→out, dupes removed, errors) and the staging backlog that corroborates
+it; MinIO disk/inode/object counts with a runway projection; VPS resources.
+
+Exits 1 if a collector has stalled **or** a nightly compaction has not run in
+over 26h — compaction is the failure nobody notices, because polls and flushes
+keep looking healthy while the curated dataset silently goes stale.
+
+The `MBTA TU` panel reads `mbta_tu.json` and prints `archive off` (dim, not an
+error, and it never affects the exit code) when that file is absent, which is
+the expected state until `TU_ARCHIVE_ENABLED=true`. Its `scope` row renders
+`ALL ROUTES` in red: an empty `TU_ROUTES` archives the whole feed, which is
+~80x the storage of the three corpus routes.
+
+Source:
 `gtfs-rt-pipeline/ops/simovi-status` — install a change with
 `sudo cp ops/simovi-status /usr/local/bin/simovi-status` on the VPS after
 syncing the repo (it is not run from the repo checkout directly). **Unverified
@@ -138,7 +152,8 @@ Per-collector status files, atomic + `cat`/`tail -f`-able, at
 `$STATUS_DIR` (`/var/lib/simovi/status` in prod): `mbta.json`/`.txt`,
 `navsat.json`/`.txt` (bUCR — named `navsat`, the collector's package name,
 **not** `bucr`; a status write under the wrong name is silently invisible
-to `simovi-status` and to the collector itself), plus `*.events.log` for
+to `simovi-status` and to the collector itself), `mbta_tu.json`/`.txt` (the
+TripUpdates archive, written only once it is enabled), plus `*.events.log` for
 flushes/compactions/errors (`tail -f`).
 
 ## Inspect the S3 bucket

@@ -4,7 +4,8 @@
 Answers, in order of how often you actually need it:
   1. Is data still arriving?          (poll age)
   2. Is it reaching S3?               (spool size + last flush)
-  3. Will it keep working?            (inode / disk runway on the MinIO box)
+  3. Is it being consolidated?        (nightly compaction + staging backlog)
+  4. Will it keep working?            (inode / disk runway on the MinIO box)
 
 Reads the status snapshots the collectors write to /var/lib/simovi/status and
 queries MinIO + the local host. Never raises: a section that cannot be read
@@ -21,6 +22,11 @@ import sys
 from datetime import datetime, timedelta, timezone
 
 STATUS_DIR = os.environ.get("SIMOVI_STATUS_DIR", "/var/lib/simovi/status")
+# Mirrors COMPACT_HOUR_UTC / COMPACT_MINUTE in ingestproj/settings.py. Only
+# used to say when the next run is due; a wrong value here misreports the
+# countdown, never the health verdict.
+COMPACT_HOUR = int(os.environ.get("SIMOVI_COMPACT_HOUR", "3"))
+COMPACT_MINUTE = int(os.environ.get("SIMOVI_COMPACT_MINUTE", "15"))
 ALIAS = os.environ.get("SIMOVI_MC_ALIAS", "simovilab")
 BUCKET = os.environ.get("SIMOVI_BUCKET", "transit")
 
@@ -71,7 +77,30 @@ def until(target: datetime, now: datetime) -> str:
         return "due"
     if s < 60:
         return f"in {int(s)}s"
-    return f"in {int(s // 60)}m"
+    if s < 3600:
+        return f"in {int(s // 60)}m"
+    # Daily jobs are hours out; "in 1230m" is technically right and useless.
+    return f"in {int(s // 3600)}h {int((s % 3600) // 60)}m"
+
+
+def next_daily(now: datetime, hour: int, minute: int) -> datetime:
+    cand = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
+    if cand <= now:
+        cand += timedelta(days=1)
+    return cand
+
+
+def pct_change(before, after) -> str | None:
+    """"120k → 96k (-20%)" for a pair of row counts, or None if either is
+    missing. Compaction is judged by how much it removed, so the delta is the
+    number worth rendering, not the two totals on their own."""
+    if not isinstance(before, int) or not isinstance(after, int) or before <= 0:
+        return None
+    delta = (after - before) / before * 100
+    # A run that removed 0.3% must not render as "(-0%)" -- on a dedupe job
+    # that reads as "did nothing" when it in fact removed a thousand rows.
+    fmt = f"{delta:+.1f}%" if abs(delta) < 1 else f"{delta:+.0f}%"
+    return f"{human_count(before)} → {human_count(after)} ({fmt})"
 
 
 def parse_ts(v) -> datetime | None:
@@ -217,6 +246,170 @@ def feed_panel(title: str, name: str, now: datetime, *, cadence: str,
     return state
 
 
+# ── TripUpdates replay archive ────────────────────────────────────────────────
+
+def tu_panel(now: datetime, *, flush_minute: int = 7) -> str:
+    """The TU archive is opt-in (TU_ARCHIVE_ENABLED), so an absent status file
+    means "never switched on", not "broken". Rendering that as a red failure
+    would cry wolf on every host that has simply not enabled it -- so it
+    reports `off`, and never contributes a `bad` state to the exit code."""
+    st = read_status("mbta_tu")
+    if not st:
+        print(f"  {dim('○')} {bold('MBTA TU'.ljust(14))}{dim('archive off')}"
+              f"  {dim('set TU_ARCHIVE_ENABLED=true to collect for replay runs')}")
+        print()
+        return "off"
+
+    last_poll = parse_ts(st.get("last_poll_utc"))
+    age = (now - last_poll).total_seconds() if last_poll else None
+    cadence = st.get("poll_seconds")
+    # Judged against its own beat, not the VP one: this polls every 30s by
+    # default, so the 60s/300s thresholds used for a 5s feed would be wrong.
+    slow = (cadence * 4) if isinstance(cadence, int) else 120
+    stalled = (cadence * 20) if isinstance(cadence, int) else 600
+
+    if age is None:
+        state, verdict = "bad", "never polled"
+    elif age > stalled:
+        state, verdict = "bad", f"STALLED — no poll in {ago(last_poll, now)}"
+    elif age > slow:
+        state, verdict = "warn", f"slow — last poll {ago(last_poll, now)}"
+    else:
+        state, verdict = "ok", f"archiving · polling every {cadence}s"
+
+    print(f"  {dot(state)} {bold('MBTA TU'.ljust(14))}{verdict}")
+
+    # The scope line is the storage bill. "ALL ROUTES" is ~80x the corpus
+    # routes, so it is called out in yellow rather than shown as a neutral
+    # fact -- an accidentally-empty TU_ROUTES is the expensive mistake here.
+    routes = st.get("archive_routes")
+    horizon = st.get("archive_horizon_s")
+    scope = red("ALL ROUTES") if routes == "ALL ROUTES" else (routes or "?")
+    row("scope", scope,
+        f"horizon ≤ {int(horizon) // 60}m" if isinstance(horizon, int) else "")
+
+    fetched, new = st.get("rows_fetched"), st.get("rows_new")
+    row("last poll", ago(last_poll, now),
+        f"fetched {fetched:,}, new {new:,}"
+        if isinstance(fetched, int) and isinstance(new, int) else "")
+
+    spool_rows, spool_bytes = st.get("spool_rows"), st.get("spool_bytes")
+    nf = next_flush(now, flush_minute)
+    row("spool",
+        f"{spool_rows:,} rows · {human_bytes(spool_bytes)}"
+        if isinstance(spool_rows, int) else "?",
+        f"next flush {nf:%H:%M} ({until(nf, now)})")
+
+    lf = parse_ts(st.get("last_flush_utc"))
+    drained, written = st.get("last_flush_rows"), st.get("last_flush_rows_written")
+    if lf:
+        # Two numbers, because they differ on purpose: rows leave the spool,
+        # but repeats of the previous prediction are run-length encoded away
+        # before anything is written. The gap between them IS the feature.
+        if isinstance(drained, int) and isinstance(written, int) and drained > 0:
+            saved = (1 - written / drained) * 100
+            detail = f"{drained:,} drained → {written:,} written ({saved:.0f}% repeats dropped)"
+        elif isinstance(drained, int):
+            detail = f"{drained:,} rows"
+        else:
+            detail = ""
+        row("last flush", ago(lf, now), detail)
+    else:
+        row("last flush", dim("none yet"), "first flush lands on the next boundary")
+
+    err_ts = parse_ts(st.get("last_error_utc"))
+    err = st.get("last_error")
+    if err and err_ts and (now - err_ts).total_seconds() < 3600:
+        row("errors", red(f"{ago(err_ts, now)}"), str(err).split("\n")[0][:60])
+    elif err and err_ts:
+        row("errors", green("none recent"), f"last was {ago(err_ts, now)}")
+    else:
+        row("errors", green("none"), "")
+
+    print()
+    return state
+
+
+# ── compaction ────────────────────────────────────────────────────────────────
+
+def compaction_row(label: str, name: str, now: datetime) -> str:
+    """One feed's nightly staging → curated run.
+
+    Compaction is the failure nobody notices: polls and flushes keep looking
+    perfectly healthy while staging quietly piles up and the curated dataset
+    goes stale. So it gets judged on its own age -- a daily job that has not
+    run in over 26h is broken, whatever the rest of the report says.
+    """
+    st = read_status(name)
+    lc = parse_ts(st.get("last_compaction_utc"))
+    if not lc:
+        row(label, dim("never run"), "no compaction recorded for this feed")
+        return "unknown"
+
+    errors = st.get("last_compaction_errors")
+    age = (now - lc).total_seconds()
+    if age > 26 * 3600:
+        state, when = "bad", red(ago(lc, now))
+    elif errors:
+        state, when = "warn", yellow(ago(lc, now))
+    else:
+        state, when = "ok", ago(lc, now)
+
+    day = st.get("last_compaction_day") or "?"
+    files = st.get("last_compaction_files")
+    dupes = st.get("last_compaction_dupes_removed")
+    rows = pct_change(st.get("last_compaction_rows_in"), st.get("last_compaction_rows_out"))
+
+    detail = [f"day {day}"]
+    if isinstance(files, int):
+        detail.append(f"{files} file{'s' if files != 1 else ''}")
+    if rows:
+        detail.append(rows)
+    if isinstance(dupes, int) and dupes:
+        detail.append(f"{dupes:,} dupes removed")
+    if errors:
+        detail.append(red(f"{errors} error(s)"))
+
+    row(label, when, " · ".join(detail))
+    return state
+
+
+def compaction_panel(now: datetime) -> str:
+    print(f"  {bold('COMPACTION')}  {dim('staging → curated, nightly')}")
+
+    states = [compaction_row("mbta", "mbta", now),
+              compaction_row("bucr", "navsat", now)]
+
+    # Staging backlog is the corroborating signal: a stale last_compaction_utc
+    # says the job did not run, a growing staging count says it is not keeping
+    # up. Reading them together is what tells the two apart.
+    counts = {}
+    for label, prefix in (("mbta", "feeds/mbta/vehicle_positions_staging/"),
+                          ("bucr", "feeds/bucr/navsat_staging/"),
+                          ("mbta tu", "feeds/mbta/trip_updates_staging/")):
+        o = run(["mc", "ls", "--recursive", f"{ALIAS}/{BUCKET}/{prefix}"])
+        counts[label] = len(o.strip().splitlines()) if o and o.strip() else 0
+
+    # The TU archive is staging-only by design -- nothing compacts it, so its
+    # objects are expected to accumulate and must not be read as a backlog.
+    backlog = counts["mbta"] + counts["bucr"]
+    if backlog > 60:
+        note = red("HIGH — compaction is not keeping up")
+    elif backlog == 0:
+        note = dim("all compacted")
+    else:
+        note = dim("awaiting tonight's run")
+    row("staging", f"mbta {counts['mbta']} · bucr {counts['bucr']}", note)
+    if counts["mbta tu"]:
+        row("tu archive", f"{counts['mbta tu']} objects",
+            dim("staging is the final layout here — never compacted"))
+
+    nr = next_daily(now, COMPACT_HOUR, COMPACT_MINUTE)
+    row("next run", f"{nr:%H:%M} UTC", until(nr, now).replace("in ", "in "))
+    print()
+    return "bad" if "bad" in states else "ok"
+
+
 # ── storage ───────────────────────────────────────────────────────────────────
 
 def storage_panel(now: datetime) -> None:
@@ -264,22 +457,6 @@ def storage_panel(now: datetime) -> None:
         runway = red(f"~{runway_days:.0f}d — WILL RUN OUT before 90 days")
     row("objects", f"{objects:,} total" if objects else "?", runway)
 
-    counts = {}
-    for label, prefix in (("mbta", "feeds/mbta/vehicle_positions_staging/"),
-                          ("bucr", "feeds/bucr/navsat_staging/")):
-        o = run(["mc", "ls", "--recursive", f"{ALIAS}/{BUCKET}/{prefix}"])
-        counts[label] = len(o.strip().splitlines()) if o and o.strip() else 0
-
-    total_staging = counts["mbta"] + counts["bucr"]
-    # Staging should drain nightly. A build-up means compaction is not running,
-    # which is silent otherwise -- polls and flushes keep looking healthy.
-    if total_staging > 60:
-        note = red("HIGH — nightly compaction may not be running")
-    elif total_staging == 0:
-        note = dim("all compacted")
-    else:
-        note = dim("awaiting nightly compaction (03:15 UTC)")
-    row("staging", f"mbta {counts['mbta']} · bucr {counts['bucr']}", note)
     print()
 
 
@@ -342,11 +519,13 @@ def main() -> int:
                    extra_lines=[("window", "06:00–23:00 Costa Rica",
                                  "open" if read_status("navsat").get("in_window") else "CLOSED — not polling")]),
     ]
+    states.append(tu_panel(now))
+    states.append(compaction_panel(now))
     storage_panel(now)
     host_panel()
 
     if "bad" in states:
-        print(f"  {red('One or more collectors need attention.')}")
+        print(f"  {red('One or more checks need attention.')}")
         print(f"  {dim('logs: docker logs --tail 50 gtfs-rt-pipeline-celery-worker-1')}")
         print()
         return 1
