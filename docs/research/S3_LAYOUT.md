@@ -1,6 +1,8 @@
-# S3 layout — MBTA VehiclePositions (Hive-partitioned Parquet)
+# S3 layout — collected GTFS-RT (Hive-partitioned Parquet)
 
-Storage contract for collected GTFS-RT VehiclePositions. Read/written by
+Storage contract for everything the collector persists: MBTA
+VehiclePositions (the bulk of this document), weekly static GTFS snapshots,
+and the opt-in TripUpdates replay archive. Read/written by
 `rt_pipeline.storage` (DuckDB-backed). Same code path serves a local dir
 (tests) and the SIMOVI MinIO server (`s3://`).
 
@@ -114,6 +116,62 @@ body) raises rather than getting uploaded under a dated key that later steps
 would trust. Sources are per-agency env vars (`MBTA_GTFS_STATIC_URL`,
 `BUCR_GTFS_STATIC_URL`) — bUCR's is SIMOVI-served, not agency-served, and
 expected to move.
+
+## TripUpdates replay archive (roadmap 0.5)
+
+A **research** archive, not a serving input: it exists so `etaval` replay runs
+can score a served model against the agency's own published predictions over a
+chosen historical window, instead of against whatever live window happened to
+be running. Off by default (`TU_ARCHIVE_ENABLED=false`) — deploying the code
+does not start filling the server.
+
+```
+s3://transit/feeds/mbta/trip_updates_staging/
+    year=<YYYY>/month=<M>/day=<D>/<uuid>_<i>.parquet
+```
+
+Staging is the final layout here; there is no curated re-partitioning step like
+`compact_vp_day`, because replay reads a date range once and nothing reads
+these by route in production.
+
+**Write path** is the VP path with a second DuckDB file: `poll_trip_updates_s3`
+(every `TU_POLL_SECONDS`, default 30) appends to `TU_SPOOL_PATH`, and
+`flush_tu_spool_s3` (`TU_SPOOL_FLUSH_MINUTE` past the hour, offset from the VP
+flush so the two never contend for the single-writer `fetch` worker) drains
+everything older than the current UTC hour with one
+`COPY ... PARTITION_BY (year, month, day)`. **A poll never writes to S3** — the
+same rule, for the same incident, as VehiclePositions.
+
+**Row is one StopTimeUpdate.** Natural key
+`(feed_name, trip_id, start_date, stop_id, stop_sequence, ts)`, where `ts` is
+the TripUpdate's own `timestamp` (header timestamp as fallback) — the instant
+the prediction was in effect, and the replay clock. `arrival_uncertainty` /
+`departure_uncertainty` are kept deliberately: MBTA marks
+schedule-plus-historical predictions with a large uncertainty and realtime ones
+with none, so a baseline built from this archive can be stratified rather than
+silently blending the two. `revenue` is read only if the installed
+`gtfs-realtime-bindings` expose it (MBTA publishes it as a proto extension the
+upstream bindings do not declare) and is NULL otherwise.
+
+**Storage levers**, in order of size:
+
+| lever | setting | default | effect |
+|---|---|---|---|
+| route scope | `TU_ROUTES` | `222,15,37` | the corpus routes are ~1/80 of the feed; **empty means every route** |
+| poll beat | `TU_POLL_SECONDS` | `30` | VP's 5 s would be 6× the rows for a feed that changes far more slowly |
+| horizon cap | `TU_MAX_HORIZON_SECONDS` | `3600` | drops the long tail dominated by schedule fallbacks (~5% of rows) |
+| run-length encoding | always on | — | a row identical to its immediate predecessor in the same (trip, stop) series is not written |
+
+Run-length encoding compares against the **immediate predecessor**, not against
+every value seen: deduping on value would drop the second `A` of an `A → B → A`
+sequence and make the replay reconstruct the wrong middle. The first row of
+each hourly window is always kept, so "the most recent row with `ts <= T`" —
+the only question a replay asks — stays correct across file boundaries.
+
+Measured end-to-end against the live feed (2026-09-04, ~02:20 EDT, 5 unscoped
+polls): 411 kB of protobuf → 9,224 spool rows → 2,160 written (77% compacted
+away) → 24.0 kB Parquet+zstd, 11.1 B/row. Night service is unusually stable;
+re-measure before quoting a compaction rate for daytime.
 
 ## Credentials (never hardcode)
 

@@ -91,6 +91,27 @@ S3_VP_STAGING_BASE_URI = env(
 )
 SPOOL_FLUSH_MINUTE = env.int("SPOOL_FLUSH_MINUTE", default=2)
 
+# --- TripUpdates replay archive (roadmap 0.5) ---
+# Off by default: this is a research archive for `etaval` replay runs, not a
+# serving input, and turning it on starts paying storage on the S3 server.
+# The route scope is the cost lever -- the whole MBTA TU feed is ~20 GB over a
+# 90-day window, the three corpus routes ~250 MB. Empty TU_ROUTES means EVERY
+# route; set it deliberately.
+TU_ARCHIVE_ENABLED = env.bool("TU_ARCHIVE_ENABLED", default=False)
+TU_ROUTES = env("TU_ROUTES", default="222,15,37")
+TU_POLL_SECONDS = env.int("TU_POLL_SECONDS", default=30)
+# Predictions further out than this are dominated by schedule-plus-historical
+# fallbacks rather than realtime; ~5% of rows on the measured feed.
+TU_MAX_HORIZON_SECONDS = env.int("TU_MAX_HORIZON_SECONDS", default=3600)
+TU_SPOOL_PATH = env("TU_SPOOL_PATH", default="/data/spool/tu_spool.duckdb")
+S3_TU_STAGING_BASE_URI = env(
+    "S3_TU_STAGING_BASE_URI",
+    default="s3://transit/feeds/mbta/trip_updates_staging",
+)
+# Offset from the VP flush so the two hourly drains never contend for the
+# single-writer fetch worker at the same minute.
+TU_SPOOL_FLUSH_MINUTE = env.int("TU_SPOOL_FLUSH_MINUTE", default=7)
+
 # --- Daily staging -> curated compaction ---
 COMPACT_HOUR_UTC = env.int("COMPACT_HOUR_UTC", default=3)
 COMPACT_MINUTE = env.int("COMPACT_MINUTE", default=15)

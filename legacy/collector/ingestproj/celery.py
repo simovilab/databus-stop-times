@@ -28,6 +28,11 @@ app.conf.task_routes = {
     # flush is a couple of S3 PUTs; the polls it delays are dropped by
     # `expires` rather than queued.
     "rt_pipeline.tasks.flush_vp_spool_s3": {"queue": "fetch"},
+    # The TripUpdates replay archive uses a second DuckDB file but the same
+    # worker, for the same reasons: single-writer, and only this worker mounts
+    # the spool volume.
+    "rt_pipeline.tasks.poll_trip_updates_s3": {"queue": "fetch"},
+    "rt_pipeline.tasks.flush_tu_spool_s3": {"queue": "fetch"},
     # Compaction only ever touches S3, never the spool, so it is safe (and
     # preferable) on its own worker — it runs for minutes.
     "rt_pipeline.tasks.compact_vp_day": {"queue": "maint"},

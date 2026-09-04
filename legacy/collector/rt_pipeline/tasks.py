@@ -51,6 +51,10 @@ def _get_spool(*, must_exist: bool = False) -> Spool:
 
 
 _STATUS_NAME = "mbta"
+# The TU archive gets its own status file: it polls on a different beat
+# and can be disabled independently, so folding it into "mbta" would make
+# a stalled TU poller invisible behind a healthy VP one.
+_TU_STATUS_NAME = "mbta_tu"
 
 
 def _status_dir() -> str | None:
@@ -376,6 +380,154 @@ def parse_and_upsert_trip_updates(self, raw_id: str):
     return {"parsed_rows": len(rows)}
 
 
+# ---- TripUpdates -> spool -> S3 (replay archive) ----
+
+# The TU archive exists so `etaval` replay runs can score a served model
+# against the agency's own published predictions over a chosen historical
+# window, instead of against whatever live window someone happened to catch.
+# It is NOT a production serving input, so it is scoped hard: only the routes
+# in TU_ROUTES, only predictions within TU_MAX_HORIZON_SECONDS, on a 30s beat
+# rather than VP's 5s, run-length encoded at flush. Measured on the live feed,
+# the whole feed is ~150-250 MB/day (~20 GB over the 90-day replication
+# window); the corpus routes alone are ~2-3 MB/day (~250 MB). Widening
+# TU_ROUTES is what makes this expensive -- nothing else here does.
+
+_tu_spool: "TripUpdateSpool | None" = None
+
+
+def _get_tu_spool(*, must_exist: bool = False) -> "TripUpdateSpool":
+    """Process-wide TU spool handle. Separate DuckDB file from the VP spool.
+
+    Same single-writer rule as the VP spool: this must only ever be opened on
+    the ``fetch`` worker, which runs at --concurrency=1 and is the only one
+    that mounts the spool volume.
+    """
+    global _tu_spool
+    from .storage.tu_spool import TripUpdateSpool
+
+    if _tu_spool is None:
+        _tu_spool = TripUpdateSpool(
+            getattr(settings, "TU_SPOOL_PATH", None), must_exist=must_exist
+        )
+    return _tu_spool
+
+
+def _tu_routes() -> "frozenset[str] | None":
+    from .tu_records import parse_routes
+
+    return parse_routes(getattr(settings, "TU_ROUTES", None))
+
+
+@shared_task(bind=True, queue="fetch",
+             autoretry_for=(requests.RequestException,), retry_backoff=True,
+             retry_kwargs={"max_retries": 3})
+def poll_trip_updates_s3(self):
+    """Fetch TripUpdates, filter to the archived routes, append to the TU spool.
+
+    Mirrors ``poll_vehicle_positions_s3`` exactly: no Postgres (the legacy
+    ``fetch_trip_updates`` / ``parse_and_upsert_trip_updates`` path below is
+    deprecated and unscheduled) and no S3 -- S3 is only touched by the hourly
+    ``flush_tu_spool_s3``. Writing S3 per poll is the fan-out incident this
+    whole spool design exists to avoid; do not "optimize" it back.
+
+    Retries are capped lower than VP's: a missed TU poll costs one 30s sample
+    of a slowly-changing prediction, not a gap in a vehicle's track.
+    """
+    fetch_ok = False
+    try:
+        from .tu_records import feed_records
+
+        url = settings.GTFSRT_TRIP_UPDATES_URL
+        r = requests.get(
+            url, timeout=(settings.HTTP_CONNECT_TIMEOUT, settings.HTTP_READ_TIMEOUT)
+        )
+        r.raise_for_status()
+        fetch_ok = True
+        ingested = _now()
+
+        if not r.content:
+            status.update(
+                _TU_STATUS_NAME, _status_dir(),
+                last_poll_utc=ingested.isoformat(),
+                fetch_ok=True, fetch_fail=False,
+                rows_fetched=0, rows_new=0,
+            )
+            return {"skipped": True}
+
+        feed = gtfs_realtime_pb2.FeedMessage()
+        feed.ParseFromString(r.content)
+        records = feed_records(
+            feed,
+            feed_name=settings.FEED_NAME,
+            ingested_at=ingested,
+            routes=_tu_routes(),
+            max_horizon_seconds=settings.TU_MAX_HORIZON_SECONDS,
+        )
+        df = pd.DataFrame.from_records(records) if records else pd.DataFrame()
+        sp = _get_tu_spool()
+        spooled = sp.append(df)
+        spool_stats = sp.stats()
+
+        status.update(
+            _TU_STATUS_NAME, _status_dir(),
+            last_poll_utc=ingested.isoformat(),
+            fetch_ok=True, fetch_fail=False,
+            rows_fetched=len(records), rows_new=spooled,
+            spool_rows=spool_stats["rows"], spool_bytes=spool_stats["bytes"],
+        )
+        return {"fetched": len(records), "spooled": spooled}
+    except Exception as exc:
+        status.update(
+            _TU_STATUS_NAME, _status_dir(), event=True,
+            fetch_ok=fetch_ok, fetch_fail=not fetch_ok,
+            last_error=str(exc), last_error_utc=_now().isoformat(),
+        )
+        raise
+
+
+# queue="fetch" for the same two reasons as flush_vp_spool_s3: DuckDB permits
+# one read-write process per file, and only the poll worker mounts the spool
+# volume. A `queue=` on the decorator OVERRIDES task_routes, so it must be set
+# here, not only in ingestproj/celery.py.
+@shared_task(bind=True, queue="fetch")
+def flush_tu_spool_s3(self) -> dict[str, Any]:
+    """Hourly: drain TU rows older than the current UTC hour to S3 staging.
+
+    ``written`` in the result is smaller than ``flushed`` by however many rows
+    were repeats of the prediction before them -- see
+    ``storage.tu_spool.compact_repeated_predictions``. There is no curated
+    compaction step for TU (unlike ``compact_vp_day``): replay reads a date
+    range once, so the staging layout is the final layout.
+    """
+    from .storage.tu_spool import flush_tu_to_staging
+
+    now = _now()
+    cutoff = now.replace(minute=0, second=0, microsecond=0)
+    sp = _get_tu_spool(must_exist=True)
+    base_uri = settings.S3_TU_STAGING_BASE_URI
+
+    try:
+        result = flush_tu_to_staging(sp, base_uri, cutoff)
+    except Exception as exc:
+        logger.exception("flush_tu_spool_s3: write/verify failed; spool left intact")
+        status.update(
+            _TU_STATUS_NAME, _status_dir(), event=True,
+            last_error=str(exc), last_error_utc=_now().isoformat(),
+        )
+        return {"flushed": 0, "error": str(exc)}
+
+    spool_stats = sp.stats()
+    status.update(
+        _TU_STATUS_NAME, _status_dir(), event=True,
+        last_flush_utc=now.isoformat(),
+        last_flush_key=",".join(result["days"]),
+        last_flush_rows=result["flushed"],
+        last_flush_rows_written=result["written"],
+        spool_rows=spool_stats["rows"], spool_bytes=spool_stats["bytes"],
+    )
+    return result
+
+
 # ---- Spool -> S3 staging flush ----
 
 # queue="fetch" is load-bearing and must match the routing note in
@@ -529,10 +681,11 @@ def snapshot_static_gtfs(self) -> dict[str, Any]:
 from celery.schedules import crontab, schedule
 from ingestproj.celery import app as celery_app
 
-# VehiclePositions polling, the hourly spool->staging flush, and the daily
-# staging->curated compaction are the only scheduled tasks. The Postgres VP
-# fetch/parse and the TripUpdate tasks above remain defined but are
-# intentionally NOT scheduled. Re-add entries here to revive.
+# Scheduled: VehiclePositions polling + its hourly flush + the daily
+# staging->curated compaction, the TripUpdates replay archive (poll + hourly
+# flush), and the weekly static GTFS snapshot. The legacy Postgres
+# fetch/parse tasks for both feeds remain defined but are intentionally NOT
+# scheduled. Re-add entries here to revive.
 celery_app.conf.beat_schedule = {
     "poll-vehicle-positions-s3": {
         "task": "rt_pipeline.tasks.poll_vehicle_positions_s3",
@@ -560,3 +713,22 @@ celery_app.conf.beat_schedule = {
         ),
     },
 }
+
+# The TripUpdates replay archive is opt-in (TU_ARCHIVE_ENABLED). It is a
+# research archive, not a serving input: leaving it off by default means
+# deploying this code cannot start silently filling the S3 server.
+if settings.TU_ARCHIVE_ENABLED:
+    celery_app.conf.beat_schedule.update({
+        "poll-trip-updates-s3": {
+            "task": "rt_pipeline.tasks.poll_trip_updates_s3",
+            "schedule": schedule(run_every=settings.TU_POLL_SECONDS),
+            # Same drop-rather-than-queue rule as the VP poll: a missed slot
+            # is discarded, so a slow S3 or a restart can never build a
+            # backlog.
+            "options": {"expires": settings.TU_POLL_SECONDS},
+        },
+        "flush-tu-spool": {
+            "task": "rt_pipeline.tasks.flush_tu_spool_s3",
+            "schedule": crontab(minute=settings.TU_SPOOL_FLUSH_MINUTE),
+        },
+    })
