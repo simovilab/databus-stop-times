@@ -878,10 +878,17 @@
       why bias &asymp; &minus;MAE.</p>
     <p><span class="pill good">FIXED</span> (a) only &mdash; <code>eta_service/estimator.py</code>, with a regression
       test, plus a fix to a pre-existing test-isolation bug where <code>test_shape_hook.py</code> reset only one of
-      the two registry singletons. A 30-minute post-fix run shows the short-horizon sign flip: <code>xgboost</code>
-      went from <b>+42.9% worse</b> than the agency feed to <b>&minus;38.4% better</b> (p=1.5e-18), while &gt;10 min
-      remains ~4&ndash;5&times; worse as expected. <b>Caveat:</b> the two runs are different 30&ndash;45 minute
-      windows on different traffic &mdash; this is directional, not a controlled A/B.</p>
+      the two registry singletons. A 30-minute post-fix run shows a short-horizon sign flip &mdash;
+      <code>xgboost</code> goes from <b>+42.9% worse</b> than the agency feed to <b>&minus;38.4% better</b>
+      (p=1.5e-18) &mdash; but <b>that headline overstates the fix, and the decomposition matters more than the
+      flip</b>. Of the two terms in the ratio, ours moved a little and the baseline moved a lot:
+      <code>xgboost</code> MAE improved <b>65.7 &rarr; 58.2 s (&minus;11%)</b>, while <code>gtfsrt</code> in the
+      second window <i>degraded</i> <b>40.5 &rarr; 88.0 s (+117%)</b>. The agency feed's short-horizon MAE is also
+      extremely noisy &mdash; 95% CI [15.2, 71.3] before and [34.6, 160.4] after, heavily overlapping &mdash; so most
+      of the swing is baseline variance, not model improvement. The honest claim for the <code>stops_ahead</code>
+      fix is <b>~11% short-horizon MAE</b>, not a sign flip. &gt;10 min remains ~4&ndash;5&times; worse as expected.
+      <b>Caveat:</b> the two runs are unpaired 30&ndash;45 minute windows at different times of day (17:00&ndash;20:45
+      vs 20:51&ndash;21:24 EDT) on different route mixes &mdash; directional only, not a controlled A/B.</p>
     <p><span class="pill warn">OPEN</span> (b) is <b>not</b> fixed and is the important remaining item. The shape hook
       already exists in <code>estimator.py</code> and databus populates it in production; nothing populates it for
       any other caller. Production may well be fine while every standalone caller is silently degraded &mdash; that
