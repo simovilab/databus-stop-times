@@ -15,11 +15,12 @@ file without touching the others.
 from __future__ import annotations
 
 import typer
-
 from stoptimes.cli.commands import data, diagnose, models, record, serve, train, val
 
-app = typer.Typer(help="stoptimes — train, serve and validate transit arrival-time models on GTFS data.",
-                  no_args_is_help=True)
+app = typer.Typer(
+    help="stoptimes — train, serve and validate transit arrival-time models on GTFS data.",
+    no_args_is_help=True,
+)
 
 app.add_typer(data.app, name="data")
 app.add_typer(record.app, name="record")

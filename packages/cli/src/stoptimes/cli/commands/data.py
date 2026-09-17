@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import typer
-
 from stoptimes.cli._util import planned
 
 app = typer.Typer(help="Load and inspect GTFS static + realtime data.", no_args_is_help=True)

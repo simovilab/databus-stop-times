@@ -1,18 +1,18 @@
 import os
 import subprocess
-import sys
 from pathlib import Path
 
-from typer.testing import CliRunner
-
 from stoptimes.cli.main import app
+from typer.testing import CliRunner
 
 runner = CliRunner()
 
 _REPO_ROOT = Path(__file__).resolve().parents[3]
 
 
-def _uv_run(*args: str, cwd: Path | None = None, env: dict[str, str] | None = None) -> subprocess.CompletedProcess:
+def _uv_run(
+    *args: str, cwd: Path | None = None, env: dict[str, str] | None = None
+) -> subprocess.CompletedProcess:
     full_env = dict(os.environ)
     if env:
         full_env.update(env)

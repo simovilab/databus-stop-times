@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import typer
-
 from stoptimes.cli._util import PASSTHROUGH, planned, require, run_module
 
 app = typer.Typer(help="Record live GTFS-RT feeds into a compacted archive.", no_args_is_help=True)

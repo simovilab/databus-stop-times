@@ -15,7 +15,6 @@ import importlib
 import sys
 
 import typer
-
 from stoptimes.cli._util import PASSTHROUGH, require
 
 VAL_MISSING_HELP = "Validate predictions (not installed)."

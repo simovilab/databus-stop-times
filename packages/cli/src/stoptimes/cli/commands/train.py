@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import typer
-
 from stoptimes.cli._util import PASSTHROUGH, planned, require, run_module
 
 app = typer.Typer(help="Build datasets and train models.", no_args_is_help=True)
