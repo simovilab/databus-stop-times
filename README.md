@@ -2,4 +2,39 @@
 
 # Stop Times
 
-Machine learning service for predicting vehicle arrival times using historical GTFS data, real-time vehicle positions, and traffic patterns. Implements time series forecasting algorithms (LSTM, ARIMA) with continuous model retraining and heuristic search algorithms.
+**stoptimes** is a toolkit for arrival-time prediction on GTFS data: record GTFS-Realtime
+feeds, train models on them, serve GTFS-RT TripUpdates, and validate any prediction
+source against what actually happened.
+
+> **Status: under construction** (Phase 0 of [docs/PLAN.md](docs/PLAN.md)). The code
+> from SIMOVI's `gtfs-eta` and `etaval` repositories has been migrated here with its
+> full history; see [docs/MIGRATION_MAP.md](docs/MIGRATION_MAP.md).
+
+## Layout
+
+| Package | What it does |
+|---|---|
+| `packages/core` | GTFS static + realtime readers, domain models, map-matching, features, contracts |
+| `packages/models` | Model families and the model registry |
+| `packages/train` | Datasets, feature engineering, training, offline evaluation |
+| `packages/serve` | Inference and TripUpdates publishing |
+| `packages/record` | Archiving live GTFS-RT feeds |
+| `packages/val` | Validation (formerly etaval): API, TUI, scoring and statistics |
+| `packages/cli` | The `stoptimes` command |
+| `web/` | Validation web console |
+
+## Development
+
+```bash
+uv sync --group dev          # add --group dl for the LSTM (torch)
+uv run stoptimes --help
+uv run --no-sync python -m pytest packages/<pkg> -q
+```
+
+Python 3.12 is pinned for development (`.python-version`): torch 2.2 has no newer
+wheels, and Python 3.14 skips iCloud-hidden `.pth` files that editable workspace
+installs depend on.
+
+## License
+
+MIT
