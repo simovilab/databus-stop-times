@@ -1,6 +1,29 @@
 from datetime import datetime, timedelta, timezone
 import requests
-from django.core.cache import cache
+
+try:
+    from django.core.cache import cache
+except ImportError:  # pragma: no cover - Django is optional outside the legacy app
+
+    class _InMemoryCache:
+        """Minimal stand-in for Django's cache API (``get``/``set`` only).
+
+        Used when Django isn't installed, so this module stays importable
+        and testable standalone. No persistence across process restarts;
+        the legacy Django-backed pipeline still gets the real cache when
+        it's present, since the import above succeeds in that environment.
+        """
+
+        def __init__(self) -> None:
+            self._store: dict = {}
+
+        def get(self, key, default=None):
+            return self._store.get(key, default)
+
+        def set(self, key, value, timeout=None) -> None:
+            self._store[key] = value
+
+    cache = _InMemoryCache()
 
 OPEN_METEO_URL = "https://api.open-meteo.com/v1/forecast"
 

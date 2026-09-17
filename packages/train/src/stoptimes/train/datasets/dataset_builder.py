@@ -7,14 +7,34 @@ import pandas as pd
 from math import radians, degrees, cos, sin, asin, atan2, sqrt
 from pathlib import Path
 
-from django.db import connection as django_connection
-from sch_pipeline.models import StopTime, Stop, Trip
 from stoptimes.core.config import AGENCY_TEMPORAL_DEFAULTS, DEFAULT_AGENCY
 from stoptimes.train.datasets.rt_source import fetch_vehicle_positions
 from stoptimes.core.features.temporal import extract_temporal_features
 from stoptimes.core.spatial.geo import calculate_distance_features_with_shape, load_shape_for_trip
 from stoptimes.train.datasets.weather import fetch_weather
 from stoptimes.train.datasets import progress as ui
+
+
+def _django_orm():
+    """Import Django + the ``sch_pipeline`` schedule models lazily.
+
+    ``build_vp_training_dataset`` is a legacy path that reads trip/stop/
+    stop-time metadata straight from the Django ORM of the (not-yet-migrated)
+    schedule pipeline app. Neither Django nor ``sch_pipeline`` is a dependency
+    of ``stoptimes-train``, so this import happens on first use rather than
+    at module import time — that keeps ``import stoptimes.train.datasets``
+    (and the pure-python helpers below) working without either installed.
+    """
+    try:
+        from django.db import connection as django_connection
+        from sch_pipeline.models import StopTime, Stop, Trip
+    except ImportError as exc:  # pragma: no cover - exercised via ImportError message
+        raise ImportError(
+            "build_vp_training_dataset() needs Django and the sch_pipeline "
+            "schedule app (legacy, not part of the stoptimes workspace). "
+            "Install both to use this function."
+        ) from exc
+    return django_connection, StopTime, Stop, Trip
 
 
 def haversine_distance(lat1, lon1, lat2, lon2):
@@ -262,6 +282,8 @@ def build_vp_training_dataset(
         _banner_lines.append(f"window   {start_date.date()} → {end_date.date()}")
     _banner_lines.append(f"shapes   {'enabled' if use_shapes else 'disabled'}")
     ui.banner("ETA dataset builder · VehiclePositions", _banner_lines)
+
+    django_connection, StopTime, Stop, Trip = _django_orm()
 
     # Setup database connection for shape loading
     if use_shapes and pg_conn is None:
@@ -642,7 +664,7 @@ def build_vp_training_dataset(
     # Weather needs rethinking (source, caching, leakage) and is out of scope.
     # Re-add temperature_c / precipitation_mm / wind_speed_kmh here when ready,
     # then register them in stoptimes.models.common.data.ETADataset.FEATURE_GROUPS.
-    # (See feature_engineering/weather.py.)
+    # (See stoptimes.train.datasets.weather.)
 
     # ============================================================
     # STEP 9: Final column selection
