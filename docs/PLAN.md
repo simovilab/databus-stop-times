@@ -1,6 +1,6 @@
 # stoptimes — implementation plan
 
-Status: **Phase 1 in progress (C1, C2, C3)** · Phase 0 complete (not pushed) · branch `feat/stoptimes-scaffold` · last updated 2026-09-16
+Status: **Phase 1 merged — awaiting sign-off on docs/CONTRACTS.md** · nothing pushed · branch `feat/stoptimes-scaffold` · last updated 2026-09-16
 
 This is the working plan for turning SIMOVI's ETA research code (`gtfs-eta`) and its
 validation tool (`etaval`) into **stoptimes**: a general toolkit that lets anyone with
@@ -217,6 +217,14 @@ Narrow on purpose. Output is code (pydantic models / Protocols + tests) and `doc
 **C3 · artifact migration** (parallel) — owns `packages/models/src/stoptimes/models/compat/**`, its tests, `models migrate` in `cli/commands/models.py`
 - `stoptimes models migrate <legacy_dir> <registry>`: `{key}.pkl` + `{key}_meta.json` → artifact layout, original meta kept in `legacy`,
   library versions recorded, idempotent, `--dry-run`; migrated artifacts load and predict identically.
+
+**Result (2026-09-17):** C1, C2, C3 merged. Suite: core 189, models 116+1s, serve 21, record 106, train 217+15s,
+val 430+1s, cli 29 — 1108 passed, 17 skipped, 0 failed. Integration fixes: `Source` gained `holiday_region`/`serving`;
+`calendar`/`calendar_dates` optional static tables; `STOPTIMES_MODEL_REGISTRY_DIR` honored by registry + val predictor;
+holiday calendar generic (`COUNTRY[_SUBDIV]`, None = no holidays).
+Carried into Phase 2: val API `/api/sources` tests assume cwd = repo root (T6); `_LEGACY_BUILTIN_PROFILES` in core config
+keeps production bUCR pins without a profile file, delete in G1; migrated `params` include some non-hyperparameter
+fields (T3 may curate per family); `models/common/data.py` test-fixture fallback (T1). Notes: `docs/notes/p1-{c1,c2,c3}.md`.
 
 **Gate:** user reviews `docs/CONTRACTS.md`. After sign-off, contract changes need an orchestrator-approved note.
 

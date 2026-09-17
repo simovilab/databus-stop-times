@@ -29,10 +29,12 @@ Source
   id: str                 # "mbta" — used as a key everywhere (datasets, artifacts, archive paths)
   name: str
   timezone: str = "UTC"
+  holiday_region: str | None   # "CR", "US_MA" (COUNTRY[_SUBDIVISION]); None = no holidays
   gtfs_static_url: str    # URL or local path to the GTFS .zip
   realtime_feeds: list[RealtimeFeed]
   archive: Archive | None
   detector: GroundTruthDetector
+  serving: ServingDefaults     # primary_model / fallback_model registry keys serve uses by default
   tags: list[str]
 
 RealtimeFeed
@@ -57,17 +59,17 @@ GroundTruthDetector
 `[a-z0-9][a-z0-9_-]*`; extra fields are rejected (`extra="forbid"`) so a typo
 in a YAML fails loudly, not silently.
 
-**Back-compat with today's val source YAMLs.** `packages/val/.../config/sources/{mbta,bucr}.yaml`
-are flat (`name`, `gtfs_static_url`, `vehicle_positions_url`,
+**Agency files today.** `examples/agencies/{mbta,bucr}.yaml` (moved from val by C2) are
+flat (`name`, `gtfs_static_url`, `vehicle_positions_url`,
 `trip_updates_url`, `poll_interval_s`, `headers`, `arrival_radius_m`,
 `dwell_s`, `shape_threshold_m` — today parsed into
 `stoptimes.core.domain.models.SourceConfig`). Rather than widen `Source`
 with legacy flat fields, `contracts.adapters.source_from_val_yaml(dict) ->
-Source` adapts it. The YAML files themselves are untouched; `Source` stays
-the one shape every new caller writes against.
+Source` adapts it. The same files carry the agency profile (`timezone`,
+`holiday_region`, `serving`) read by `stoptimes.core.config`; the adapter maps those too.
+Looked up via `--sources-dir` → `STOPTIMES_SOURCES` → `./examples/agencies`.
 
-**Example** (`examples/agencies/mbta.yaml`, once C2 moves the val YAMLs
-there — same content works loaded through `source_from_val_yaml`):
+**Example** (`examples/agencies/mbta.yaml`, loaded through `source_from_val_yaml`):
 
 ```yaml
 name: mbta
@@ -113,7 +115,7 @@ StaticFeed(source_id: str, tables: list[str])
   .missing_required() -> list[str]
 
 REQUIRED_STATIC_TABLES = ("stops", "trips", "stop_times")
-OPTIONAL_STATIC_TABLES = ("shapes", "routes")
+OPTIONAL_STATIC_TABLES = ("shapes", "routes", "calendar", "calendar_dates")
 STATIC_TABLE_SCHEMAS: dict[str, TableSchema]   # per-table required columns
 ```
 
@@ -402,43 +404,28 @@ upstream of all of them (docs/PLAN.md rule 1). Row-shaped adapters
 
 ## Open questions for sign-off
 
-These need a human decision before Phase 2 tracks lean on them further:
+Each has a recommendation; approving this document means accepting the recommendations
+unless you say otherwise. Resolved at integration: the static table set now includes
+`calendar`/`calendar_dates`; agency files live in `examples/agencies/` and carry the profile.
 
-1. **`uncertainty_s` semantics.** The GTFS-RT spec doesn't pin down what
-   statistic "uncertainty" is. Should stoptimes standardize on one (e.g.
-   "expected absolute error, seconds, from held-out validation") across all
-   families, or leave it per-model-card as this draft does? Affects how T6
-   scores it and what T3's model cards must report.
+1. **What `uncertainty_s` means.** GTFS-RT leaves the statistic open.
+   *Recommendation:* standardize it — the model's held-out mean absolute error, in seconds,
+   for the prediction's horizon bucket (taken from `scores_by_horizon`). Val can then check it
+   is calibrated, and every family reports the same thing.
 
-2. **One `Experiment` = one model.** Confirmed above as the design; flag if
-   you'd rather `Experiment` itself express a sweep (`model: list[ModelSpec]`)
-   and push "one artifact per member" down into T3's runner instead.
+2. **One experiment = one model.** Alternative: an experiment lists several models.
+   *Recommendation:* keep one model per experiment file (clear provenance per artifact).
+   Sweeps and "compare A, B, C" become a separate `study` file in Phase 3 that expands into experiments.
 
-3. **`Observation.schedule_relationship` typing.** Left as `str` rather than
-   an enum (unlike `StopTimePrediction.schedule_relationship`, which uses
-   `StopScheduleRelationship`) because it's parsed from arbitrary upstream
-   feed text in T1/T5 before validation, and rejecting unrecognized GTFS-RT
-   values at ingest felt too strict for an archive-everything path. OK, or
-   should ingest normalize to the enum immediately and drop unknowns?
+3. **`Observation.schedule_relationship` as free text.**
+   *Recommendation:* keep the raw string in the archive (never lose upstream data), and have
+   readers expose a normalized enum column next to it.
 
-4. **`ArrivalMethod` set is fixed at three values** (`reported`,
-   `map_matched`, `interpolated`). T2's actual map-matcher may need a fourth
-   (e.g. `schedule_fallback` when no realtime signal exists at all) — flag
-   now if that's foreseeable so it's not a contract change mid-Phase-2.
+4. **Fourth arrival method.** *Recommendation:* add `schedule_fallback` now, but never use it as
+   ground truth (val and training filter it out). Cheap now, a contract change later.
 
-5. **`ModelRef.family` defaults to `"byo"`.** Is a single bucket enough for
-   scoring/reporting BYO models, or should `ModelRef` require a caller-chosen
-   family name (so two different BYO models don't collide in reports)?
+5. **BYO model family defaults to `"byo"`.** *Recommendation:* require a caller-chosen `name`
+   instead, so two custom models don't merge in reports.
 
-6. **Static feed table set.** `StaticFeed`/`STATIC_TABLE_SCHEMAS` cover
-   `stops, trips, stop_times, shapes, routes` (matching
-   `GtfsStaticLoader`'s current five). GTFS also has `calendar`,
-   `calendar_dates`, `agency`, `frequencies` — deliberately left out until a
-   Phase 2 track needs one, to keep the schema small. Confirm that's fine to
-   add incrementally rather than pre-declaring the full spec now.
-
-7. **`examples/agencies/` vs `packages/val/.../config/sources/`.** C1's
-   `Source` tests check both locations and skip gracefully if neither has
-   files; C2 owns the actual move. Confirm C2's move target matches what's
-   assumed here (`examples/agencies/<name>.yaml`, same flat shape, adapted
-   with `source_from_val_yaml`).
+6. **Timestamps are `datetime64[ns, UTC]` everywhere; local time only inside feature code.**
+   *Recommendation:* confirm (already implemented).
