@@ -3,11 +3,19 @@
 from __future__ import annotations
 
 import importlib.util
+import runpy
+import sys
 
 import typer
 
 PASSTHROUGH = {"allow_extra_args": True, "ignore_unknown_options": True, "help_option_names": []}
 PLANNED_EXIT = 2
+
+
+def run_module(module: str, prog: str, args: list[str]) -> None:
+    """Run a legacy module as ``__main__`` with the given argv (passthrough commands)."""
+    sys.argv = [prog, *args]
+    runpy.run_module(module, run_name="__main__", alter_sys=True)
 
 
 def require(module: str, extra: str) -> None:
