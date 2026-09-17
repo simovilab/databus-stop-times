@@ -1,0 +1,1142 @@
+<title>ETA Results Ledger</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@500;600;700;800&family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<style>
+  :root {
+    --ground: #f6f8f5;
+    --surface: #ffffff;
+    --surface-2: #eef2ec;
+    --ink: #15201b;
+    --ink-soft: #40514a;
+    --ink-faint: #6d7c74;
+    --line: #dde3dd;
+    --line-strong: #c7d0c8;
+    --accent: #1e9e57;      /* models / beats baseline */
+    --accent-deep: #16794288;
+    --mbta: #2a6fb0;        /* data-rich agency */
+    --bucr: #be8a2c;        /* data-poor agency */
+    --schedule: #8a9691;    /* baseline */
+    --tail: #b4574e;        /* error tail / warning */
+    --good-bg: #e3f3e8;
+    --good-fg: #14713f;
+    --warn-bg: #fbf0dc;
+    --warn-fg: #8a6410;
+    --shadow: 0 1px 2px rgba(21,32,27,.05), 0 6px 22px rgba(21,32,27,.05);
+    --radius: 14px;
+    --maxw: 1120px;
+    --mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, monospace;
+    --sans: "IBM Plex Sans", system-ui, -apple-system, sans-serif;
+    --display: "Archivo", system-ui, sans-serif;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --ground: #0f1512;
+      --surface: #161d19;
+      --surface-2: #1c2621;
+      --ink: #e8efe9;
+      --ink-soft: #a9b6ae;
+      --ink-faint: #7c8a81;
+      --line: #263029;
+      --line-strong: #33403680;
+      --accent: #38c078;
+      --mbta: #5b9bd8;
+      --bucr: #d7a84a;
+      --schedule: #8a9691;
+      --tail: #d9756b;
+      --good-bg: #17301f;
+      --good-fg: #6fd79a;
+      --warn-bg: #2e2610;
+      --warn-fg: #d9b25a;
+      --shadow: 0 1px 2px rgba(0,0,0,.3), 0 8px 26px rgba(0,0,0,.35);
+    }
+  }
+  :root[data-theme="dark"] {
+    --ground: #0f1512;
+    --surface: #161d19;
+    --surface-2: #1c2621;
+    --ink: #e8efe9;
+    --ink-soft: #a9b6ae;
+    --ink-faint: #7c8a81;
+    --line: #263029;
+    --line-strong: #33403680;
+    --accent: #38c078;
+    --mbta: #5b9bd8;
+    --bucr: #d7a84a;
+    --schedule: #8a9691;
+    --tail: #d9756b;
+    --good-bg: #17301f;
+    --good-fg: #6fd79a;
+    --warn-bg: #2e2610;
+    --warn-fg: #d9b25a;
+    --shadow: 0 1px 2px rgba(0,0,0,.3), 0 8px 26px rgba(0,0,0,.35);
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--ground);
+    color: var(--ink);
+    font-family: var(--sans);
+    line-height: 1.55;
+    -webkit-font-smoothing: antialiased;
+  }
+  .wrap { max-width: var(--maxw); margin: 0 auto; padding: 0 24px; }
+
+  /* ---- header ---- */
+  header.masthead {
+    border-bottom: 1px solid var(--line);
+    background:
+      linear-gradient(180deg, var(--surface-2), transparent 60%);
+  }
+  .masthead-inner { padding: 40px 0 30px; }
+  .eyebrow {
+    font-family: var(--mono);
+    font-size: 12px;
+    letter-spacing: .16em;
+    text-transform: uppercase;
+    color: var(--accent);
+    font-weight: 600;
+    display: flex; align-items: center; gap: 10px;
+  }
+  .eyebrow::before {
+    content: ""; width: 26px; height: 2px; background: var(--accent); display: inline-block;
+  }
+  h1 {
+    font-family: var(--display);
+    font-weight: 800;
+    font-size: clamp(30px, 5vw, 50px);
+    letter-spacing: -0.02em;
+    line-height: 1.02;
+    margin: 14px 0 10px;
+    text-wrap: balance;
+  }
+  .lede {
+    font-size: 17px;
+    color: var(--ink-soft);
+    max-width: 62ch;
+    margin: 0;
+  }
+  .meta-row {
+    display: flex; flex-wrap: wrap; gap: 10px 22px;
+    margin-top: 22px;
+    font-family: var(--mono);
+    font-size: 12.5px;
+    color: var(--ink-faint);
+  }
+  .meta-row b { color: var(--ink-soft); font-weight: 600; }
+
+  /* ---- KPI strip ---- */
+  .kpis {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 14px;
+    margin: 28px 0 8px;
+  }
+  .kpi {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    padding: 18px 18px 16px;
+    box-shadow: var(--shadow);
+    position: relative;
+    overflow: hidden;
+  }
+  .kpi::before {
+    content:""; position:absolute; left:0; top:0; bottom:0; width:4px;
+    background: var(--kc, var(--accent));
+  }
+  .kpi .num {
+    font-family: var(--display);
+    font-weight: 700;
+    font-size: 34px;
+    letter-spacing: -0.02em;
+    color: var(--kc, var(--accent));
+    font-variant-numeric: tabular-nums;
+    line-height: 1;
+  }
+  .kpi .lab { font-size: 13px; color: var(--ink-soft); margin-top: 8px; }
+  .kpi .sub { font-family: var(--mono); font-size: 11px; color: var(--ink-faint); margin-top: 4px; }
+
+  /* ---- sections ---- */
+  main { padding: 20px 0 60px; }
+  .section-head {
+    display: flex; align-items: baseline; gap: 14px;
+    margin: 46px 0 6px;
+    padding-bottom: 10px;
+    border-bottom: 1px solid var(--line);
+  }
+  .section-head .idx {
+    font-family: var(--mono); font-size: 13px; color: var(--accent); font-weight: 600;
+  }
+  .section-head h2 {
+    font-family: var(--display); font-weight: 700; font-size: 22px;
+    letter-spacing: -0.01em; margin: 0;
+  }
+  .section-head .tag {
+    margin-left: auto;
+    font-family: var(--mono); font-size: 11px; letter-spacing: .04em;
+    color: var(--ink-faint);
+    border: 1px solid var(--line-strong);
+    border-radius: 999px; padding: 3px 10px;
+    white-space: nowrap;
+  }
+  .section-note { color: var(--ink-soft); font-size: 15px; max-width: 74ch; margin: 12px 0 20px; }
+
+  .card {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow);
+    padding: 22px;
+  }
+  .card + .card { margin-top: 18px; }
+  .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }
+
+  .card h3 {
+    font-family: var(--display); font-weight: 600; font-size: 15px;
+    margin: 0 0 4px; letter-spacing: -0.005em;
+  }
+  .card .cap { font-family: var(--mono); font-size: 11px; color: var(--ink-faint); margin: 0 0 14px; letter-spacing: .03em; }
+
+  .chart-box { position: relative; width: 100%; height: 300px; }
+  .chart-box.tall { height: 340px; }
+
+  .takeaway {
+    margin-top: 16px;
+    padding: 12px 14px;
+    background: var(--surface-2);
+    border-left: 3px solid var(--accent);
+    border-radius: 0 8px 8px 0;
+    font-size: 14px; color: var(--ink-soft);
+  }
+  .takeaway b { color: var(--ink); font-weight: 600; }
+
+  .callout {
+    margin-top: 22px;
+    padding: 20px 22px;
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    border-left: 4px solid var(--warn, var(--accent));
+    border-radius: 10px;
+  }
+  .callout h3 { margin: 0 0 10px; font-size: 15px; color: var(--ink); }
+  .callout p { margin: 0 0 10px; font-size: 14px; line-height: 1.6; color: var(--ink-soft); }
+  .callout p:last-child { margin-bottom: 0; }
+  .callout b { color: var(--ink); font-weight: 600; }
+  .callout code { font-size: 12.5px; }
+
+  /* ---- table ---- */
+  .table-scroll { overflow-x: auto; margin-top: 4px; }
+  table { border-collapse: collapse; width: 100%; font-size: 13.5px; }
+  th, td { text-align: right; padding: 9px 12px; white-space: nowrap; }
+  th:first-child, td:first-child { text-align: left; }
+  thead th {
+    font-family: var(--mono); font-size: 11px; letter-spacing: .04em; text-transform: uppercase;
+    color: var(--ink-faint); font-weight: 600; border-bottom: 1px solid var(--line-strong);
+  }
+  tbody td { font-variant-numeric: tabular-nums; font-family: var(--mono); border-bottom: 1px solid var(--line); color: var(--ink-soft); }
+  tbody td:first-child { font-family: var(--sans); color: var(--ink); }
+  tbody tr.best td { background: var(--good-bg); }
+  tbody tr.base td { color: var(--ink-faint); }
+  tbody tr.base td:first-child { color: var(--ink-soft); font-style: italic; }
+  .pill { display:inline-block; font-family: var(--mono); font-size: 11px; padding: 2px 8px; border-radius: 999px; font-weight: 600; }
+  .pill.good { background: var(--good-bg); color: var(--good-fg); }
+  .pill.warn { background: var(--warn-bg); color: var(--warn-fg); }
+
+  .legend { display: flex; flex-wrap: wrap; gap: 8px 18px; margin: 2px 0 14px; font-size: 12.5px; color: var(--ink-soft); font-family: var(--mono); }
+  .legend span { display: inline-flex; align-items: center; gap: 7px; }
+  .legend i { width: 12px; height: 12px; border-radius: 3px; display: inline-block; }
+
+  /* ---- footer / provenance ---- */
+  footer {
+    margin-top: 54px; border-top: 1px solid var(--line); padding: 26px 0 60px;
+  }
+  .prov {
+    background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius);
+    padding: 20px 22px; box-shadow: var(--shadow);
+  }
+  .prov h3 { font-family: var(--display); font-size: 15px; margin: 0 0 10px; }
+  .prov ul { margin: 0; padding-left: 18px; color: var(--ink-soft); font-size: 13.5px; }
+  .prov ul li { margin: 5px 0; }
+  .prov code, .maint code { font-family: var(--mono); font-size: 12px; background: var(--surface-2); padding: 1px 6px; border-radius: 5px; color: var(--ink); }
+  .maint {
+    margin-top: 16px; font-size: 13.5px; color: var(--ink-soft);
+    background: var(--warn-bg); border: 1px solid color-mix(in srgb, var(--warn-fg) 30%, transparent);
+    border-radius: var(--radius); padding: 16px 18px;
+  }
+  .maint b { color: var(--ink); }
+
+  @media (max-width: 820px) {
+    .kpis { grid-template-columns: repeat(2, 1fr); }
+    .grid-2 { grid-template-columns: 1fr; }
+  }
+  @media (max-width: 480px) {
+    .kpis { grid-template-columns: 1fr; }
+  }
+</style>
+
+<header class="masthead">
+  <div class="wrap masthead-inner">
+    <div class="eyebrow">Cross-agency ETA study &middot; results ledger</div>
+    <h1>How well do the ETA models predict?</h1>
+    <p class="lede">A living record of measured results for the transit-ETA prediction suite &mdash; two agencies
+      (MBTA, data-rich; bUCR, data-poor), the segment-traversal formulation, and every baseline it is held against.
+      Numbers here are pipeline-correctness results on the rehearsal corpora, not the final 90-day replication.</p>
+    <div class="meta-row">
+      <span><b>Updated</b> 2026-09-03</span>
+      <span><b>Corpus</b> rehearsal (28-day MBTA / 55-day bUCR)</span>
+      <span><b>Formulation</b> stop-to-stop segment traversal</span>
+      <span><b>Leakage probe</b> <span class="pill good">PASS</span></span>
+    </div>
+  </div>
+</header>
+
+<div class="wrap">
+  <section class="kpis">
+    <div class="kpi" style="--kc:var(--bucr)">
+      <div class="num">+39%</div>
+      <div class="lab">bUCR stop-level ETA beats the offset schedule</div>
+      <div class="sub">53.7 s vs 87.8 s MAE &middot; 12,652 windows</div>
+    </div>
+    <div class="kpi" style="--kc:var(--bucr)">
+      <div class="num">+35%</div>
+      <div class="lab">bUCR single-segment beats the schedule</div>
+      <div class="sub">33.4 s vs 51.6 s MAE &middot; XGBoost</div>
+    </div>
+    <div class="kpi" style="--kc:var(--mbta)">
+      <div class="num">+44%</div>
+      <div class="lab">MBTA segment XGBoost beats the offset schedule</div>
+      <div class="sub">27.5 s vs 48.9 s MAE &middot; R² 0.627 &middot; 16-day holdout</div>
+    </div>
+    <div class="kpi" style="--kc:var(--accent)">
+      <div class="num">PASS</div>
+      <div class="lab">Shuffle-label leakage probe</div>
+      <div class="sub">R² 0.694 &rarr; &minus;0.05 on shuffled labels</div>
+    </div>
+  </section>
+</div>
+
+<main class="wrap">
+
+  <!-- 1 -->
+  <div class="section-head">
+    <span class="idx">01</span>
+    <h2>bUCR &mdash; segment leaderboard</h2>
+    <span class="tag">55-day corpus &middot; day-grouped holdout (33 d / 5 d)</span>
+  </div>
+  <p class="section-note">One row per stop-to-stop segment; target is the <b>position-derived</b> traversal time, so
+    bUCR's offset timetable can't poison the labels. Only the geometry + kinematics + temporal models pull ahead of the
+    schedule &mdash; the timetable itself already beats naive historical-mean and EWMA.</p>
+  <div class="card">
+    <h3>Test MAE by model &middot; lower is better</h3>
+    <p class="cap">datasets/bucr_segments_corpus.parquet &middot; 17,499 segments, 40 CR-days, 21 legs</p>
+    <div class="chart-box"><canvas id="c_bucr_leader"></canvas></div>
+    <div class="takeaway">XGBoost leads at <b>33.4 s</b> (R² 0.694); the two polyreg families are within ~2.5 s.
+      The <b>offset schedule sits at 51.6 s</b> &mdash; better than historical-mean/EWMA but 35% behind the learned models.</div>
+  </div>
+
+  <!-- 2 -->
+  <div class="section-head">
+    <span class="idx">02</span>
+    <h2>bUCR &mdash; error grows predictably with horizon</h2>
+    <span class="tag">stop-level, summed segments</span>
+  </div>
+  <p class="section-note">Stop-level ETA is derived by summing predicted segment times over the remaining path. The
+    advantage holds around 40% through five stops &mdash; the range that matters most to a waiting rider &mdash; and the
+    error distribution is spike-plus-tail (Laplace-like), so the median rider sees far less than the mean.</p>
+  <div class="grid-2">
+    <div class="card">
+      <h3>XGBoost stop-level error vs stops ahead</h3>
+      <p class="cap">MAE with p90 / p95 envelope, seconds</p>
+      <div class="chart-box"><canvas id="c_bucr_horizon"></canvas></div>
+      <div class="takeaway">One stop out the median error is <b>17 s</b>; even eight stops ahead the MAE (126 s) stays
+        under the schedule's tail.</div>
+    </div>
+    <div class="card">
+      <h3>Share of predictions within tolerance</h3>
+      <p class="cap">per-segment absolute error, %</p>
+      <div class="chart-box"><canvas id="c_bucr_tol"></canvas></div>
+      <div class="takeaway"><b>67%</b> of XGBoost segment predictions land within &plusmn;30 s and 85% within &plusmn;60 s,
+        against 49% / 75% for the schedule.</div>
+    </div>
+  </div>
+  <div class="card">
+    <h3>Per-segment absolute-error distribution</h3>
+    <p class="cap">it is not Gaussian &mdash; sharp spike at zero, fat left tail (bus stalls); skew &minus;0.78, excess kurtosis +8.9</p>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>Statistic</th><th>XGBoost</th><th>PolyReg-dist</th><th>Offset schedule</th></tr></thead>
+        <tbody>
+          <tr class="best"><td>MAE</td><td>30.8 s</td><td>34.1 s</td><td>51.6 s</td></tr>
+          <tr><td>median |err|</td><td>17 s</td><td>22 s</td><td>31 s</td></tr>
+          <tr><td>p90</td><td>76 s</td><td>77 s</td><td>127 s</td></tr>
+          <tr><td>p95</td><td>101 s</td><td>110 s</td><td>184 s</td></tr>
+          <tr><td>p99</td><td>176 s</td><td>218 s</td><td>295 s</td></tr>
+          <tr><td>max</td><td>432 s</td><td>512 s</td><td>610 s</td></tr>
+          <tr class="best"><td>within &plusmn;30 s</td><td>67%</td><td>63%</td><td>49%</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- 3 -->
+  <div class="section-head">
+    <span class="idx">03</span>
+    <h2>Leakage probe &mdash; the formulation is honest</h2>
+    <span class="tag">roadmap 3.2 &middot; shuffle-label control</span>
+  </div>
+  <p class="section-note">Permute the target within train + val (features untouched, test untouched) and retrain. A model
+    can then only learn noise, so its metrics must collapse to the naive constant-predictor reference. They do &mdash;
+    while the real-label control reproduces the known result. No target is leaking through the features.</p>
+  <div class="card">
+    <h3>Real labels vs shuffled labels &middot; test MAE</h3>
+    <p class="cap">models/evaluation/leakage_probe.py &middot; seed 42 &middot; naive reference = 71.2 s</p>
+    <div class="chart-box"><canvas id="c_leak"></canvas></div>
+    <div class="takeaway">Shuffled-label MAE collapses to <b>72&ndash;70 s</b> (R² &asymp; 0) against the 71.2 s naive line,
+      while the control holds at 33&ndash;36 s (R² 0.69/0.66). <span class="pill good">PASS</span></div>
+  </div>
+
+  <!-- 4 -->
+  <div class="section-head">
+    <span class="idx">04</span>
+    <h2>MBTA &mdash; how much history does a new agency need?</h2>
+    <span class="tag">stop-level &middot; routes 222/15/37 &middot; global models</span>
+  </div>
+  <p class="section-note">The dataset-size ablation that becomes a paper section. Four windows anchored at 2026-07-01;
+    all five families trained on each. XGBoost wins at every size; both it and polyreg-time peak in R² around 15 days,
+    then dip slightly at 28 (ordinary week-to-week variance in real data, not a regression).</p>
+  <div class="grid-2">
+    <div class="card">
+      <h3>Test R² vs training-window length</h3>
+      <p class="cap">higher is better</p>
+      <div class="chart-box"><canvas id="c_mbta_r2"></canvas></div>
+    </div>
+    <div class="card">
+      <h3>Test MAE vs training-window length</h3>
+      <p class="cap">minutes &middot; lower is better</p>
+      <div class="chart-box"><canvas id="c_mbta_mae"></canvas></div>
+    </div>
+  </div>
+  <div class="card">
+    <div class="takeaway">A week of history already gets XGBoost to <b>R² 0.80 / 2.08 m MAE</b>; the jump from 1&rarr;7 days
+      is far larger than 7&rarr;28. <b>historical_mean</b> is weak-but-positive (R² 0.21&ndash;0.32) and kept only as a
+      cold-start fallback; <b>EWMA</b> is negative-R² at 3 of 4 sizes and has been retired as a serving candidate.</div>
+  </div>
+
+  <!-- 5 -->
+  <div class="section-head">
+    <span class="idx">05</span>
+    <h2>MBTA &mdash; segment models vs the schedule</h2>
+    <span class="tag">16-day corpus &middot; day-grouped holdout</span>
+  </div>
+  <p class="section-note">The MBTA segment reformulation at scale: <b>153,498 segments</b> over a full 16-day window
+    (routes 222/15/37), each sub-window matched to the static-GTFS snapshot in effect. Real GTFS trip IDs make the
+    schedule baseline <b>exact</b> &mdash; the scheduled duration of each stop-to-stop segment, offset-invariant so a
+    trip running late as a whole isn't penalised. Split is day-grouped (all 16 service-days usable) so whole trips stay
+    in one split. (An agency GTFS-RT baseline isn't available offline &mdash; MBTA TripUpdates aren't archived yet; that
+    comparator is live-only via etaval.)</p>
+  <div class="grid-2">
+    <div class="card">
+      <h3>Test MAE by model &middot; lower is better</h3>
+      <p class="cap">datasets/mbta_segments_corpus.parquet &middot; test = 3 service-days, 28,346 segments</p>
+      <div class="chart-box"><canvas id="c_mbta_seg_leader"></canvas></div>
+      <div class="takeaway">XGBoost leads at <b>27.5 s</b> (R² 0.627), <b>+44%</b> over the 48.9 s schedule. Notably,
+        per-segment <b>historical_mean</b> (33.7 s) is the strong runner-up &mdash; ahead of both polyreg families on
+        MBTA, a different ordering than bUCR.</div>
+    </div>
+    <div class="card">
+      <h3>Per-segment absolute-error distribution</h3>
+      <p class="cap">XGBoost vs offset schedule, test set</p>
+      <div class="table-scroll">
+        <table>
+          <thead><tr><th>Statistic</th><th>XGBoost</th><th>Offset schedule</th></tr></thead>
+          <tbody>
+            <tr class="best"><td>MAE</td><td>27.5 s</td><td>48.9 s</td></tr>
+            <tr><td>median |err|</td><td>13.6 s</td><td>33.0 s</td></tr>
+            <tr><td>p90</td><td>50.4 s</td><td>78.0 s</td></tr>
+            <tr><td>p95</td><td>87.4 s</td><td>115.0 s</td></tr>
+            <tr><td>p99</td><td>308.5 s</td><td>571.0 s</td></tr>
+            <tr class="best"><td>within &plusmn;30 s</td><td>80.3%</td><td>44.3%</td></tr>
+            <tr><td>within &plusmn;60 s</td><td>91.9%</td><td>85.6%</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="takeaway">XGBoost is near-unbiased (signed mean &minus;1.3 s) and lands <b>80%</b> of segments within
+        &plusmn;30 s, against the schedule's 44%.</div>
+    </div>
+  </div>
+  <div class="card" style="margin-top:18px">
+    <div class="takeaway" style="margin-top:0">
+      <span class="pill good">FIXED</span> <b>Weekday coverage.</b> MBTA reuses one <code>trip_id</code> across every
+      weekday, and the builder used to collapse a reused id into a single trip instance &mdash; dropping Tue&ndash;Thu
+      repeats and leaving only ~10 effective service-days. The builder now splits trip instances by <b>service date</b>
+      (3am local boundary), recovering all 16 days: the corpus grew 87.6k &rarr; <b>153.5k segments</b> and XGBoost
+      improved to 27.5 s / R² 0.627. Covered by a regression test.
+    </div>
+  </div>
+
+  <!-- 6 -->
+  <div class="section-head">
+    <span class="idx">06</span>
+    <h2>Hyperparameter tuning (Optuna)</h2>
+    <span class="tag">120 trials/agency &middot; 9 params + early stopping &middot; tuned on val, tested once</span>
+  </div>
+  <p class="section-note">Roadmap 5.1: the validation split was computed but never used, and every hyperparameter
+    was hardcoded. A TPE study scored on the <b>validation</b> split of each segment corpus, selecting the best config
+    by val MAE &mdash; the <b>test</b> set is touched only once, for the chosen config. The search covers <b>nine</b>
+    XGBoost hyperparameters: the five structural ones plus the four regularization knobs
+    (<code>min_child_weight</code>, <code>reg_alpha</code>, <code>reg_lambda</code>, <code>gamma</code>) now wired
+    through <code>train_xgboost</code>. A final pass added <b>early stopping</b> on the validation split &mdash; the tree
+    count grows until val MAE stops improving (patience 50, cap 3000) instead of a tuned <code>n_estimators</code>.
+    Adding regularization and early stopping sharply helped the data-poor agency; the data-rich one plateaued.</p>
+  <div class="grid-2">
+    <div class="card">
+      <h3>Default vs tuned &middot; test MAE</h3>
+      <p class="cap">lower is better &middot; XGBoost segment model</p>
+      <div class="chart-box"><canvas id="c_hpo"></canvas></div>
+      <div class="takeaway">Best tuning cuts test MAE: MBTA 27.5&rarr;<b>24.6 s</b> (R² 0.627&rarr;0.652, <b>+10.7%</b>),
+        bUCR 33.5&rarr;<b>28.0 s</b> (R² 0.694&rarr;<b>0.783</b>, <b>+16.4%</b>). bUCR climbed at every step
+        (5-param&nbsp;+10.8% &rarr; 9-param&nbsp;+14.9% &rarr; early-stop&nbsp;+16.4%); MBTA plateaued near 24.6&nbsp;s.</div>
+    </div>
+    <div class="card">
+      <h3>Best configuration by agency</h3>
+      <p class="cap">selected by validation MAE &middot; 9-param + early stopping</p>
+      <div class="table-scroll">
+        <table>
+          <thead><tr><th>Param</th><th>MBTA (153k)</th><th>bUCR (17.5k)</th></tr></thead>
+          <tbody>
+            <tr><td>max_depth</td><td>12</td><td>11</td></tr>
+            <tr><td>trees (early-stopped)</td><td>1035</td><td>814</td></tr>
+            <tr><td>learning_rate</td><td>0.0062</td><td>0.012</td></tr>
+            <tr><td>subsample</td><td>0.82</td><td>0.97</td></tr>
+            <tr><td>colsample_bytree</td><td>1.00</td><td>0.59</td></tr>
+            <tr><td>min_child_weight</td><td>1.5</td><td>1.3</td></tr>
+            <tr><td>reg_alpha (L1)</td><td>0.02</td><td>0.02</td></tr>
+            <tr><td>reg_lambda (L2)</td><td>10.9</td><td>69.5</td></tr>
+            <tr class="best"><td>test MAE</td><td>24.57 s</td><td>27.97 s</td></tr>
+            <tr class="best"><td>test R²</td><td>0.652</td><td>0.783</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="takeaway">With early stopping picking the tree count, the two agencies diverge: bUCR leans on very
+        heavy L2 (<code>reg_lambda</code>&nbsp;69, past the old range ceiling of 20) &mdash; a 17k-row target needs
+        aggressive regularization. MBTA no longer improves with any config &mdash; and a scheduled-duration feature
+        probe (below) shows it is not tuning-limited <i>or</i> cheaply feature-limited either.</div>
+    </div>
+  </div>
+
+  <div class="callout">
+    <h3>Feature probe &middot; scheduled segment duration does <i>not</i> break the MBTA plateau</h3>
+    <p>If MBTA is feature-limited, the obvious first feature is the <b>scheduled</b> segment duration
+      (<code>sched_arrival(to) &minus; sched_arrival(from)</code> from the GTFS snapshot) &mdash; a serveable,
+      leakage-free prior. Trained on the <b>identical row set</b> and split (tuned config + early stopping; uncovered
+      rows keep <code>NaN</code>, routed natively), it moved nothing: test MAE <b>23.90&rarr;23.88&nbsp;s</b>
+      (+0.1%), R² <b>0.659&rarr;0.661</b> (+0.002), and <code>sched_dur</code> did not reach the top-5 importances
+      (dominated by <code>progress_ratio</code>&nbsp;0.58, <code>is_at_stop</code>&nbsp;0.14).</p>
+    <p><b>Why:</b> the target is <i>time remaining from the current position to the next stop</i>, not full-segment
+      traversal, so it is dominated by how far along the vehicle already is (geometry). A full-segment scheduled
+      duration is both redundant with that geometry and mismatched to a partial-remaining target. Since GTFS schedules
+      are built from historical running times, this also lowers expectations for empirical <b>segment identity</b>
+      (target encoding) &mdash; between-segment differences are already captured. The residual is <b>within-segment
+      live variance</b> (moment-to-moment congestion), which no static, serveable feature can see. Moving MBTA
+      further needs a live rolling-conditions signal (a serving-side feature store), not another static feature.</p>
+  </div>
+
+  <!-- 7 -->
+  <div class="section-head">
+    <span class="idx">07</span>
+    <h2>LSTM over segment sequences &mdash; a split decision</h2>
+    <span class="tag">roadmap 5.2 &middot; causal GRU/LSTM &middot; tuned on val, tested once</span>
+  </div>
+  <p class="section-note">The segment reformulation was chosen partly because it gives a <b>natural sequence for a
+    recurrent model to consume</b>: one trip instance, keyed <code>(trip_id, service_day)</code> and ordered by
+    <code>segment_index</code>, so the prediction at each stop can see the trip's own upstream history. The model is
+    <b>unidirectional by construction</b> &mdash; the prediction at segment <i>t</i> may depend only on segments
+    0..<i>t</i> &mdash; which is what keeps the offline metric something serving could actually reproduce; a
+    perturb-at-<i>t</i> test enforces it. Splits, rows and metric keys are identical to the XGBoost study, so the two
+    families are directly comparable.</p>
+
+  <div class="callout">
+    <h3>The first result was a bug in the loss, not in the architecture</h3>
+    <p>Untuned smoke runs looked hopeless &mdash; MBTA <b>35.5&nbsp;s</b> / R²&nbsp;0.035, bUCR <b>75.4&nbsp;s</b> /
+      R²&nbsp;<b>&minus;0.431</b> (worse than predicting the mean). Neither was an architecture failure. The target is
+      right-skewed seconds and the loss was unstandardized, so large errors were under-weighted, and both runs were
+      still improving at the 30-epoch cap. Adding a <code>target_transform</code> and letting the run converge
+      (300 epochs, patience 25) reached MBTA <b>25.5&nbsp;s</b> / R²&nbsp;0.601 and bUCR <b>26.9&nbsp;s</b> /
+      R²&nbsp;0.801 <i>before any hyperparameter search at all</i>. <code>standardize</code> beat <code>log1p</code>
+      beat <code>none</code> on both agencies.</p>
+    <p>This also settles an open question: bUCR's negative R² was <b>under-training, not insufficient data</b>. The
+      worry that ~5.7-segment sequences over 11k rows are too short and too few for a recurrent model to learn from
+      turned out to be wrong &mdash; they were sufficient once the target was scaled.</p>
+  </div>
+
+  <div class="grid-2">
+    <div class="card">
+      <h3>Tuned LSTM vs tuned XGBoost &middot; test</h3>
+      <p class="cap">identical day-grouped splits &middot; test scored once per agency</p>
+      <div class="table-scroll">
+        <table>
+          <thead><tr><th>Agency</th><th>Untuned smoke</th><th>Tuned LSTM</th><th>Tuned XGBoost</th></tr></thead>
+          <tbody>
+            <tr><td>MBTA MAE</td><td>35.5 s</td><td>25.06 s</td><td class="best">24.57 s</td></tr>
+            <tr><td>MBTA R²</td><td>0.035</td><td>0.573</td><td class="best">0.652</td></tr>
+            <tr><td>bUCR MAE</td><td>75.4 s</td><td class="best">26.03 s</td><td>27.97 s</td></tr>
+            <tr><td>bUCR R²</td><td>&minus;0.431</td><td class="best">0.818</td><td>0.783</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="takeaway">Not a uniform win, and the split is the interesting part. <b>MBTA: the LSTM loses</b>
+        (25.06 vs 24.57&nbsp;s, and a wider R² gap). <b>bUCR: the LSTM wins by 7%</b> (26.03 vs 27.97&nbsp;s,
+        R² 0.818 vs 0.783). bUCR's shorter, noisier segments benefit from trip context; MBTA's residual is
+        geometry-dominated &mdash; the same feature-limited plateau of §06 &mdash; and trees handle that better.</div>
+    </div>
+    <div class="card">
+      <h3>Best configuration by agency</h3>
+      <p class="cap">Optuna TPE + MedianPruner &middot; selected by validation MAE</p>
+      <div class="table-scroll">
+        <table>
+          <thead><tr><th>Param</th><th>MBTA</th><th>bUCR</th></tr></thead>
+          <tbody>
+            <tr><td>rnn_type</td><td>gru</td><td>lstm</td></tr>
+            <tr><td>hidden_size</td><td>99</td><td>42</td></tr>
+            <tr><td>num_layers</td><td>1</td><td>2</td></tr>
+            <tr><td>dropout</td><td>0.39</td><td>0.21</td></tr>
+            <tr><td>learning_rate</td><td>0.0062</td><td>0.0059</td></tr>
+            <tr><td>batch_size</td><td>64</td><td>64</td></tr>
+            <tr><td>loss</td><td>mse</td><td>huber</td></tr>
+            <tr><td>target_transform</td><td>log1p</td><td>standardize</td></tr>
+            <tr><td>trials (complete / pruned)</td><td>8 (7 / 1)</td><td>44 (34 / 10)</td></tr>
+            <tr><td>training wall-clock</td><td>113 s, 57 epochs</td><td>22 s, 54 epochs</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="takeaway"><b>The MBTA comparison carries a real caveat.</b> Its sweep completed only <b>8 trials</b>
+        against bUCR's 44, because 92k rows cost 10&ndash;14 minutes per unpruned trial on a CPU-only budget &mdash;
+        the study barely cleared its own warm-up phase. MBTA is <b>under-searched, not conclusively beaten</b>.
+        Pruning is new here: roadmap 5.1 notes the XGBoost study never used it.</div>
+    </div>
+  </div>
+
+  <div class="callout">
+    <h3>The ensemble is the arm that actually wins</h3>
+    <p>Sequence models and trees make different mistakes, so blending them was the arm most likely to pay off, and it
+      did. A ridge blend fit on the <b>validation</b> split (test scored once) beats every single-model arm on R² for
+      both agencies:</p>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>Agency</th><th>LSTM</th><th>XGBoost</th><th>Average</th><th>Ridge blend</th></tr></thead>
+        <tbody>
+          <tr><td>MBTA</td><td>25.06 s / 0.573</td><td>24.52 s / 0.649</td><td>24.09 s / 0.648</td>
+              <td class="best">24.34 s / <b>0.662</b></td></tr>
+          <tr><td>bUCR</td><td>26.03 s / 0.818</td><td>28.40 s / 0.774</td><td>25.96 s / 0.810</td>
+              <td class="best">25.61 s / <b>0.830</b></td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>On MBTA the plain average edges the blend on MAE (24.09 vs 24.34&nbsp;s) while the blend wins on R²; on bUCR the
+      blend wins on both. Neither ensemble is wired into serving &mdash; running two model families per prediction
+      roughly doubles inference cost (§12), for roughly 1&ndash;2% MAE, and that trade has not been made.</p>
+  </div>
+
+
+  <!-- 8 -->
+  <div class="section-head">
+    <span class="idx">08</span>
+    <h2>Formal splits &mdash; and the purge trap that would have wrecked MBTA</h2>
+    <span class="tag">roadmap 3.2 &middot; models/common/splits.py &middot; 21 tests</span>
+  </div>
+  <p class="section-note">A shared <code>day_grouped_split</code>/<code>fraction_split</code> now backs every split in
+    the repo (calendar-boundary cut, optional group purge, optional embargo, a content-hash tiebreaker so shuffled
+    input reproduces byte-identical splits). It reproduces every published split exactly &mdash; no number above
+    moves. The reason it took a dedicated module: the obvious &ldquo;fix&rdquo; (purge on <code>trip_id</code>) is
+    wrong for MBTA and would have silently thrown away almost the entire validation set.</p>
+  <div class="card">
+    <h3>Splits reproduced unchanged</h3>
+    <p class="cap"><code>ETADataset.temporal_split</code> now delegates to <code>fraction_split</code></p>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>Corpus</th><th>train</th><th>val</th><th>test</th></tr></thead>
+        <tbody>
+          <tr><td>MBTA segments</td><td>92,618</td><td>32,534</td><td>28,346</td></tr>
+          <tr><td>bUCR segments</td><td>10,991</td><td>3,304</td><td>3,201</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+  <div class="callout" style="--warn:var(--tail)">
+    <h3>The unit of leakage is the trip <i>instance</i>, not the trip id</h3>
+    <p>MBTA reuses one <code>trip_id</code> across every weekday it runs (1,130 distinct ids across 153,498 rows /
+      16 service days &mdash; the same fact that drove the service-date fix in §05). Purging on <code>trip_id</code>
+      alone therefore treats nearly the whole corpus as one giant group: the val split collapses from
+      <b>32,534 rows to 189</b>. The leakage unit that actually matters is <code>(trip_id, service_day)</code> &mdash;
+      one concrete trip running on one concrete day. <code>temporal_split</code> defaults to <code>purge=False</code>
+      and instead takes a <code>service_offset_h</code> to compute service-day boundaries correctly; with it, MBTA
+      purges <b>314 rows</b> of genuine cross-boundary leakage rather than ~88,000 rows of nothing. A purge removing
+      more than 5% of a split now raises a <code>RuntimeWarning</code> so this doesn't silently recur elsewhere.</p>
+  </div>
+
+  <!-- 9 -->
+  <div class="section-head">
+    <span class="idx">09</span>
+    <h2>Statistics layer &mdash; CIs, paired tests, correction</h2>
+    <span class="tag">roadmap 4.3 &middot; models/evaluation/stats.py &middot; 37 tests</span>
+  </div>
+  <p class="section-note">Bootstrap CIs (i.i.d. and cluster/group), paired significance tests (Wilcoxon,
+    Diebold&ndash;Mariano with Newey&ndash;West HAC variance, cluster-aware paired bootstrap), and Holm /
+    Benjamini&ndash;Hochberg multiple-comparison correction, plus a <code>compare_all()</code> that emits the paper's
+    comparison table directly. This is the machinery every result from §10 onward is scored through, and it is what
+    powers the live-validation table in §14.</p>
+  <div class="card">
+    <div class="takeaway" style="margin-top:0"><b>The cluster bootstrap is the correct estimator here, but its effect
+      is smaller than assumed.</b> On the real MBTA test split, cluster-bootstrap CIs (grouped by trip) do <i>not</i>
+      systematically widen versus i.i.d. bootstrap CIs &mdash; the ratio of CI widths ranges <b>0.74&ndash;1.02</b>
+      across the metrics checked, even though the same estimator widens CIs by <b>&gt;1.5&times;</b> on a synthetic
+      case built with strong within-cluster correlation. Use the cluster estimator as the default (it is never wrong
+      to use it), but don't assume it will visibly change a conclusion &mdash; on this dataset it mostly doesn't, and
+      that should be reported rather than assumed away.</div>
+  </div>
+
+  <!-- 10 -->
+  <div class="section-head">
+    <span class="idx">10</span>
+    <h2>Apples-to-apples &mdash; one preprocessing path, four defects fixed</h2>
+    <span class="tag">roadmap 5.3 &middot; models/common/preprocessing.py &middot; 19 tests</span>
+  </div>
+  <p class="section-note">All five model families now share one NaN-imputation policy (statistics fit on train only,
+    passed forward &mdash; never recomputed from whatever frame a family happens to be handed) and one prediction-clipping
+    policy. A row-set-equality test proves all five families now score the identical set of rows &mdash; the leaderboards
+    in §01 and §05 were comparing models that were, in a small but real way, not all being asked the same question.</p>
+  <div class="card">
+    <h3>What the audit found</h3>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>Family</th><th>Defect</th></tr></thead>
+        <tbody>
+          <tr><td>historical_mean</td><td>predictions never clipped &mdash; NaN propagated silently</td></tr>
+          <tr><td>polyreg_distance</td><td>Ridge raised on the same NaN input other families tolerated</td></tr>
+          <tr><td>polyreg_time / xgb</td><td>imputation medians computed from whatever frame was passed (including
+            val/test), filled with a magic <code>0.0</code> at predict time</td></tr>
+          <tr class="best"><td>ewma</td><td>called <code>model.update(val_df, y_val)</code> before scoring test &mdash;
+            test metrics came from a model that had already absorbed every validation label</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="takeaway"><b>Fixing the EWMA leak improved its test MAE: 43.27 s &rarr; 37.75 s.</b> The bulk val
+      update was pulling per-key averages toward transient val-period noise &mdash; the leak was making EWMA look
+      <i>worse</i>, not flattering it. EWMA now uses a causal <code>predict_and_advance()</code>. The other four
+      families moved &le;0.05 s under the same unification &mdash; their leakage was a correctness bug, not a
+      metrics-moving one.</div>
+  </div>
+
+  <!-- 11 -->
+  <div class="section-head">
+    <span class="idx">11</span>
+    <h2>Live rolling-conditions features &mdash; nudging the MBTA plateau</h2>
+    <span class="tag">feature_engineering/rolling_conditions.py &middot; 7 features, 4 families &middot; 10 tests</span>
+  </div>
+  <p class="section-note">§06's feature probe showed a <i>static</i> feature (scheduled duration) can't move MBTA's
+    plateau; this asks whether a <i>live</i> one can. Seven features across four families &mdash; recent segment
+    traversal EWMA + ratio, headway/leader-bunching, route congestion index, vehicle recent delay &mdash; computed as
+    one chronological pass with a genuine point-in-time <code>merge_asof</code> join (a traversal enters state only
+    once completed; baselines are causal expanding means, never a whole-corpus mean). The headline test perturbs every
+    observation after time <i>t</i> and asserts the features computed at <i>t</i> are byte-identical.</p>
+  <div class="card">
+    <h3>Test MAE, identical rows/splits (reproducing the tuned §06 baselines)</h3>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>Corpus</th><th>base</th><th>all 7 features</th><th>best single family</th></tr></thead>
+        <tbody>
+          <tr><td>MBTA</td><td>23.97 s / R&sup2; 0.655</td><td class="best">23.67 s / R&sup2; 0.682 (+1.3%)</td>
+            <td>headway/leader &mdash; 23.41 s / R&sup2; 0.689 (+2.3%)</td></tr>
+          <tr><td>bUCR</td><td>25.72 s / R&sup2; 0.818</td><td class="best">24.91 s / R&sup2; 0.836 (+3.2%)</td>
+            <td>route congestion &mdash; 24.43 s (+5.0%)</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="takeaway"><b>Roadmap 5.1's claim &mdash; &ldquo;only a live rolling-conditions signal can move it&rdquo;
+      &mdash; is only <i>partially</i> supported.</b> A live signal does move MBTA, but modestly, and the driver is
+      cross-vehicle <b>headway/bunching</b>, not &ldquo;how fast is this segment running right now&rdquo; (the
+      traversal-EWMA family), which ranks 2nd in feature importance yet <b>hurts on its own (&minus;2.1%)</b> &mdash;
+      it is redundant with <code>progress_ratio</code>, the feature that already dominates the model (see §06). The
+      plateau is nudged, not broken. None of this is wired into the production schema; it needs a serving-side feature
+      store, and only headway/leader looks worth the cost.</div>
+  </div>
+
+  <!-- 12 -->
+  <div class="section-head">
+    <span class="idx">12</span>
+    <h2>Cost instrumentation &mdash; and a serving defect it surfaced</h2>
+    <span class="tag">roadmap 5.4 &middot; models/evaluation/cost.py &middot; 17 tests</span>
+  </div>
+  <p class="section-note">Training cost (wall-clock, CPU, peak RSS) and inference latency measured <b>through the
+    serving path</b> &mdash; one <code>estimate_stop_times()</code> call per vehicle position, not a vectorised batch
+    &mdash; with cold-start reported separately from warm.</p>
+  <div class="grid-2">
+    <div class="card">
+      <h3>Inference latency &middot; bUCR-corpus models, 199 warm calls</h3>
+      <div class="table-scroll">
+        <table>
+          <thead><tr><th>Model</th><th>p50</th><th>p95</th></tr></thead>
+          <tbody>
+            <tr class="best"><td>polyreg_distance</td><td>23.0 ms</td><td>28.2 ms</td></tr>
+            <tr><td>xgboost</td><td>85.9 ms</td><td>111.1 ms</td></tr>
+            <tr><td>historical_mean</td><td>89.2 ms</td><td>106.5 ms</td></tr>
+            <tr><td>polyreg_time</td><td>109.3 ms</td><td>180.3 ms</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="takeaway">Tuned MBTA XGBoost training: <b>56 s wall / 129 s CPU / 1.3 GB peak RSS</b>.</div>
+    </div>
+    <div class="card">
+      <h3>Serving defect found &amp; fixed</h3>
+      <p class="cap"><code>ModelRegistry.load_model</code> &middot; models/common/registry.py</p>
+      <p style="font-size:14px;color:var(--ink-soft);margin:0 0 10px">Instrumenting latency surfaced that the registry
+        unpickled from disk on <b>every</b> call &mdash; no in-process cache &mdash; so the &ldquo;warm&rdquo; numbers
+        at left are dominated by model loading, not inference. Fixed in a follow-up commit: an in-process cache keyed
+        by model key, invalidated by artifact mtime + size.</p>
+      <div class="takeaway" style="margin-top:0">Caching made loads <b>~74&times; faster: 4.2 ms &rarr; 0.06 ms</b>.
+        <span class="pill good">FIXED</span></div>
+    </div>
+  </div>
+
+  <!-- 13 -->
+  <div class="section-head">
+    <span class="idx">13</span>
+    <h2>Per-route vs global models</h2>
+    <span class="tag">MBTA segment corpus &middot; tuned config &middot; groups=trip_id, Holm-adjusted</span>
+  </div>
+  <p class="section-note">A long-standing open item in the roadmap's &ldquo;what's next&rdquo; list, never run until
+    this session. One global XGBoost vs. one per-route XGBoost, same split, same tuned hyperparameters, significance
+    via §09's stats module.</p>
+  <div class="card">
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>Route</th><th>train rows</th><th>per-route MAE</th><th>global MAE</th><th>diff</th><th>p</th></tr></thead>
+        <tbody>
+          <tr><td>222</td><td>23,906</td><td>16.44 s</td><td>17.22 s</td><td>&minus;4.5%</td><td>~0</td></tr>
+          <tr><td>37</td><td>13,133</td><td>20.95 s</td><td>21.34 s</td><td>&minus;1.8%</td><td>0.083</td></tr>
+          <tr><td>15</td><td>55,579</td><td>28.85 s</td><td>29.00 s</td><td>&minus;0.5%</td><td>0.20</td></tr>
+          <tr class="best"><td>pooled</td><td>92,618</td><td>24.17 s</td><td>24.52 s</td><td>&minus;1.4%</td><td>0.0002</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="takeaway">Significant pooled, but small, and <b>not</b> explained by sample size &mdash; route 15 has
+      the most training rows yet shows no difference, while route 222 gains the most. Reads as route 222 having
+      genuinely different dynamics the global model averages away. Does not clear the bar for per-route serving by
+      default; worth revisiting for 222-like cases. bUCR has exactly one route, so the comparison is degenerate there
+      (checked programmatically).</div>
+  </div>
+
+  <!-- 14 -->
+  <div class="section-head">
+    <span class="idx">14</span>
+    <h2>Live validation &mdash; the served models, measured against the real feed</h2>
+    <span class="tag">roadmap 1.2 &middot; etaval vs live MBTA GTFS-RT &middot; the finding that changes what we believe</span>
+  </div>
+  <p class="section-note">Everything above is offline, on held-out rows of a corpus this repo built. This section is
+    different: <code>etaval</code> (sibling repo) was pointed at the <b>live MBTA GTFS-RT feed</b> and scored the
+    <i>registered, served</i> models &mdash; through <code>eta_service.estimator.estimate_stop_times</code>, the real
+    serving path &mdash; against independently detected arrivals, over a 45-minute run (2,107 scored rows). CIs are
+    the cluster bootstrap over <code>trip_key</code>; model-vs-baseline comparisons are a paired Wilcoxon test against
+    the agency's own GTFS-RT feed, Holm-corrected. Analysis: <code>scratchpad/analyze_live_validation.py</code>.</p>
+  <div class="card">
+    <h3>Pre-fix &middot; 45-minute live run, 2,107 rows</h3>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>horizon</th><th>predictor</th><th>MAE</th><th>95% CI</th><th>vs <code>gtfsrt</code>, Holm-adj</th></tr></thead>
+        <tbody>
+          <tr><td>&lt;2 m</td><td>polyreg_time</td><td>8.7 s</td><td>[6.6, 11.0]</td><td>&minus;65.8%, p=0.44 <b>n.s.</b></td></tr>
+          <tr class="base"><td>&lt;2 m</td><td>gtfsrt</td><td>40.5 s</td><td>[15.2, 71.3]</td><td>&mdash;</td></tr>
+          <tr><td>&lt;2 m</td><td>xgboost</td><td>65.7 s</td><td>[62.4, 69.3]</td><td>+42.9%, p=1e-25 (worse)</td></tr>
+          <tr><td>&gt;10 m</td><td>polyreg_time</td><td>1230.6 s</td><td>[1194, 1266]</td><td>+453%, p=8.4e-20</td></tr>
+          <tr><td>&gt;10 m</td><td>xgboost</td><td>1066.1 s</td><td>[1048, 1081]</td><td>+380%, p=8.4e-20</td></tr>
+          <tr class="base"><td>&gt;10 m</td><td>gtfsrt</td><td>222.0 s</td><td>[191, 253]</td><td>&mdash;</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="takeaway"><b>Discipline point:</b> <code>polyreg_time</code>'s apparent 4.7&times; short-horizon
+      advantage over the agency feed is <b>not statistically significant</b> (p=0.44) &mdash; exactly the overclaim
+      the §09 statistics layer exists to prevent. Report the CI, not the point estimate.</div>
+  </div>
+
+  <div class="callout" style="--warn:var(--tail)">
+    <h3>Root cause &mdash; established by evidence, two hypotheses tested, one falsified</h3>
+    <p><b>Hypothesis 1, falsified:</b> &ldquo;the models were trained on a 5-stops-ahead window, so they never saw
+      long horizons.&rdquo; The stop-level training set (2,030,210 rows) has <b>14.4%</b> of rows above 10 minutes,
+      p99 = 48 min, max = 116 min. Offline, on held-out rows, the models track long horizons fine (true 1884 s &rarr;
+      xgboost predicts 1730 s in the 20&ndash;50 min bucket). The models are not the problem.</p>
+    <p><b>Hypothesis 2, confirmed:</b> &ldquo;the serving path computes different features than training did.&rdquo;
+      Two concrete defects: <b>(a)</b> <code>stops_ahead</code> was served as <code>idx+1</code> while the dataset
+      builder labels the closest upcoming stop <code>0</code> &mdash; a one-off, fixed this session. <b>(b)</b> far
+      more consequential: when no route shape is supplied, the estimator falls back to straight-line haversine
+      distance, hardcodes <code>cross_track_error=0.0</code>, and leaves <code>is_at_stop</code> False where training
+      saw it True 67% of the time. Measured shape&divide;haversine distance ratio by horizon: <b>1.00 at &lt;2 min,
+      1.10 at 2&ndash;5 min, 1.24 at 5&ndash;10 min, 0.28&ndash;0.34 at 20&ndash;50 min</b> (where the route loops
+      back). The fallback is harmless at short horizon and diverges badly exactly where the collapse happens; distance
+      is the dominant feature (§06, §11), so a wrong distance yields a wrong time in one direction &mdash; which is
+      why bias &asymp; &minus;MAE.</p>
+    <p><span class="pill good">FIXED</span> (a) only &mdash; <code>eta_service/estimator.py</code>, with a regression
+      test, plus a fix to a pre-existing test-isolation bug where <code>test_shape_hook.py</code> reset only one of
+      the two registry singletons. A 30-minute post-fix run shows a short-horizon sign flip &mdash;
+      <code>xgboost</code> goes from <b>+42.9% worse</b> than the agency feed to <b>&minus;38.4% better</b>
+      (p=1.5e-18) &mdash; but <b>that headline overstates the fix, and the decomposition matters more than the
+      flip</b>. Of the two terms in the ratio, ours moved a little and the baseline moved a lot:
+      <code>xgboost</code> MAE improved <b>65.7 &rarr; 58.2 s (&minus;11%)</b>, while <code>gtfsrt</code> in the
+      second window <i>degraded</i> <b>40.5 &rarr; 88.0 s (+117%)</b>. The agency feed's short-horizon MAE is also
+      extremely noisy &mdash; 95% CI [15.2, 71.3] before and [34.6, 160.4] after, heavily overlapping &mdash; so most
+      of the swing is baseline variance, not model improvement. The honest claim for the <code>stops_ahead</code>
+      fix is <b>~11% short-horizon MAE</b>, not a sign flip. &gt;10 min remains ~4&ndash;5&times; worse as expected.
+      <b>Caveat:</b> the two runs are unpaired 30&ndash;45 minute windows at different times of day (17:00&ndash;20:45
+      vs 20:51&ndash;21:24 EDT) on different route mixes &mdash; directional only, not a controlled A/B.</p>
+    <p><span class="pill warn">OPEN</span> (b) is <b>not</b> fixed and is the important remaining item. The shape hook
+      already exists in <code>estimator.py</code> and databus populates it in production; nothing populates it for
+      any other caller. Production may well be fine while every standalone caller is silently degraded &mdash; that
+      needs confirming separately. This is squarely roadmap 1.2 and overlaps 1.7.</p>
+  </div>
+
+  <div class="card" style="margin-top:18px">
+    <div class="takeaway" style="margin-top:0">
+      <b>Which artifact this measures.</b> The registered/served MBTA xgboost artifact records
+      <code>test_mae_seconds = 109.99</code> in its own metadata &mdash; it is a <b>stop-level</b> model from
+      2026-08-18, not the 24.6 s tuned <i>segment</i> model of §06. The live numbers above measure the stale
+      artifact, not the segment-corpus leaderboard elsewhere in this ledger. Stated explicitly so no one reconciles
+      71 s against 24.6 s again.
+    </div>
+  </div>
+
+    <div class="prov">
+      <h3>Provenance &amp; caveats</h3>
+      <ul>
+        <li>Numbers are <b>rehearsal-corpus</b> results measuring pipeline correctness and experimental design &mdash;
+          <b>not</b> the transferable 90-day replication numbers (window <code>2026-08-14 &rarr; 2026-11-12</code>).</li>
+        <li>bUCR and MBTA corpora differ in fix cadence (~80 s vs 5 s), so segment-level results are not directly comparable across agencies.</li>
+        <li>bUCR segment target is position-derived (50 m first-within, else closest-approach &le;200 m); holdout is day-grouped so whole trips stay within one split.</li>
+        <li>MBTA segment corpus is 153,498 segments / 16 days (all service-days; trip instances split by service date &mdash; see §05); the schedule baseline covers 70% of test segments.</li>
+        <li>Every saved model now stamps git SHA, library versions, dataset SHA-256, and seed (<code>models/common/provenance.py</code>); fixed-seed reruns reproduce metrics.</li>
+        <li>HPO (§06) tunes on the validation split only; the test set is evaluated once for the val-selected config. Seed 42, 120 TPE trials/agency over 9 params (structural + <code>min_child_weight</code>/<code>reg_alpha</code>/<code>reg_lambda</code>/<code>gamma</code>) plus early stopping on val (patience 50, cap 3000; the tree count is chosen, not tuned) &mdash; all wired through <code>train_xgboost</code>, all trials recorded to <code>scratchpad/hpo_trials_*.csv</code>. bUCR improved at every step (10.8&rarr;14.9&rarr;16.4%); MBTA plateaued near 24.6&nbsp;s / R² 0.65, indicating its remaining error is feature-limited, not tuning-limited. Tuned configs are not yet promoted to the served registry.</li>
+        <li>§08&ndash;§13 splits and metrics all run through the shared <code>models/common/splits.py</code> (day-grouped, purge=False by default, embargo via <code>service_offset_h</code>) and <code>models/evaluation/stats.py</code> (i.i.d. and cluster bootstrap, Wilcoxon / Diebold&ndash;Mariano, Holm / BH correction) &mdash; the same machinery, not a one-off script, so numbers across sections are comparable.</li>
+        <li>§14's live-validation run is <b>not</b> reproducible from this repo alone: it depends on the sibling <code>etaval</code> repo, a live 30&ndash;45 minute window against the real MBTA GTFS-RT feed, and whatever traffic happened to exist during that window. Treat it as a point-in-time measurement of the <i>currently registered</i> artifacts, not a number that will replay identically on a re-run &mdash; the pre-fix/post-fix comparison in §14 is explicitly caveated as directional for exactly this reason.</li>
+        <li>Sources: <code>docs/SESSION_2026-08-24_BUCR_ETA_MODELS.md</code>, <code>models/evaluation/leakage_probe.py</code>, <code>scratchpad/analyze_live_validation.py</code>, <code>scratchpad/by_route_comparison.py</code>, roadmap §3&ndash;§5 tables.</li>
+      </ul>
+      <div class="maint">
+        <b>Keeping this current &mdash; for future agents.</b> This ledger is the canonical results surface. When you land a
+        new measured result (a larger MBTA segment build, MBTA-vs-schedule/GTFS-RT baselines, calibration, HPO, the 90-day
+        replication numbers, or the paper's ablation grid), <b>add it here</b>: edit <code>docs/RESULTS.html</code>, bump the
+        <code>Updated</code> date, and republish the artifact to the same URL. Keep rehearsal and replication numbers
+        visibly separated. The roadmap points here for exactly this.
+      </div>
+    </div>
+  </footer>
+</main>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<script>
+(function () {
+  var css = getComputedStyle(document.documentElement);
+  function tok(n) { return css.getPropertyValue(n).trim(); }
+  var C = {
+    accent: tok('--accent'), mbta: tok('--mbta'), bucr: tok('--bucr'),
+    schedule: tok('--schedule'), tail: tok('--tail'), ink: tok('--ink'),
+    soft: tok('--ink-soft'), faint: tok('--ink-faint'), line: tok('--line'),
+    surface: tok('--surface')
+  };
+  function alpha(hex, a) {
+    hex = hex.replace('#',''); if (hex.length === 3) hex = hex.split('').map(function(c){return c+c;}).join('');
+    var r=parseInt(hex.slice(0,2),16), g=parseInt(hex.slice(2,4),16), b=parseInt(hex.slice(4,6),16);
+    return 'rgba('+r+','+g+','+b+','+a+')';
+  }
+  if (!window.Chart) return;
+  Chart.defaults.font.family = "'IBM Plex Mono', ui-monospace, monospace";
+  Chart.defaults.font.size = 11;
+  Chart.defaults.color = C.faint;
+  Chart.defaults.plugins.legend.labels.color = C.soft;
+  Chart.defaults.plugins.legend.labels.boxWidth = 12;
+  Chart.defaults.plugins.legend.labels.boxHeight = 12;
+  Chart.defaults.plugins.legend.labels.usePointStyle = false;
+  var grid = { color: alpha(C.faint, 0.16), drawTicks: false };
+  var reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  var anim = reduced ? false : { duration: 550 };
+
+  function mk(id, cfg) {
+    var el = document.getElementById(id); if (!el) return;
+    cfg.options = cfg.options || {};
+    cfg.options.responsive = true; cfg.options.maintainAspectRatio = false;
+    cfg.options.animation = anim;
+    new Chart(el.getContext('2d'), cfg);
+  }
+
+  // 01 — bUCR segment leaderboard (horizontal bars, MAE)
+  var lbLabels = ['XGBoost', 'PolyReg-time', 'PolyReg-dist', 'historical_mean', 'Offset schedule', 'EWMA'];
+  var lbVals   = [33.4, 35.9, 35.5, 51.5, 51.6, 63.6];
+  var lbColors = [C.accent, C.accent, C.accent, C.schedule, C.bucr, C.tail];
+  mk('c_bucr_leader', {
+    type: 'bar',
+    data: { labels: lbLabels, datasets: [{
+      label: 'Test MAE (s)', data: lbVals,
+      backgroundColor: lbColors.map(function(c){return alpha(c,0.85);}),
+      borderColor: lbColors, borderWidth: 1, borderRadius: 5, maxBarThickness: 34
+    }]},
+    options: {
+      indexAxis: 'y',
+      plugins: { legend: { display: false },
+        tooltip: { callbacks: { label: function(x){ return x.parsed.x + ' s MAE'; } } } },
+      scales: {
+        x: { grid: grid, title: { display: true, text: 'Test MAE (seconds)', color: C.faint }, beginAtZero: true },
+        y: { grid: { display: false }, ticks: { color: C.soft } }
+      }
+    }
+  });
+
+  // 02a — bUCR horizon (MAE + p90/p95)
+  var hx = ['1 stop', '3', '5', '8'];
+  mk('c_bucr_horizon', {
+    type: 'line',
+    data: { labels: hx, datasets: [
+      { label: 'p95', data: [101,154,205,322], borderColor: alpha(C.tail,0.5), backgroundColor: alpha(C.tail,0.10),
+        fill: '+1', borderWidth: 1, borderDash: [4,3], pointRadius: 0, tension: .3 },
+      { label: 'p90', data: [76,118,158,268], borderColor: alpha(C.bucr,0.6), backgroundColor: alpha(C.bucr,0.12),
+        fill: '+1', borderWidth: 1, borderDash: [4,3], pointRadius: 0, tension: .3 },
+      { label: 'MAE', data: [31,53,75,126], borderColor: C.accent, backgroundColor: C.accent,
+        borderWidth: 2.5, pointRadius: 3.5, pointBackgroundColor: C.accent, tension: .3 }
+    ]},
+    options: {
+      plugins: { legend: { position: 'top', align: 'end' } },
+      scales: {
+        x: { grid: { display: false }, ticks: { color: C.soft }, title: { display: true, text: 'stops ahead', color: C.faint } },
+        y: { grid: grid, beginAtZero: true, title: { display: true, text: 'error (s)', color: C.faint } }
+      }
+    }
+  });
+
+  // 02b — within tolerance grouped bars
+  mk('c_bucr_tol', {
+    type: 'bar',
+    data: { labels: ['within ±30 s', 'within ±60 s'], datasets: [
+      { label: 'XGBoost', data: [67,85], backgroundColor: alpha(C.accent,0.9), borderRadius: 5, maxBarThickness: 40 },
+      { label: 'PolyReg-dist', data: [63,84], backgroundColor: alpha(C.mbta,0.8), borderRadius: 5, maxBarThickness: 40 },
+      { label: 'Offset schedule', data: [49,75], backgroundColor: alpha(C.schedule,0.85), borderRadius: 5, maxBarThickness: 40 }
+    ]},
+    options: {
+      plugins: { legend: { position: 'top', align: 'end' },
+        tooltip: { callbacks: { label: function(x){ return x.dataset.label + ': ' + x.parsed.y + '%'; } } } },
+      scales: {
+        x: { grid: { display: false }, ticks: { color: C.soft } },
+        y: { grid: grid, beginAtZero: true, max: 100, ticks: { callback: function(v){ return v + '%'; } } }
+      }
+    }
+  });
+
+  // 03 — leakage probe grouped bars (control vs shuffled) + naive line via annotation-ish dataset
+  mk('c_leak', {
+    type: 'bar',
+    data: { labels: ['XGBoost', 'PolyReg-dist'], datasets: [
+      { label: 'Control (real labels)', data: [33.4, 35.5], backgroundColor: alpha(C.accent,0.9), borderRadius: 5, maxBarThickness: 56 },
+      { label: 'Shuffled labels', data: [72.3, 69.9], backgroundColor: alpha(C.tail,0.85), borderRadius: 5, maxBarThickness: 56 }
+    ]},
+    options: {
+      plugins: {
+        legend: { position: 'top', align: 'end' },
+        tooltip: { callbacks: { afterBody: function(){ return 'naive reference: 71.2 s'; } } }
+      },
+      scales: {
+        x: { grid: { display: false }, ticks: { color: C.soft } },
+        y: { grid: grid, beginAtZero: true, title: { display: true, text: 'test MAE (s)', color: C.faint },
+             suggestedMax: 85 }
+      }
+    }
+  });
+  // draw naive-reference line
+  var naivePlugin = {
+    id: 'naive',
+    afterDraw: function (chart) {
+      if (chart.canvas.id !== 'c_leak') return;
+      var y = chart.scales.y.getPixelForValue(71.2);
+      var ctx = chart.ctx, a = chart.chartArea;
+      ctx.save();
+      ctx.strokeStyle = C.faint; ctx.lineWidth = 1; ctx.setLineDash([5,4]);
+      ctx.beginPath(); ctx.moveTo(a.left, y); ctx.lineTo(a.right, y); ctx.stroke();
+      ctx.setLineDash([]); ctx.fillStyle = C.faint; ctx.font = "600 10px 'IBM Plex Mono', monospace";
+      ctx.textAlign = 'right'; ctx.fillText('naive 71.2 s', a.right - 6, y - 5);
+      ctx.restore();
+    }
+  };
+  Chart.register(naivePlugin);
+
+  // 04a — MBTA R²
+  var days = ['1 d', '7 d', '15 d', '28 d'];
+  mk('c_mbta_r2', {
+    type: 'line',
+    data: { labels: days, datasets: [
+      { label: 'XGBoost', data: [0.542,0.801,0.863,0.803], borderColor: C.mbta, backgroundColor: C.mbta,
+        borderWidth: 2.5, pointRadius: 4, tension: .25 },
+      { label: 'PolyReg-time', data: [0.257,0.689,0.730,0.698], borderColor: C.bucr, backgroundColor: C.bucr,
+        borderWidth: 2, pointRadius: 3.5, borderDash: [5,3], tension: .25 }
+    ]},
+    options: {
+      plugins: { legend: { position: 'top', align: 'end' } },
+      scales: {
+        x: { grid: { display: false }, ticks: { color: C.soft } },
+        y: { grid: grid, min: 0, max: 1, title: { display: true, text: 'test R²', color: C.faint } }
+      }
+    }
+  });
+
+  // 04b — MBTA MAE
+  mk('c_mbta_mae', {
+    type: 'line',
+    data: { labels: days, datasets: [
+      { label: 'XGBoost', data: [3.00,2.08,1.94,1.83], borderColor: C.mbta, backgroundColor: C.mbta,
+        borderWidth: 2.5, pointRadius: 4, tension: .25 },
+      { label: 'PolyReg-time', data: [6.35,2.71,2.85,2.46], borderColor: C.bucr, backgroundColor: C.bucr,
+        borderWidth: 2, pointRadius: 3.5, borderDash: [5,3], tension: .25 }
+    ]},
+    options: {
+      plugins: { legend: { position: 'top', align: 'end' } },
+      scales: {
+        x: { grid: { display: false }, ticks: { color: C.soft } },
+        y: { grid: grid, beginAtZero: true, title: { display: true, text: 'test MAE (minutes)', color: C.faint } }
+      }
+    }
+  });
+
+  // 05 — MBTA segment leaderboard (test MAE, schedule reference)
+  var mLabels = ['XGBoost', 'historical_mean', 'PolyReg-dist', 'PolyReg-time', 'ewma', 'Offset schedule'];
+  var mVals   = [27.5, 33.7, 42.1, 42.5, 43.3, 48.9];
+  var mFill   = [C.accent, alpha(C.accent,0.6), alpha(C.accent,0.6), alpha(C.accent,0.6), alpha(C.accent,0.6), alpha(C.schedule,0.85)];
+  var mBorder = [C.accent, C.accent, C.accent, C.accent, C.accent, C.schedule];
+  mk('c_mbta_seg_leader', {
+    type: 'bar',
+    data: { labels: mLabels, datasets: [{
+      label: 'Test MAE (s)', data: mVals,
+      backgroundColor: mFill, borderColor: mBorder, borderWidth: 1, borderRadius: 5, maxBarThickness: 30
+    }]},
+    options: {
+      indexAxis: 'y',
+      plugins: { legend: { display: false },
+        tooltip: { callbacks: { label: function(x){ return x.parsed.x + ' s MAE'; } } } },
+      scales: {
+        x: { grid: grid, beginAtZero: true, title: { display: true, text: 'test MAE (seconds)', color: C.faint } },
+        y: { grid: { display: false }, ticks: { color: C.soft } }
+      }
+    }
+  });
+
+  // 06 — HPO default vs tuned (test MAE, grouped by agency)
+  mk('c_hpo', {
+    type: 'bar',
+    data: { labels: ['MBTA (153k)', 'bUCR (17.5k)'], datasets: [
+      { label: 'default', data: [27.52, 33.45], backgroundColor: alpha(C.schedule, 0.85), borderRadius: 5, maxBarThickness: 46 },
+      { label: 'tuned (9-param + early stop)', data: [24.57, 27.97], backgroundColor: alpha(C.accent, 0.9), borderRadius: 5, maxBarThickness: 46 }
+    ]},
+    options: {
+      plugins: { legend: { position: 'top', align: 'end' },
+        tooltip: { callbacks: { label: function(x){ return x.dataset.label + ': ' + x.parsed.y + ' s'; } } } },
+      scales: {
+        x: { grid: { display: false }, ticks: { color: C.soft } },
+        y: { grid: grid, beginAtZero: true, title: { display: true, text: 'test MAE (s)', color: C.faint } }
+      }
+    }
+  });
+})();
+</script>

@@ -1,0 +1,80 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Distribution / packaging
+build/
+dist/
+*.egg-info/
+*.egg
+MANIFEST
+
+# Environments — never commit real credentials (AWS keys, DJANGO_SECRET_KEY, etc.)
+.env
+.env.local
+.env.*.local
+.venv/
+venv/
+ENV/
+
+# Unit test / coverage reports
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+.nox/
+.hypothesis/
+
+# Celery
+celerybeat-schedule
+celerybeat.pid
+
+# Django
+*.log
+local_settings.py
+db.sqlite3
+db.sqlite3-journal
+staticfiles/
+media/
+
+# Trained model artifacts and generated datasets — reproducible from source
+# data + code, not meant to be tracked (see docs/RUNBOOK.md's registry
+# contract and RESEARCH_ROADMAP.md's rehearsal/replication corpora).
+models/trained/
+*.pkl
+datasets/*.parquet
+!datasets/sample.parquet
+
+# Editors / OS
+.idea/
+.vscode/
+.DS_Store
+*.swp
+*.swo
+
+# Jupyter
+.ipynb_checkpoints
+
+# mypy / type checkers
+.mypy_cache/
+.pyre/
+.pytype/
+
+# Dedicated deep-learning venv: torch has no macOS x86_64 wheels for cp313+,
+# so models/lstm/ runs under a separate Python 3.12 environment (.venv-dl)
+# rather than the repo's default .venv. See models/lstm/README.md.
+.venv-dl/
+
+# scratchpad/ holds the analysis and experiment scripts the roadmap and
+# RESULTS ledger cite by path, so those are tracked -- a paper artifact whose
+# own references dangle on a fresh clone is not reproducible. What they read
+# and write is not: raw data, GTFS archives, run logs and build outputs are
+# regenerable and large.
+scratchpad/**/*.parquet
+scratchpad/**/*.zip
+scratchpad/**/*.log
+scratchpad/logs/
+scratchpad/navsat_full/
+scratchpad/navsat_sample/

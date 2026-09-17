@@ -1,0 +1,21 @@
+cff-version: 1.2.0
+message: >-
+  If you use this software, please cite it using the metadata below.
+title: gtfs-eta
+type: software
+authors:
+  - given-names: TODO
+    family-names: TODO
+    # TODO: fill in given-names/family-names above and, if desired, an ORCID
+    # below (format: https://orcid.org/XXXX-XXXX-XXXX-XXXX). Contact email is
+    # deliberately omitted from this file; add a contact method separately if
+    # needed (e.g. a GitHub profile link) rather than here.
+    orcid: "TODO"
+    alias: Jæ
+license: MIT
+repository-code: "https://github.com/dotjae/gtfs-eta"
+abstract: >-
+  Transit ETA prediction suite: GTFS-Realtime ingestion, feature engineering,
+  a multi-family model registry (historical mean, EWMA, polynomial
+  regression, XGBoost), and a Prefect-based serving path, built to support a
+  cross-agency data-quality-asymmetry study.

@@ -1,0 +1,113 @@
+[project]
+name = "gtfs-eta"
+version = "0.1.0"
+description = "Utilities for exploring GTFS-Realtime feeds (Vehicle Positions, Trip Updates, Alerts)."
+authors = [
+    { name = "Jæ" }
+]
+license = { text = "MIT" }
+readme = "README.md"
+requires-python = ">=3.11"
+
+# Core inference dependencies only: what eta_service.estimator.estimate_stop_times
+# and its transitive imports (core/, feature_engineering/temporal.py,
+# models/common/registry.py, models/polyreg_distance/predict.py) genuinely need
+# to load a registered model and serve a prediction. Everything else (training,
+# the Django/celery collector, plotting) lives behind the extras below so that
+# installing the inference path doesn't drag in xgboost, matplotlib, Django, or
+# celery.
+dependencies = [
+  "numpy>=1.26",
+  "pandas>=2.3.3",
+  "scikit-learn>=1.7.2",
+  "holidays>=0.40",
+]
+
+[project.optional-dependencies]
+# Dataset builder (feature_engineering/dataset_builder.py, weather.py — both
+# need Django ORM access to the gtfs-rt-pipeline schema/settings) + model
+# training (models/*/train.py, models/train_all_models.py).
+train = [
+  "Django>=5.0",
+  "django-environ>=0.11",
+  "python-dotenv>=1.0",
+  "requests>=2.32",
+  "psycopg[binary,pool]>=3.2.11",
+  "fastparquet>=2024.11.0",
+  "xgboost>=3.1.2",
+]
+# The Django/celery GTFS-RT collector (gtfs-rt-pipeline/). That app also ships
+# its own standalone pyproject.toml (gtfs-rt-pipeline/pyproject.toml) for
+# running it in isolation; this extra exists so `uv sync --extra collect` at
+# the repo root can pull in the same stack without cd'ing into that directory.
+collect = [
+  "Django>=5.0",
+  "celery>=5.4",
+  "redis>=5.0",
+  "psycopg[binary,pool]>=3.2.11",
+  "django-environ>=0.11",
+  "python-dotenv>=1.0",
+  "requests>=2.32",
+  "gtfs-realtime-bindings>=1.0.0",
+]
+# models/evaluation/roll_validate.py plotting only.
+viz = [
+  "matplotlib>=3.9.4",
+]
+all = [
+  "gtfs-eta[train,collect,viz]",
+]
+
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+# gtfs_eta* is the transitional alias namespace (gtfs_eta/__init__.py +
+# gtfs_eta/seed_baseline_model.py) — see gtfs_eta/__init__.py for why it's a
+# sys.modules alias onto the four packages below rather than their new home.
+include = ["core*", "eta_service*", "feature_engineering*", "models*", "gtfs_eta*"]
+
+[tool.uv]
+package = true
+
+[dependency-groups]
+# etaval (map-matching library; sibling repo, not on PyPI) -- needed only by
+# feature_engineering/bucr_gtfs.py for etaval.spatial.polyline /
+# etaval.domain.models. Kept out of base `dependencies` (and out of any
+# extra that base installs pull in) because etaval's own base dependencies
+# hard-require xgboost>=3.1.2 -- see the comment on `train` above for why
+# this repo's inference-only base must stay xgboost-free. etaval in turn
+# depends back on this repo (`gtfs-eta`, path = "../gtfs-eta", editable) --
+# uv resolves that path cycle natively, no [tool.uv.workspace] needed.
+bucr = [
+    "etaval",
+]
+# Deep-learning models (models/lstm/): the recurrent segment-sequence model of
+# roadmap 5.2. Kept in its own group so the inference base install stays free of
+# a ~200 MB torch wheel; only the LSTM trainer and its tests need it.
+dl = [
+    # Pinned <2.3: torch dropped macOS x86_64 wheels after 2.2.2, and this repo
+    # is developed on an Intel Mac. Linux/arm64 CI resolves the same pin fine.
+    "torch>=2.2,<2.3",
+]
+
+[tool.uv.sources]
+# Non-editable: real installed files under .venv/site-packages, immune to
+# the macOS-hidden-flag / iCloud .pth bug documented in
+# feature_engineering/bucr_gtfs.py's former _bootstrap_etaval_path docstring
+# (iCloud re-applies the hidden flag to files under ~/Desktop, and
+# Python 3.14's site.py silently skips hidden .pth files -- editable
+# installs rely on a .pth pointing back at the source tree). A non-editable
+# install here means picking up etaval source changes requires re-running
+# `uv sync`/`uv add`, which is an acceptable tradeoff for durability.
+etaval = { path = "../etaval" }
+
+# No [tool.uv.workspace] block: it previously listed "feature_engineering/proj"
+# (does not exist on disk) and "feature_engineering" (exists, but is already
+# part of this project's own package tree per [tool.setuptools.packages.find]
+# above — declaring it as a separate workspace member conflicted with that).
+# feature_engineering/pyproject.toml still exists on disk as a leftover,
+# differently-scoped package definition (geopandas/shapely/pyproj/scipy —
+# none of which anything under feature_engineering/*.py actually imports);
+# left in place but not wired up, since resolving that predates this pass.
