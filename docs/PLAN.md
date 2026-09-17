@@ -1,6 +1,6 @@
 # stoptimes — implementation plan
 
-Status: **Phase 0 in progress** · branch `feat/stoptimes-scaffold` · last updated 2026-09-16
+Status: **Phase 0 complete (not pushed)** · next: Phase 1 · branch `feat/stoptimes-scaffold` · last updated 2026-09-16
 
 This is the working plan for turning SIMOVI's ETA research code (`gtfs-eta`) and its
 validation tool (`etaval`) into **stoptimes**: a general toolkit that lets anyone with
@@ -162,15 +162,27 @@ State after 0.3: `cli` 3 passed · `core` 105 passed · `val` 430 passed 1 skipp
 
 | Package | Expected (from baseline) | Actual |
 |---|---|---|
-| core | 105 passed | |
-| models | all non-torch pass; lstm skipped w/o torch | |
-| serve | 21 passed | |
-| record | 88 + tu_records passed | |
-| train | all migrated pass; Django tests skip w/o extra; rt_source passes | |
-| val | 430 passed, 1 skipped | |
-| cli | all passed | |
+| core | 105 passed | 105 passed ✅ |
+| models | all non-torch pass; lstm skipped w/o torch | 105 passed, 1 skipped (lstm, no torch) ✅ |
+| serve | 21 passed | 21 passed ✅ |
+| record | 88 + tu_records passed | 106 passed ✅ |
+| train | all migrated pass; Django tests skip w/o extra; rt_source passes | 217 passed, 15 skipped (bUCR snapshot absent, as before) ✅ — Django tests and rt_source now pass |
+| val | 430 passed, 1 skipped | 430 passed, 1 skipped ✅ |
+| cli | all passed | 24 passed ✅ |
 
-**Phase 0 exit:** parity table complete, `stoptimes --help` shows every area, the branch is pushed
+Total: **1008 passed, 17 skipped, 0 failed** (baseline across the three source suites: 931 passed, 16 skipped, 3 collection errors).
+Also verified: nothing in `packages/` imports legacy modules; `import stoptimes.serve.estimator` loads neither xgboost nor torch;
+6 real pre-migration artifacts load through `LegacyModuleUnpickler` (they use bare module names like `xgb.train`).
+
+### 4.5 Follow-ups carried into Phase 1
+
+- `stoptimes.models.common.data.load_dataset` falls back to `packages/serve/tests/fixtures/` — production code must not
+  know test paths. Replace with an explicit dataset path/catalog (C1 `data` contract, T1 catalog).
+- pandas now infers `datetime64[us]` where code assumed `ns` (fixed in `navsat_adapter`); C1 `data` contract pins timestamp dtype.
+- `val/predictors/gtfs_eta_models.py` docstrings still describe a sibling gtfs-eta repo (T6 renames to `stoptimes:*`).
+- Track notes with details: `docs/notes/p0-{a,b,d}.md`.
+
+**Phase 0 exit:** ✅ parity table complete, `stoptimes --help` shows every area, the branch is pushed
 (with the user's OK), and nothing in `packages/` imports from `legacy/`.
 
 ---
