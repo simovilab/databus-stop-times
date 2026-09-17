@@ -12,9 +12,9 @@ into publication-grade claims:
   above into one DataFrame, suitable for a paper table.
 - Thin, DataFrame-returning wrappers around the existing (but previously
   unused) `error_analysis` and `prediction_intervals` helpers in
-  `models/common/metrics.py`, with a stratification argument.
+  `stoptimes.models.common.metrics`, with a stratification argument.
 
-Everything here builds on `models/common/metrics.py` rather than
+Everything here builds on `stoptimes.models.common.metrics` rather than
 reimplementing it: `mae_seconds`, `error_analysis`, and `prediction_intervals`
 are imported, not duplicated.
 
@@ -43,7 +43,7 @@ import numpy as np
 import pandas as pd
 from scipy import stats as sp_stats
 
-from common.metrics import (
+from stoptimes.models.common.metrics import (
     mae_seconds,
     error_analysis as _error_analysis,
     prediction_intervals as _prediction_intervals,

@@ -26,12 +26,12 @@ Method
 HARD CONSTRAINTS honored by this script
 ----------------------------------------
 - Every trainer call passes save_model=False. Nothing is written to
-  models/trained/ (no registry.json update, no *.pkl write).
+  the model registry (no registry.json update, no *.pkl write).
 - No writes outside this file. No git operations.
 
 Run
 ---
-    PYTHONPATH=. uv run --group bucr python models/evaluation/leakage_probe.py
+    uv run --no-sync python -m stoptimes.train.evaluation.leakage_probe
 
 ===========================================================================
 RESULT OF LAST RUN (2026-08-30)
@@ -60,18 +60,15 @@ not leaking the target through its features.
 """
 from __future__ import annotations
 
-import sys
 from pathlib import Path
 
 import numpy as np
 import pandas as pd
 
-REPO_ROOT = Path(__file__).resolve().parents[2]
-sys.path.append(str(REPO_ROOT))
-sys.path.append(str((REPO_ROOT / "models").resolve()))
+from stoptimes.models.xgb.train import train_xgboost
+from stoptimes.models.polyreg_distance.train import train_polyreg_distance
 
-from xgb.train import train_xgboost  # noqa: E402
-from polyreg_distance.train import train_polyreg_distance  # noqa: E402
+REPO_ROOT = Path(__file__).resolve().parents[2]
 
 DATASET = "bucr_segments_corpus"
 DS_PATH = str(REPO_ROOT / "datasets" / "bucr_segments_corpus.parquet")

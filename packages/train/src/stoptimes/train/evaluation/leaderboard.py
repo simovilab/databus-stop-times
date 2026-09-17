@@ -5,14 +5,10 @@ Model leaderboard for comparing performance across models.
 import pandas as pd
 import numpy as np
 from typing import List, Optional, Dict
-import sys
-from pathlib import Path
 
-sys.path.append(str(Path(__file__).parent.parent))
-
-from common.registry import get_registry
-from common.data import load_dataset
-from common.metrics import compute_all_metrics
+from stoptimes.models.common.registry import get_registry
+from stoptimes.models.common.data import load_dataset
+from stoptimes.models.common.metrics import compute_all_metrics
 
 
 class ModelLeaderboard:
@@ -225,5 +221,5 @@ if __name__ == "__main__":
     results_df = quick_compare(model_keys)
     
     # Save results
-    results_df.to_csv("models/leaderboard_results.csv", index=False)
-    print("\nResults saved to models/leaderboard_results.csv")
+    results_df.to_csv("leaderboard_results.csv", index=False)
+    print("\nResults saved to leaderboard_results.csv")
