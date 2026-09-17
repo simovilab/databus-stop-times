@@ -1,6 +1,6 @@
 # stoptimes — implementation plan
 
-Status: **Phase 0 in progress** · branch `feat/gtfsml-scaffold` · last updated 2026-09-16
+Status: **Phase 0 in progress** · branch `feat/stoptimes-scaffold` · last updated 2026-09-16
 
 This is the working plan for turning SIMOVI's ETA research code (`gtfs-eta`) and its
 validation tool (`etaval`) into **stoptimes**: a general toolkit that lets anyone with
