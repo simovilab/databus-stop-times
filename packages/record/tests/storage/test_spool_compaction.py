@@ -16,7 +16,7 @@ import pandas as pd
 import pytest
 
 from stoptimes.record.storage.spool import Spool
-from stoptimes.record.storage.tests.test_spool import _sample
+from .test_spool import _sample
 
 
 def _spool(tmp_path) -> Spool:
