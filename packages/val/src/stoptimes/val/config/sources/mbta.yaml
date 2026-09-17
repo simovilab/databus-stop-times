@@ -1,0 +1,14 @@
+# MBTA — public GTFS-RT JSON + GTFS static.
+name: mbta
+gtfs_static_url: https://cdn.mbta.com/MBTA_GTFS.zip
+vehicle_positions_url: https://cdn.mbta.com/realtime/VehiclePositions.json
+trip_updates_url: https://cdn.mbta.com/realtime/TripUpdates.json
+poll_interval_s: 15
+
+# Optional request headers (e.g. API key). MBTA public feeds need none.
+headers: {}
+
+# Ground-truth detector parameters.
+arrival_radius_m: 40.0
+dwell_s: 0.0
+shape_threshold_m: 30.0

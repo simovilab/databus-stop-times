@@ -1,0 +1,63 @@
+{
+  "header": {
+    "gtfs_realtime_version": "2.0",
+    "incrementality": "FULL_DATASET",
+    "timestamp": 1700000000
+  },
+  "entity": [
+    {
+      "id": "v1",
+      "is_deleted": false,
+      "vehicle": {
+        "trip": {
+          "trip_id": "trip_1",
+          "route_id": "route_1",
+          "direction_id": 0,
+          "start_date": "20240101",
+          "schedule_relationship": "SCHEDULED"
+        },
+        "vehicle": {
+          "id": "vehicle_1",
+          "label": "1"
+        },
+        "position": {
+          "latitude": 42.3601,
+          "longitude": -71.0589,
+          "bearing": 180.0,
+          "speed": 10.5
+        },
+        "current_stop_sequence": 2,
+        "stop_id": "s2",
+        "current_status": "IN_TRANSIT_TO",
+        "timestamp": 1700000000
+      }
+    },
+    {
+      "id": "v2",
+      "is_deleted": false,
+      "vehicle": {
+        "trip": {
+          "trip_id": "trip_2",
+          "route_id": "route_2",
+          "direction_id": 1,
+          "start_date": "20240101",
+          "schedule_relationship": "SCHEDULED"
+        },
+        "vehicle": {
+          "id": "vehicle_2",
+          "label": "2"
+        },
+        "position": {
+          "latitude": 42.3500,
+          "longitude": -71.0500,
+          "bearing": 90.0,
+          "speed": 5.0
+        },
+        "current_stop_sequence": 3,
+        "stop_id": "s3",
+        "current_status": "STOPPED_AT",
+        "timestamp": 1699999990
+      }
+    }
+  ]
+}

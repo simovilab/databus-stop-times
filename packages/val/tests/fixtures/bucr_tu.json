@@ -1,0 +1,60 @@
+{
+  "header": {
+    "gtfs_realtime_version": "2.0",
+    "incrementality": "FULL_DATASET",
+    "timestamp": 1700010000
+  },
+  "entity": [
+    {
+      "id": "bucr_tu1",
+      "is_deleted": false,
+      "trip_update": {
+        "trip": {
+          "trip_id": "bucr_trip_1",
+          "route_id": "bucr_route_A",
+          "direction_id": 0,
+          "start_date": "20240101",
+          "schedule_relationship": "SCHEDULED"
+        },
+        "stop_time_update": [
+          {
+            "stop_sequence": 1,
+            "stop_id": "bucr_s1",
+            "arrival": {"delay": 60, "time": 1700010120, "uncertainty": 45},
+            "departure": {"delay": 60, "time": 1700010145, "uncertainty": 45},
+            "schedule_relationship": "SCHEDULED"
+          },
+          {
+            "stop_sequence": 2,
+            "stop_id": "bucr_s2",
+            "arrival": {"delay": 75, "time": 1700010350, "uncertainty": 60},
+            "departure": {"delay": 75, "time": 1700010380, "uncertainty": 60},
+            "schedule_relationship": "SCHEDULED"
+          }
+        ]
+      }
+    },
+    {
+      "id": "bucr_tu2",
+      "is_deleted": false,
+      "trip_update": {
+        "trip": {
+          "trip_id": "bucr_trip_2",
+          "route_id": "bucr_route_B",
+          "direction_id": 1,
+          "start_date": "20240101",
+          "schedule_relationship": "SCHEDULED"
+        },
+        "stop_time_update": [
+          {
+            "stop_sequence": 2,
+            "stop_id": "bucr_s2",
+            "arrival": {"delay": 0, "time": 1700010250, "uncertainty": 30},
+            "departure": {"delay": 0, "time": 1700010270, "uncertainty": 30},
+            "schedule_relationship": "SCHEDULED"
+          }
+        ]
+      }
+    }
+  ]
+}

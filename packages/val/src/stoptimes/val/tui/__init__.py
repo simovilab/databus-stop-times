@@ -1,0 +1,1 @@
+"""etaval.tui — a Textual-based operator console for the etaval REST API."""
