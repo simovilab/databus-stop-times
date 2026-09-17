@@ -1,14 +1,19 @@
 """
-Centralized configuration and path management for the ETA prediction system.
+Centralized configuration for stoptimes: model registry location, agency
+defaults, and other cross-cutting settings.
 
-This module eliminates scattered sys.path manipulation and provides a single source
-of truth for all project paths and configuration.
+There is no single "project root" concept here: stoptimes ships as a uv
+workspace of independently installable packages (`packages/*`), so a
+package can be imported from inside this repo, from an editable install, or
+as a regular dependency of an unrelated project with no repo checkout at
+all. Anything that needs a location (the model registry) is resolved from
+`STOPTIMES_HOME` / an explicit override / the current working directory --
+never by walking up from this file looking for a `pyproject.toml`.
 """
 
 from __future__ import annotations
 
 import os
-import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
@@ -50,46 +55,21 @@ AGENCY_MODEL_DEFAULTS: dict[str, dict[str, Optional[str]]] = {
 }
 
 
-def _find_project_root() -> Path:
-    """
-    Find the project root by looking for pyproject.toml or .git directory.
-    Falls back to the parent of the 'core' module directory.
-    """
-    # Start from this file's directory
-    current = Path(__file__).resolve().parent
-
-    # Walk up looking for markers
-    for parent in [current] + list(current.parents):
-        if (parent / "pyproject.toml").exists():
-            return parent
-        if (parent / ".git").exists():
-            return parent
-        # Stop at filesystem root
-        if parent == parent.parent:
-            break
-
-    # Fallback: assume core/ is directly under project root
-    return current.parent
-
-
 @dataclass
 class ProjectConfig:
     """
-    Centralized project configuration.
+    Centralized stoptimes configuration.
 
     Usage:
         from stoptimes.core.config import get_config
 
         config = get_config()
-        print(config.models_dir)
         print(config.model_registry_dir)
     """
 
-    # Root paths
-    project_root: Path = field(default_factory=_find_project_root)
-
     # Environment overrides (populated from env vars)
     _model_registry_override: Optional[str] = field(default=None, repr=False)
+    _stoptimes_home_override: Optional[str] = field(default=None, repr=False)
     _agency_override: Optional[str] = field(default=None, repr=False)
     _timezone_override: Optional[str] = field(default=None, repr=False)
     _region_override: Optional[str] = field(default=None, repr=False)
@@ -99,61 +79,40 @@ class ProjectConfig:
     def __post_init__(self):
         """Load environment variable overrides."""
         self._model_registry_override = os.environ.get("MODEL_REGISTRY_DIR")
+        self._stoptimes_home_override = os.environ.get("STOPTIMES_HOME")
         self._agency_override = os.environ.get("ETA_AGENCY")
         self._timezone_override = os.environ.get("ETA_TIMEZONE")
         self._region_override = os.environ.get("ETA_HOLIDAY_REGION")
         self._served_model_key_override = os.environ.get("ETA_MODEL_KEY")
         self._served_model_fallback_override = os.environ.get("ETA_MODEL_FALLBACK_KEY")
 
-        # Ensure project root is on sys.path for imports
-        root_str = str(self.project_root)
-        if root_str not in sys.path:
-            sys.path.insert(0, root_str)
-
     # =========================================================================
     # Directory Paths
     # =========================================================================
 
     @property
-    def core_dir(self) -> Path:
-        """Path to core/ module."""
-        return self.project_root / "core"
-
-    @property
-    def models_dir(self) -> Path:
-        """Path to models/ directory."""
-        return self.project_root / "models"
+    def stoptimes_home(self) -> Optional[Path]:
+        """`STOPTIMES_HOME`, if set: a directory stoptimes can keep its own
+        state under (today: the model registry, at `$STOPTIMES_HOME/models`)."""
+        if self._stoptimes_home_override:
+            return Path(self._stoptimes_home_override).expanduser().resolve()
+        return None
 
     @property
     def model_registry_dir(self) -> Path:
         """
-        Path to trained model storage.
+        Path to trained model storage. Resolution order:
 
-        Respects MODEL_REGISTRY_DIR environment variable if set.
+        1. `MODEL_REGISTRY_DIR` env var (or `set_model_registry_dir`) --
+           an explicit, single-purpose override.
+        2. `$STOPTIMES_HOME/models`, if `STOPTIMES_HOME` is set.
+        3. `./artifacts/models`, relative to the current working directory.
         """
         if self._model_registry_override:
             return Path(self._model_registry_override).expanduser().resolve()
-        return self.models_dir / "trained"
-
-    @property
-    def feature_engineering_dir(self) -> Path:
-        """Path to feature_engineering/ module."""
-        return self.project_root / "feature_engineering"
-
-    @property
-    def eta_service_dir(self) -> Path:
-        """Path to eta_service/ module."""
-        return self.project_root / "eta_service"
-
-    @property
-    def datasets_dir(self) -> Path:
-        """Path to datasets/ directory."""
-        return self.project_root / "datasets"
-
-    @property
-    def prefect_dir(self) -> Path:
-        """Path to prefect/ directory."""
-        return self.project_root / "prefect"
+        if self.stoptimes_home is not None:
+            return self.stoptimes_home / "models"
+        return Path.cwd() / "artifacts" / "models"
 
     # =========================================================================
     # Default Values (eliminates magic numbers)
@@ -219,7 +178,6 @@ class ProjectConfig:
     def ensure_dirs_exist(self) -> None:
         """Create essential directories if they don't exist."""
         self.model_registry_dir.mkdir(parents=True, exist_ok=True)
-        self.datasets_dir.mkdir(parents=True, exist_ok=True)
 
     def set_model_registry_dir(self, path: str) -> None:
         """
@@ -252,7 +210,6 @@ def get_config() -> ProjectConfig:
         from stoptimes.core.config import get_config
 
         config = get_config()
-        print(f"Project root: {config.project_root}")
         print(f"Model registry: {config.model_registry_dir}")
     """
     global _config
