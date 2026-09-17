@@ -1,3 +1,4 @@
+import json
 import os
 import subprocess
 import sys
@@ -169,7 +170,7 @@ def test_train_seed_baseline_passthrough_runs_underlying_module(tmp_path):
 def test_models_help():
     result = runner.invoke(app, ["models", "--help"])
     assert result.exit_code == 0
-    for name in ("check", "card"):
+    for name in ("check", "card", "migrate"):
         assert name in result.output
 
 
@@ -183,6 +184,99 @@ def test_models_check_passthrough_help_reaches_argparse():
     result = _uv_run("models", "check", "--help")
     assert result.returncode == 0, result.stdout + result.stderr
     assert "Check model registry status" in result.stdout
+
+
+def test_models_migrate_help():
+    result = runner.invoke(app, ["models", "migrate", "--help"])
+    assert result.exit_code == 0
+    assert "--dry-run" in result.output
+    assert "--overwrite" in result.output
+    assert "--json" in result.output
+
+
+def test_models_command_module_does_not_import_pandas_or_sklearn():
+    """`stoptimes.cli.commands.models` must import `migrate` lazily inside
+    the command body, not at module level -- otherwise every `stoptimes`
+    invocation (not just `models migrate`) would pay pandas/sklearn import
+    cost. (`stoptimes.cli.main` itself already eagerly mounts `val`, which
+    pulls in pandas independently of this command's own hygiene -- that's
+    out of this track's scope -- so this checks the models module in
+    isolation rather than the whole assembled CLI.)"""
+    full_env = dict(os.environ)
+    existing = full_env.get("PYTHONPATH")
+    full_env["PYTHONPATH"] = os.pathsep.join(
+        [*_WORKSPACE_SRC_DIRS, existing] if existing else _WORKSPACE_SRC_DIRS
+    )
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            "import stoptimes.cli.commands.models, sys; "
+            "assert 'pandas' not in sys.modules, sorted(sys.modules); "
+            "assert 'sklearn' not in sys.modules; "
+            "print('OK')",
+        ],
+        cwd=str(_REPO_ROOT),
+        capture_output=True,
+        text=True,
+        env=full_env,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "OK" in result.stdout
+
+
+def _write_legacy_artifact(legacy_dir, key: str):
+    import pickle
+
+    legacy_dir.mkdir(parents=True, exist_ok=True)
+    (legacy_dir / f"{key}.pkl").write_bytes(pickle.dumps({"coef": [1, 2, 3]}))
+    meta = {
+        "model_type": "diagnostic_test",
+        "dataset": "unit_test",
+        "route_id": None,
+        "features": [],
+        "n_samples": 10,
+        "train_samples": 8,
+        "test_samples": 2,
+        "metrics": {"test_mae_seconds": 1.0},
+        "model_key": key,
+        "saved_at": "2026-08-18T11:57:00.478753",
+        "model_path": f"{key}.pkl",
+    }
+    (legacy_dir / f"{key}_meta.json").write_text(json.dumps(meta), encoding="utf-8")
+
+
+def test_models_migrate_end_to_end(tmp_path):
+    legacy_dir = tmp_path / "legacy"
+    registry_dir = tmp_path / "registry"
+    _write_legacy_artifact(legacy_dir, "diag_key")
+
+    result = runner.invoke(app, ["models", "migrate", str(legacy_dir), str(registry_dir), "--json"])
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert [i["key"] for i in payload["migrated"]] == ["diag_key"]
+    assert (registry_dir / "diag_key" / "artifact.json").exists()
+    assert (registry_dir / "diag_key" / "model.pkl").exists()
+
+
+def test_models_migrate_dry_run_writes_nothing(tmp_path):
+    legacy_dir = tmp_path / "legacy"
+    registry_dir = tmp_path / "registry"
+    _write_legacy_artifact(legacy_dir, "diag_key")
+
+    result = runner.invoke(app, ["models", "migrate", str(legacy_dir), str(registry_dir), "--dry-run"])
+
+    assert result.exit_code == 0, result.output
+    assert "would migrate: 1" in result.output
+    assert not registry_dir.exists()
+
+
+def test_models_migrate_exits_1_on_missing_legacy_dir(tmp_path):
+    result = runner.invoke(
+        app, ["models", "migrate", str(tmp_path / "nope"), str(tmp_path / "registry")]
+    )
+    assert result.exit_code != 0
 
 
 # ── serve / diagnose ──────────────────────────────────────────────────────────
