@@ -42,9 +42,7 @@ from .polyreg_distance.predict import predict_eta as predict_polyreg_distance
 from .polyreg_time.predict import predict_eta as predict_polyreg_time
 from .ewma.predict import predict_eta as predict_ewma
 
-# Evaluation
-from .evaluation.leaderboard import ModelLeaderboard, quick_compare
-from .evaluation.roll_validate import RollingValidator, quick_rolling_validate
+# Evaluation moved to stoptimes.train.evaluation (models must not depend on train).
 
 # Main training pipeline
 # from .train_all_models import train_all_baselines, train_advanced_configurations
@@ -99,11 +97,6 @@ __all__ = [
     'predict_polyreg_time',
     'predict_ewma',
     
-    # Evaluation
-    'ModelLeaderboard',
-    'quick_compare',
-    'RollingValidator',
-    'quick_rolling_validate',
 ]
 
 

@@ -1,0 +1,35 @@
+[project]
+name = "stoptimes-val"
+version = "0.1.0"
+description = "Validation: score any arrival-prediction source against ground truth from published feeds, by horizon."
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+dependencies = [
+    "stoptimes-core",
+    "httpx>=0.27",
+    "pydantic>=2.7",
+    "pandas>=2.2",
+    "pyarrow>=16.0",
+    "typer>=0.12",
+    "rich>=13.7",
+    "pyyaml>=6.0",
+    "scipy>=1.13",
+    "textual>=0.85",
+    "websockets>=12",
+    "matplotlib>=3.9",
+]
+
+[project.optional-dependencies]
+api = ["fastapi>=0.115", "uvicorn[standard]>=0.30"]
+# Score stoptimes models directly (the stoptimes:* / gtfs_eta:* predictors).
+models = ["stoptimes-serve[xgboost]"]
+# Replay archives straight from S3.
+s3 = ["fsspec>=2024.6", "s3fs>=2024.6"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/stoptimes"]

@@ -1,0 +1,33 @@
+__pycache__/
+*.py[cod]
+build/
+dist/
+*.egg-info/
+.venv*/
+.env
+.env.local
+.env.*.local
+.pytest_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
+# runtime outputs
+artifacts/
+runs/
+*.sqlite
+*.sqlite3
+celerybeat-schedule
+# model artifacts and data never go in git (fixtures under tests/ are the exception)
+*.pkl
+*.joblib
+*.pt
+*.parquet
+!packages/**/tests/**/*.parquet
+# web
+web/node_modules/
+web/.nuxt/
+web/.output/
+# macOS / iCloud duplicates
+.DS_Store
+* [0-9].py

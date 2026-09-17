@@ -1,0 +1,51 @@
+# Workspace root (not a published package). Members live in packages/*.
+# Dependency direction (must stay acyclic):
+#   core <- models <- serve <- train
+#   core <- record <- train
+#   core, serve(optional) <- val        nothing depends on val
+#   cli  -> everything, all optional
+[project]
+name = "stoptimes-workspace"
+version = "0.0.0"
+requires-python = ">=3.11,<3.13"
+dependencies = []
+
+[tool.uv]
+package = false
+
+[tool.uv.workspace]
+members = ["packages/*"]
+
+[tool.uv.sources]
+stoptimes = { workspace = true }
+stoptimes-core = { workspace = true }
+stoptimes-models = { workspace = true }
+stoptimes-train = { workspace = true }
+stoptimes-serve = { workspace = true }
+stoptimes-record = { workspace = true }
+stoptimes-val = { workspace = true }
+
+[dependency-groups]
+# Everything a contributor needs to run the whole suite (minus torch).
+dev = [
+    "stoptimes[all]",
+    "pytest>=8.2",
+    "pytest-asyncio>=0.23",
+    "pytest-cov>=5.0",
+    "respx>=0.21",
+    "ruff>=0.5",
+]
+# Deep-learning models (LSTM). Separate so `uv sync` stays light.
+dl = ["stoptimes-models[torch]"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+addopts = "--import-mode=importlib"
+testpaths = ["packages"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]

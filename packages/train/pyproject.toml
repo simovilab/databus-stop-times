@@ -1,0 +1,29 @@
+[project]
+name = "stoptimes-train"
+version = "0.1.0"
+description = "Training: datasets from GTFS data, feature engineering, experiments, offline evaluation."
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+dependencies = [
+    "stoptimes-core",
+    "stoptimes-models[xgboost]",
+    "stoptimes-serve",
+    "stoptimes-record",
+    "pyarrow>=16.0",
+    "scipy>=1.13",
+    "requests>=2.32",
+]
+
+[project.optional-dependencies]
+# Legacy Postgres dataset builder (datasets/dataset_builder.py, weather cache).
+django = ["Django>=5.0", "django-environ>=0.11", "psycopg[binary,pool]>=3.2.11"]
+torch = ["stoptimes-models[torch]"]
+viz = ["matplotlib>=3.9"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/stoptimes"]
