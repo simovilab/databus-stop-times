@@ -157,11 +157,20 @@ def version() -> None:
 
 
 @app.command()
-def sources() -> None:
+def sources(
+    sources_dir: Path | None = typer.Option(  # noqa: B008
+        None,
+        "--sources-dir",
+        help=(
+            "Directory of agency profile YAMLs to search exclusively "
+            "(default: STOPTIMES_SOURCES, then ./examples/agencies)"
+        ),
+    ),
+) -> None:
     """List all configured GTFS-RT sources."""
     # Console created here (not at module level) so CliRunner captures output.
     console = Console(file=sys.stdout, no_color=True)
-    names = list_sources()
+    names = list_sources(config_dir=sources_dir)
     if not names:
         typer.echo("No sources configured.")
         return
@@ -172,7 +181,7 @@ def sources() -> None:
     table.add_column("TU URL")
     table.add_column("Static URL")
     for name in names:
-        cfg = load_named_source(name)
+        cfg = load_named_source(name, config_dir=sources_dir)
         table.add_row(
             cfg.name,
             str(cfg.poll_interval_s),
