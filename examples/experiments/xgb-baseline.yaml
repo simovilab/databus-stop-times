@@ -1,0 +1,42 @@
+# Validated by packages/core/tests/test_contract_experiment.py
+# Trains an XGBoost model on MBTA data, scored against the two required
+# baselines (schedule-only, constant-speed) alongside it.
+name: xgb-baseline
+data:
+  sources:
+    - mbta
+  start_date: "2026-06-01"
+  end_date: "2026-08-31"
+  routes: null # all routes
+target: arrival_delay_s
+model:
+  family: xgboost
+  params:
+    max_depth: 6
+    n_estimators: 300
+    learning_rate: 0.05
+features:
+  - distance_to_stop
+  - distance_to_next_stop
+  - progress_ratio
+  - stops_ahead
+  - current_speed_kmh
+  - hour_sin
+  - hour_cos
+  - dow_sin
+  - dow_cos
+  - is_peak_hour
+  - is_weekend
+split:
+  kind: time
+  train_fraction: 0.8
+  test_fraction: 0.2
+seed: 42
+outputs:
+  registry_dir: artifacts/models
+  tags:
+    - xgb-baseline
+    - mbta
+baselines:
+  - schedule
+  - constant_speed

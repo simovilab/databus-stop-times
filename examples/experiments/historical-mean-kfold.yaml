@@ -1,0 +1,31 @@
+# Validated by packages/core/tests/test_contract_experiment.py
+# A small, fast experiment: historical-mean family, k-fold split, no
+# hyperparameters to search — useful as a smoke test for the training loop
+# itself before running anything expensive.
+name: historical-mean-kfold
+data:
+  sources:
+    - bucr
+  start_date: "2026-07-01"
+  end_date: "2026-07-15"
+target: arrival_delay_s
+model:
+  family: historical_mean
+  params: {}
+features:
+  - route_id
+  - stop_sequence
+  - hour
+  - day_of_week
+  - is_peak_hour
+split:
+  kind: kfold
+  n_folds: 5
+seed: 7
+outputs:
+  registry_dir: artifacts/models
+  tags:
+    - smoke
+baselines:
+  - schedule
+  - constant_speed
