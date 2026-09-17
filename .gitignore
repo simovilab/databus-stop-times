@@ -31,3 +31,4 @@ web/.output/
 # macOS / iCloud duplicates
 .DS_Store
 * [0-9].py
+.venv

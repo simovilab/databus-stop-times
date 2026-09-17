@@ -270,6 +270,9 @@ Model cards + pretrained zoo · public MBTA benchmark with fixed splits + leader
 - Run tests with `uv run --no-sync python -m pytest packages/<pkg> -q -p no:cacheprovider`.
   Never plain `pytest` (a global pytest can shadow the project's).
 - Repo lives under iCloud (`~/Desktop`): ignore `* 2.py` style duplicates, never commit them.
+  A venv inside iCloud gets its `.pth` files flagged hidden and Python skips them (imports of
+  `stoptimes` fail at random). Worktree setup: `uv venv --python 3.12 ~/.venvs/<worktree>`,
+  `ln -s ~/.venvs/<worktree> .venv`, then `uv sync --group dev`. See README.
 
 **Ownership.**
 - Edit only paths your track owns. Need a change elsewhere? Don't make it: add a note to

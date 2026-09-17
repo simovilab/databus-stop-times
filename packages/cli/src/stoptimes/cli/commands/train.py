@@ -27,8 +27,14 @@ def train_legacy_all(ctx: typer.Context) -> None:
     run_module("stoptimes.train.train_all_models", "stoptimes train legacy-all", ctx.args)
 
 
-@app.command("seed-baseline", context_settings=PASSTHROUGH)
-def train_seed_baseline(ctx: typer.Context) -> None:
-    """Seed a baseline model into the registry (migrated gtfs-eta helper)."""
+@app.command("seed-baseline")
+def train_seed_baseline() -> None:
+    """Seed the synthetic global baseline model into the registry (migrated gtfs-eta helper).
+
+    A regular command, not a passthrough: the underlying script takes no arguments
+    and runs on import as __main__, so passing `--help` through would execute it.
+    """
     require("stoptimes.train", "train")
-    run_module("stoptimes.train.seed_baseline_model", "stoptimes train seed-baseline", ctx.args)
+    from stoptimes.train.seed_baseline_model import main
+
+    main()

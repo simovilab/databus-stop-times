@@ -139,24 +139,17 @@ def test_train_ui_is_planned():
 
 
 def test_train_legacy_all_passthrough_reaches_train_all_models():
-    """`train legacy-all --help` should reach stoptimes.train.train_all_models.
-
-    That module currently has top-level bare imports (`from common.data import
-    ...`, `from historical_mean.train import ...`, etc.) left over from before
-    the migration to `stoptimes.*` packages — a known P0-B cleanup item (see
-    docs/PLAN.md P0-B and docs/notes/p0-d.md), not something owned by this
-    (P0-D / CLI) track. Until that's fixed, the module raises at import time
-    before argparse ever sees ``--help``. Accept either outcome as evidence
-    the CLI passthrough correctly reached the module: a clean argparse help
-    (once P0-B lands), or that specific known ModuleNotFoundError.
-    """
+    """`train legacy-all --help` reaches stoptimes.train.train_all_models' argparse."""
     result = _uv_run("train", "legacy-all", "--help")
-    reached_argparse_help = "Train ETA prediction models" in result.stdout
-    hit_known_bare_import_bug = (
-        result.returncode != 0
-        and "ModuleNotFoundError: No module named 'common'" in result.stderr
-    )
-    assert reached_argparse_help or hit_known_bare_import_bug, result.stdout + result.stderr
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "Train ETA prediction models" in result.stdout
+
+
+def test_train_seed_baseline_help_does_not_run_the_seed(tmp_path):
+    result = _uv_run("train", "seed-baseline", "--help", env={"MODEL_REGISTRY_DIR": str(tmp_path)})
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "Seeded model" not in result.stdout
+    assert not any(tmp_path.iterdir())
 
 
 def test_train_seed_baseline_passthrough_runs_underlying_module(tmp_path):

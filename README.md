@@ -31,9 +31,18 @@ uv run stoptimes --help
 uv run --no-sync python -m pytest packages/<pkg> -q
 ```
 
-Python 3.12 is pinned for development (`.python-version`): torch 2.2 has no newer
-wheels, and Python 3.14 skips iCloud-hidden `.pth` files that editable workspace
-installs depend on.
+Python 3.12 is pinned for development (`.python-version`) because the LSTM's torch 2.2
+has no newer wheels.
+
+**Checkout under iCloud (`~/Desktop`, `~/Documents`)?** Keep the virtualenv outside it.
+iCloud marks files hidden, Python skips hidden `.pth` files, and editable workspace
+installs then stop importing at random. One-time setup:
+
+```bash
+uv venv --python 3.12 ~/.venvs/databus-stop-times
+ln -s ~/.venvs/databus-stop-times .venv
+uv sync --group dev
+```
 
 ## License
 
