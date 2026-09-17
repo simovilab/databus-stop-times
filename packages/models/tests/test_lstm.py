@@ -4,9 +4,11 @@ Unit tests for the segment-sequence LSTM/GRU trainer (roadmap 5.2).
 All tests use small synthetic DataFrames (no real corpus) and run in well
 under a minute. Run with:
 
-    PYTHONPATH=.:models .venv-dl/bin/python -m pytest models/tests/test_lstm.py -q
+    uv run --group dl python -m pytest packages/models/tests/test_lstm.py -q
 
-(requires the .venv-dl interpreter -- torch is not in the default venv).
+torch is a training-only, optional dependency (the `dl` uv group) -- it is
+not installed in the default dev environment. This whole module is skipped
+cleanly (not a collection error) when torch is unavailable.
 """
 
 from __future__ import annotations
@@ -14,7 +16,8 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 import pytest
-import torch
+
+torch = pytest.importorskip("torch", reason="torch not installed (install the 'dl' uv group to run LSTM tests)")
 
 from stoptimes.models.common.registry import ModelRegistry
 from stoptimes.models.lstm.data import (

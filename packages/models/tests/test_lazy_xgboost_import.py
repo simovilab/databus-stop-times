@@ -1,12 +1,17 @@
 """
-Tests for lazy-loading stoptimes.train.train_all_models (and therefore xgboost).
+Tests that stoptimes.models stays light: importing it (or its registry /
+predict modules) never pulls in xgboost, a training-only dependency (the
+`train` extra in pyproject.toml).
 
-xgboost is a training-only dependency (the `train` extra in pyproject.toml).
-models/__init__.py used to import train_all_models eagerly, which chains
-into xgb.train -> xgboost, forcing every inference-only consumer (the live
-gtfs-rt-pipeline collector, or a downstream project that only needs
-stoptimes.models.common.registry / models.*.predict) to install xgboost just to run
-`import models`.
+Dependency direction (see docs/PLAN.md §1): core <- models <- serve <- train.
+stoptimes.models must not depend on stoptimes.train, even lazily. A
+previous version of stoptimes.models.__init__ had a PEP 562 __getattr__
+that lazily imported stoptimes.train.train_all_models on attribute access
+(`stoptimes.models.train_all_models`) -- which inverted that dependency
+(and chained into xgb.train -> xgboost, only lazily). That accessor has
+been removed outright: models has no train_all_models attribute at all,
+lazy or otherwise. A caller that wants it imports it directly from
+stoptimes.train (owned by a separate track/package).
 
 Each check here runs in a fresh subprocess (via `python -c`) rather than
 in-process, because sys.modules is a process-global cache: once anything in
@@ -14,33 +19,40 @@ the same pytest run imports xgboost, later in-process assertions about "not
 in sys.modules" would be false regardless of whether THIS import path is
 lazy. A subprocess is the only way to observe a clean import.
 
-Run with: pytest models/tests/test_lazy_xgboost_import.py -v
+Run with: pytest packages/models/tests/test_lazy_xgboost_import.py -v
 """
 
 from __future__ import annotations
 
+import os
 import subprocess
 import sys
 
 
 def _run(code: str) -> subprocess.CompletedProcess:
+    # Pass this (working) process's sys.path down as PYTHONPATH rather than
+    # relying on the child re-deriving it from the venv's editable-install
+    # .pth files. This repo lives under an iCloud-synced ~/Desktop tree,
+    # where those .pth files can transiently pick up the macOS "hidden"
+    # (UF_HIDDEN) flag from the sync daemon; site.py silently skips a
+    # hidden .pth file (see CPython site.addpackage), which would make a
+    # freshly spawned interpreter fail to find `stoptimes` at all -- a
+    # host-environment flake, not a real import-graph regression. Explicit
+    # PYTHONPATH sidesteps that path entirely while still exercising a
+    # genuinely fresh sys.modules for the "not in sys.modules" assertions.
+    env = dict(os.environ)
+    env["PYTHONPATH"] = os.pathsep.join(p for p in sys.path if p)
     return subprocess.run(
         [sys.executable, "-c", code],
         capture_output=True,
         text=True,
         timeout=60,
+        env=env,
     )
 
 
 class TestPlainImportStaysLight:
-    def test_import_models_does_not_import_xgboost(self):
-        result = _run(
-            "import sys; import models; "
-            "assert 'xgboost' not in sys.modules, sys.modules.keys()"
-        )
-        assert result.returncode == 0, result.stderr
-
-    def test_import_gtfs_eta_models_does_not_import_xgboost(self):
+    def test_import_stoptimes_models_does_not_import_xgboost(self):
         result = _run(
             "import sys; import stoptimes.models; "
             "assert 'xgboost' not in sys.modules, sys.modules.keys()"
@@ -61,31 +73,21 @@ class TestPlainImportStaysLight:
         assert result.returncode == 0, result.stderr
 
 
-class TestTrainingPathStillWorks:
-    def test_from_models_import_train_all_models_still_works(self):
-        result = _run(
-            "import sys\n"
-            "from models import train_all_models\n"
-            "assert callable(train_all_models)\n"
-            "assert 'xgboost' in sys.modules\n"
-        )
-        assert result.returncode == 0, result.stderr
+class TestNoLazyTrainAttribute:
+    """models must not depend on train, not even lazily via __getattr__."""
 
-    def test_models_train_all_models_attribute_access_still_works(self):
+    def test_train_all_models_is_not_an_attribute_of_models(self):
         result = _run(
-            "import sys\n"
-            "import models\n"
-            "assert 'xgboost' not in sys.modules\n"
-            "fn = stoptimes.train.train_all_models\n"
-            "assert callable(fn)\n"
-            "assert 'xgboost' in sys.modules\n"
+            "import stoptimes.models\n"
+            "stoptimes.models.train_all_models\n"
         )
-        assert result.returncode == 0, result.stderr
+        assert result.returncode != 0
+        assert "AttributeError" in result.stderr
 
     def test_unknown_attribute_still_raises_attribute_error(self):
         result = _run(
-            "import models\n"
-            "models.definitely_not_a_real_attribute\n"
+            "import stoptimes.models\n"
+            "stoptimes.models.definitely_not_a_real_attribute\n"
         )
         assert result.returncode != 0
         assert "AttributeError" in result.stderr

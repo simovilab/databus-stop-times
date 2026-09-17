@@ -7,6 +7,7 @@ Run with: pytest core/tests/test_core.py -v
 import os
 import pytest
 from datetime import datetime, timezone
+from pathlib import Path
 
 
 class TestConfig:
@@ -21,24 +22,42 @@ class TestConfig:
         config2 = get_config()
         assert config1 is config2
 
-    def test_config_project_root_exists(self):
-        """Project root should be a valid directory."""
-        from stoptimes.core.config import get_config
+    def test_config_registry_dir_uses_stoptimes_home(self):
+        """STOPTIMES_HOME, when set, anchors the registry at $STOPTIMES_HOME/models."""
+        from stoptimes.core.config import get_config, reset_config
 
-        config = get_config()
-        assert config.project_root.exists()
-        assert config.project_root.is_dir()
+        reset_config()
+        os.environ.pop("MODEL_REGISTRY_DIR", None)
+        os.environ["STOPTIMES_HOME"] = "/tmp/stoptimes-home-test"
+        try:
+            config = get_config()
+            assert config.model_registry_dir == Path("/tmp/stoptimes-home-test").resolve() / "models"
+        finally:
+            os.environ.pop("STOPTIMES_HOME", None)
+            reset_config()
 
     def test_config_model_registry_dir(self):
-        """Model registry dir should be configurable via env var."""
+        """Model registry dir should be configurable via env var, and default
+        to ./artifacts/models relative to the current working directory when
+        neither MODEL_REGISTRY_DIR nor STOPTIMES_HOME is set."""
         from stoptimes.core.config import get_config, reset_config
 
         # Test default
         reset_config()
-        if "MODEL_REGISTRY_DIR" in os.environ:
-            del os.environ["MODEL_REGISTRY_DIR"]
+        os.environ.pop("MODEL_REGISTRY_DIR", None)
+        os.environ.pop("STOPTIMES_HOME", None)
         config = get_config()
-        assert "trained" in str(config.model_registry_dir)
+        assert config.model_registry_dir == Path.cwd() / "artifacts" / "models"
+
+        # Explicit override wins
+        reset_config()
+        os.environ["MODEL_REGISTRY_DIR"] = "/tmp/stoptimes-registry-test"
+        try:
+            config = get_config()
+            assert config.model_registry_dir == Path("/tmp/stoptimes-registry-test").resolve()
+        finally:
+            os.environ.pop("MODEL_REGISTRY_DIR", None)
+            reset_config()
 
     def test_config_default_values(self):
         """Config should have sensible defaults.
@@ -95,14 +114,25 @@ class TestConfig:
                 os.environ.pop(var, None)
             reset_config()
 
-    def test_config_paths(self):
-        """Config should provide valid paths."""
+    def test_config_has_no_repo_root_discovery(self):
+        """Config no longer walks the filesystem for a project root: there is
+        no single meaningful "project root" in a uv workspace of independently
+        installable packages. See docs/PLAN.md P0-A / docs/MIGRATION_MAP.md."""
+        import stoptimes.core.config as config_module
         from stoptimes.core.config import get_config
 
         config = get_config()
-        assert config.models_dir == config.project_root / "models"
-        assert config.feature_engineering_dir == config.project_root / "feature_engineering"
-        assert config.eta_service_dir == config.project_root / "eta_service"
+        for stale_attr in (
+            "project_root",
+            "core_dir",
+            "models_dir",
+            "feature_engineering_dir",
+            "eta_service_dir",
+            "datasets_dir",
+            "prefect_dir",
+        ):
+            assert not hasattr(config, stale_attr)
+        assert not hasattr(config_module, "_find_project_root")
 
 
 class TestLogging:
@@ -364,16 +394,13 @@ class TestIntegration:
             # Should not raise
 
     def test_config_paths_importable(self):
-        """Modules should be importable after config initialization."""
+        """Sibling stoptimes.core modules are importable via the normal
+        package mechanism (uv workspace editable install) -- config no
+        longer needs to (and doesn't) mutate sys.path for this to work."""
         from stoptimes.core.config import get_config
 
-        config = get_config()
+        get_config()
 
-        # Verify the path is set up correctly
-        import sys
-        assert str(config.project_root) in sys.path
-
-        # These imports should work because config sets up sys.path
         from stoptimes.core.features.temporal import extract_temporal_features
 
         assert callable(extract_temporal_features)

@@ -55,18 +55,22 @@ Comprehensive modeling stack that ingests feature-engineered GTFS-RT datasets, t
 
 ---
 
-## Training Orchestration (`train_all_models.py`)
+## Training Orchestration (`stoptimes.train.train_all_models`)
 
-`python models/train_all_models.py --dataset sample_dataset [--by-route] [--models ...] [--no-save]`
+Training orchestration lives in the `stoptimes-train` package, not here
+(models must not depend on train -- see docs/PLAN.md §1): `stoptimes train
+legacy-all --dataset sample_dataset [--by-route] [--models ...] [--no-save]`.
 
-- Loads the dataset once, optionally filtered by route, and delegates to each `train_*` routine. Default models: historical mean, distance polyreg, time polyreg, EWMA, and XGBoost.
+- Loads the dataset once, optionally filtered by route, and delegates to each `train_*` routine in this package. Default models: historical mean, distance polyreg, time polyreg, EWMA, and XGBoost.
 - **Global mode** – trains one model per type and prints MAE/RMSE/R² summaries.
 - **Route-specific mode** – iterates each route present in the dataset, trains the selected model types, and prints per-route performance plus correlations between trip volume and error.
 - Pass `--no-save` for dry runs; otherwise results land in the registry with enriched metadata (sample counts, coverage, and configurations).
 
 ---
 
-## Evaluation Toolkit (`models/evaluation/`)
+## Evaluation Toolkit (`stoptimes.train.evaluation`)
+
+Also owned by `stoptimes-train`, not this package, for the same reason.
 
 - **Leaderboard (`leaderboard.py`)** – Loads trained models from the registry, evaluates each on a consistent test split (temporal or route-based), and prints a ranked table with MAE/RMSE/R², coverage, and bias. Use `quick_compare([...], dataset)` for one-liners.
 - **Rolling validation (`roll_validate.py`)** – Implements walk-forward validation across sliding temporal windows to measure stability over time. Accepts custom `train_fn`/`predict_fn` callables so any model type can be stress-tested.
@@ -77,10 +81,10 @@ Comprehensive modeling stack that ingests feature-engineered GTFS-RT datasets, t
 ## Model Registry & Keys
 
 - `ModelKey.generate(...)` assembles identifiers of the form `polyreg_time_sample_temporal-spatial_global_20250126_143022_degree=2`. Keys capture dataset, feature groups, scope (global vs. `route_{id}`), timestamp, and supplemental hyper-parameters to simplify filtering and reproducibility.
-- `ModelRegistry.save_model` writes `{model_key}.pkl` (pickled estimator) and `{model_key}_meta.json` (config + metrics) while updating `trained/registry.json`. Metadata contains dataset info, route scope, sample counts, evaluation results, and custom training attributes.
+- `ModelRegistry.save_model` writes `{model_key}.pkl` (pickled estimator) and `{model_key}_meta.json` (config + metrics) while updating `registry.json` in the registry directory (see `stoptimes.core.config.ProjectConfig.model_registry_dir`: `MODEL_REGISTRY_DIR`, else `$STOPTIMES_HOME/models`, else `./artifacts/models`). Metadata contains dataset info, route scope, sample counts, evaluation results, and custom training attributes.
 - Consumers can:
   ```python
-  from models.common.registry import get_registry
+  from stoptimes.models.common.registry import get_registry
   registry = get_registry()
   df = registry.list_models(model_type='polyreg_time')
   best_key = registry.get_best_model(metric='test_mae_seconds', route_id='global')
@@ -110,10 +114,10 @@ Batch helpers (`batch_predict`) are available in every module when you need to s
 ## Example Workflow
 
 ```python
-from models.train_all_models import train_all_models
-from models.common.registry import get_registry
-from models.evaluation.leaderboard import quick_compare
-from models.xgb.predict import predict_eta as predict_xgb
+from stoptimes.train.train_all_models import train_all_models
+from stoptimes.models.common.registry import get_registry
+from stoptimes.train.evaluation.leaderboard import quick_compare
+from stoptimes.models.xgb.predict import predict_eta as predict_xgb
 
 # 1. Train baselines on pre-built parquet
 train_all_models(
@@ -145,18 +149,22 @@ leaderboard_df = quick_compare(candidate_keys, dataset_name="sample_dataset")
 ## Directory Structure
 
 ```
-models/
+packages/models/src/stoptimes/models/
 ├── common/                # Dataset + registry + metric utilities
-├── evaluation/            # Leaderboard + rolling validation + plotting
 ├── historical_mean/       # Baseline mean model (train/predict)
 ├── polyreg_distance/      # Distance-only polynomial regression
 ├── polyreg_time/          # Distance + temporal/spatial regression
 ├── ewma/                  # Exponential smoothing model with online updates
 ├── xgb/                   # Gradient-boosted tree regressor
-├── train_all_models.py    # CLI orchestrator
-├── example_workflow.py    # Import barrel + quick-start helpers
-├── check_registry.py      # Diagnostics for trained/ registry folder
-└── trained/               # Auto-created artifacts (PKL + JSON + registry index)
+├── lstm/                  # Segment-sequence LSTM/GRU model (needs the `dl` uv group)
+└── check_registry.py      # Diagnostics for the model registry directory
 ```
 
-Place datasets under `datasets/{name}.parquet`, run the feature-engineering builder beforehand, and execute the modeling scripts within the same Django/ORM environment as the ETA service so shared settings and caches are available.
+Training orchestration (`train_all_models.py`) and the evaluation toolkit
+(`leaderboard.py`, `roll_validate.py`) live in `packages/train`, not here
+(`stoptimes.train.train_all_models`, `stoptimes.train.evaluation.*`) --
+models must not depend on train (see docs/PLAN.md §1). Datasets are loaded
+by name via `stoptimes.models.common.data.load_dataset`, which looks under
+`./datasets/{name}.parquet` (relative to the current working directory);
+see `stoptimes.core.config.ProjectConfig.model_registry_dir` for where
+trained artifacts are stored.

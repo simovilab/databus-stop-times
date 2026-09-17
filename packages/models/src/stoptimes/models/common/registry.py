@@ -13,6 +13,7 @@ import pandas as pd
 
 from stoptimes.core.config import get_config
 from stoptimes.core.logging import get_logger
+from .legacy_unpickler import LegacyModuleUnpickler
 from .provenance import build_provenance
 
 _logger = get_logger("registry")
@@ -201,8 +202,14 @@ class ModelRegistry:
             if cached is not None and cached[0] == stamp:
                 return cached[1]
 
+        # LegacyModuleUnpickler (not plain pickle.load): artifacts saved
+        # before the packages/ migration record class module paths like
+        # `models.xgb.train` / `core.config` / `eta_service.estimator` /
+        # `feature_engineering.temporal`, which no longer exist as importable
+        # modules. It remaps those to their stoptimes.* home in find_class
+        # and is a no-op for artifacts already pickled under stoptimes.*.
         with open(model_path, 'rb') as f:
-            model = pickle.load(f)
+            model = LegacyModuleUnpickler(f).load()
 
         if use_cache:
             self._model_cache[model_key] = (stamp, model)

@@ -9,7 +9,7 @@ the bug where save_model wrote absolute model_path/meta_path entries into
 registry.json, so a registry that worked where it was seeded raised
 FileNotFoundError anywhere else.
 
-Run with: pytest models/tests/test_registry.py -v
+Run with: pytest packages/models/tests/test_registry.py -v
 """
 
 from __future__ import annotations

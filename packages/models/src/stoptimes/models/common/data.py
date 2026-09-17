@@ -242,23 +242,56 @@ class ETADataset:
         }
 
 
-def load_dataset(dataset_name: str = "sample_dataset") -> ETADataset:
+def _default_dataset_search_paths(dataset_name: str) -> List[Path]:
     """
-    Load dataset from datasets directory.
-    
+    Candidate locations checked, in order, when load_dataset() gets no
+    explicit `dataset_dir`.
+
+    1. `./datasets/{name}.parquet` relative to the current working
+       directory -- the layout a real deployment (or a script run from a
+       project root) is expected to use.
+    2. The shared `sample.parquet` test fixture at
+       `packages/serve/tests/fixtures/` -- the only dataset that ships in
+       this repo since the pre-migration top-level `datasets/` directory
+       was retired (see docs/MIGRATION_MAP.md). Found by walking up from
+       this file to the workspace's `packages/` directory; bounded by
+       filesystem root, so this is a no-op outside this workspace.
+    """
+    candidates = [Path.cwd() / "datasets" / f"{dataset_name}.parquet"]
+
+    here = Path(__file__).resolve()
+    for parent in here.parents:
+        if parent.name == "packages":
+            candidates.append(parent / "serve" / "tests" / "fixtures" / f"{dataset_name}.parquet")
+            break
+
+    return candidates
+
+
+def load_dataset(dataset_name: str = "sample_dataset", dataset_dir: Optional[Path] = None) -> ETADataset:
+    """
+    Load dataset from a datasets directory.
+
     Args:
         dataset_name: Name of dataset (without .parquet extension)
-        
+        dataset_dir: Explicit directory to load `{dataset_name}.parquet`
+            from. When omitted, tries `_default_dataset_search_paths` in
+            order and uses the first path that exists.
+
     Returns:
         ETADataset instance
     """
-    datasets_dir = Path(__file__).parent.parent.parent / "datasets"
-    data_path = datasets_dir / f"{dataset_name}.parquet"
-    
-    if not data_path.exists():
-        raise FileNotFoundError(f"Dataset not found: {data_path}")
-    
-    return ETADataset(str(data_path))
+    if dataset_dir is not None:
+        candidates = [Path(dataset_dir) / f"{dataset_name}.parquet"]
+    else:
+        candidates = _default_dataset_search_paths(dataset_name)
+
+    for data_path in candidates:
+        if data_path.exists():
+            return ETADataset(str(data_path))
+
+    tried = ", ".join(str(p) for p in candidates)
+    raise FileNotFoundError(f"Dataset not found: tried {tried}")
 
 
 def prepare_features_target(df: pd.DataFrame, 

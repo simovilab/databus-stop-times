@@ -21,23 +21,24 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, Optional
 
-from stoptimes.core.config import get_config
-
 _HASH_CHUNK_SIZE = 1024 * 1024  # 1 MiB
 
 
 def git_sha() -> Optional[str]:
     """
-    Short SHA of the current HEAD commit (`git rev-parse --short HEAD`),
-    run with cwd = the project root. Returns None (never raises) if git
-    is unavailable, this isn't a git checkout, or anything else goes
-    wrong.
+    Short SHA of the current HEAD commit (`git rev-parse --short HEAD`).
+
+    Run with the caller's own cwd rather than any config-derived "project
+    root": `git rev-parse` already walks up from cwd to find the enclosing
+    repository, so no path resolution is needed here, and this stays
+    correct in a package layout where there's no single meaningful
+    project root to compute (see docs/MIGRATION_MAP.md). Returns None
+    (never raises) if git is unavailable, this isn't a git checkout, or
+    anything else goes wrong.
     """
     try:
-        repo_root = get_config().project_root
         result = subprocess.run(
             ["git", "rev-parse", "--short", "HEAD"],
-            cwd=str(repo_root),
             capture_output=True,
             text=True,
             timeout=10,
@@ -99,8 +100,19 @@ def file_content_hash(path: Any) -> Optional[str]:
 
 
 def _resolve_dataset_path(dataset_name: str) -> Path:
-    repo_root = get_config().project_root
-    return repo_root / "datasets" / f"{dataset_name}.parquet"
+    """Find `{dataset_name}.parquet`, trying the same candidate locations
+    as `stoptimes.models.common.data.load_dataset` (cwd-relative
+    `datasets/`, then the shared test fixture) -- and falling back to the
+    first (possibly nonexistent) candidate so callers still get a Path to
+    report, consistent with `file_content_hash`'s "missing file -> None"
+    contract at the caller (`build_provenance`)."""
+    from .data import _default_dataset_search_paths
+
+    candidates = _default_dataset_search_paths(dataset_name)
+    for path in candidates:
+        if path.exists():
+            return path
+    return candidates[0]
 
 
 def build_provenance(

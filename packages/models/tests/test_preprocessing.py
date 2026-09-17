@@ -4,7 +4,7 @@ Tests for roadmap 5.3: shared NaN handling + prediction clipping
 row-set-equality guarantee that makes the five-family leaderboard honest.
 
 Run with:
-    PYTHONPATH=.:models .venv-dl/bin/python -m pytest models/tests/test_preprocessing.py -q
+    uv run --no-sync python -m pytest packages/models/tests/test_preprocessing.py -q
 """
 
 from __future__ import annotations
