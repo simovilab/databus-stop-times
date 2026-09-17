@@ -1,8 +1,10 @@
 """Pytest coverage for the served-model pin that keeps the databus path on
 the BUCR corpus model.
 
-See ``stoptimes.core.config.AGENCY_MODEL_DEFAULTS`` / ``ETA_MODEL_KEY`` and the
-"SMART MODEL SELECTION" block in ``stoptimes.serve.estimator.estimate_stop_times``:
+See ``examples/agencies/bucr.yaml``'s ``serving`` block (resolved via
+``stoptimes.core.config.ProjectConfig.served_model_key`` /
+``STOPTIMES_MODEL_KEY``) and the "SMART MODEL SELECTION" block in
+``stoptimes.serve.estimator.estimate_stop_times``:
 when the active agency has a pinned model, it's used outright and
 ``ModelRegistry.get_best_model``'s metric-only ranking (which has no
 dataset/agency awareness) is never consulted -- these tests seed a
@@ -111,8 +113,9 @@ def test_bucr_pin_falls_back_to_corpus_polyreg_when_primary_missing(seeded_regis
     better-scoring MBTA model.
     """
     # bucr_agency leaves the real production primary/fallback keys in effect
-    # (from AGENCY_MODEL_DEFAULTS); override the fallback to this test's
-    # throwaway key since the real one isn't seeded into tmp_path either.
+    # (from examples/agencies/bucr.yaml's `serving` block); override the
+    # fallback to this test's throwaway key since the real one isn't seeded
+    # into tmp_path either.
     monkeypatch.setattr(estimator_module._config, "_served_model_fallback_override", FALLBACK_KEY)
 
     result = estimate_stop_times(_vehicle_position(), _stops(), max_stops=3)

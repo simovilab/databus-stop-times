@@ -36,6 +36,12 @@ runner = CliRunner()
 _FIXTURES = Path(__file__).parent / "fixtures"
 _MINI_GTFS = _FIXTURES / "mini_gtfs.zip"
 
+# Absolute path to the repo's shipped agency profiles, computed from this
+# test file rather than relied upon via cwd -- see source_config.py /
+# examples/agencies/README.md for the search path `sources` also supports
+# (STOPTIMES_SOURCES, then ./examples/agencies relative to cwd).
+_EXAMPLES_AGENCIES = Path(__file__).resolve().parents[3] / "examples" / "agencies"
+
 # ── parse_duration ────────────────────────────────────────────────────────────
 
 
@@ -81,24 +87,28 @@ def test_parse_duration_whitespace_only_raises() -> None:
 # ── sources command ───────────────────────────────────────────────────────────
 
 
+def _invoke_sources():
+    return runner.invoke(app, ["sources", "--sources-dir", str(_EXAMPLES_AGENCIES)])
+
+
 def test_sources_exits_zero() -> None:
-    result = runner.invoke(app, ["sources"])
+    result = _invoke_sources()
     assert result.exit_code == 0, result.output
 
 
 def test_sources_contains_mbta() -> None:
-    result = runner.invoke(app, ["sources"])
+    result = _invoke_sources()
     assert "mbta" in result.output
 
 
 def test_sources_contains_bucr() -> None:
-    result = runner.invoke(app, ["sources"])
+    result = _invoke_sources()
     assert "bucr" in result.output
 
 
 def test_sources_contains_poll_interval() -> None:
     """Table should show numeric poll intervals."""
-    result = runner.invoke(app, ["sources"])
+    result = _invoke_sources()
     assert result.exit_code == 0
     # MBTA has 15, bUCR has 5 — at least one digit appears.
     assert re.search(r"\d+", result.output)

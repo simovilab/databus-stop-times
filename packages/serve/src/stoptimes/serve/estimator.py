@@ -237,8 +237,11 @@ def estimate_stop_times(
     #    SMART MODEL SELECTION
     # ============================================================
     if model_key is None:
-        # Served-model pin (stoptimes.core.config.AGENCY_MODEL_DEFAULTS / ETA_MODEL_KEY):
-        # when the active agency has one, it wins outright. This is what
+        # Served-model pin (the active agency's profile file --
+        # examples/agencies/<agency>.yaml's `serving.primary_model`,
+        # resolved via stoptimes.core.config's ProjectConfig.served_model_key
+        # / STOPTIMES_MODEL_KEY): when the active agency has one, it wins
+        # outright. This is what
         # guarantees the databus path serves the BUCR corpus model rather
         # than registry.get_best_model()'s metric-only ranking, which has no
         # dataset/agency awareness and would happily pick an MBTA model

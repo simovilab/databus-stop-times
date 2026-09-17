@@ -12,3 +12,14 @@ headers: {}
 arrival_radius_m: 40.0
 dwell_s: 0.0
 shape_threshold_m: 30.0
+
+# Agency profile (stoptimes.core.config): timezone + holiday-calendar region
+# for temporal feature extraction (train and serve resolve through this same
+# file, so a given timestamp produces identical features either way). MBTA
+# has no served-model pin -- serving falls through to the registry's
+# metric-only best-model ranking.
+timezone: America/New_York
+holiday_region: US_MA
+serving:
+  primary_model: null
+  fallback_model: null

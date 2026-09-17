@@ -26,11 +26,16 @@ from stoptimes.val.feeds.source_config import list_sources, load_named_source, l
 from stoptimes.core.gtfs.static import GtfsStaticLoader
 from stoptimes.val.feeds.tracker import ActiveTripTracker
 
+# Absolute path to the repo's shipped agency profiles, computed from this
+# test file rather than relied upon via cwd (source_config.py's default
+# search path is cwd-relative -- see examples/agencies/README.md).
+_EXAMPLES_AGENCIES = Path(__file__).resolve().parents[3] / "examples" / "agencies"
+
 # ── P0: shipped YAML round-trips ──────────────────────────────────────────────
 
 
 def test_load_mbta_source_config() -> None:
-    cfg = load_named_source("mbta")
+    cfg = load_named_source("mbta", config_dir=_EXAMPLES_AGENCIES)
 
     assert cfg.name == "mbta"
     assert cfg.gtfs_static_url == "https://cdn.mbta.com/MBTA_GTFS.zip"
@@ -44,7 +49,7 @@ def test_load_mbta_source_config() -> None:
 
 
 def test_load_bucr_source_config() -> None:
-    cfg = load_named_source("bucr")
+    cfg = load_named_source("bucr", config_dir=_EXAMPLES_AGENCIES)
 
     assert cfg.name == "bucr"
     assert "localhost:8000" in cfg.gtfs_static_url
@@ -61,13 +66,13 @@ def test_load_bucr_source_config() -> None:
 
 
 def test_list_sources_includes_shipped_sources() -> None:
-    sources = list_sources()
+    sources = list_sources(config_dir=_EXAMPLES_AGENCIES)
     assert "mbta" in sources
     assert "bucr" in sources
 
 
 def test_list_sources_is_sorted() -> None:
-    sources = list_sources()
+    sources = list_sources(config_dir=_EXAMPLES_AGENCIES)
     assert sources == sorted(sources)
 
 

@@ -478,5 +478,253 @@ class TestAgencyTemporalParity:
             reset_config()
 
 
+class TestSourcesSearchPath:
+    """Phase 1 C2: the resolver shared by `stoptimes.val`'s source lookup and
+    this module's agency-profile lookup (docs/PLAN.md §5 C2)."""
+
+    def test_explicit_wins_and_is_exclusive(self, tmp_path):
+        from stoptimes.core.config import sources_search_path
+
+        os.environ["STOPTIMES_SOURCES"] = str(tmp_path / "should-be-ignored")
+        try:
+            assert sources_search_path(explicit=tmp_path) == [tmp_path]
+        finally:
+            os.environ.pop("STOPTIMES_SOURCES", None)
+
+    def test_stoptimes_sources_env_is_pathsep_separated(self, tmp_path):
+        from stoptimes.core.config import sources_search_path
+
+        first = tmp_path / "a"
+        second = tmp_path / "b"
+        os.environ["STOPTIMES_SOURCES"] = os.pathsep.join([str(first), str(second)])
+        try:
+            dirs = sources_search_path()
+            assert dirs[0] == first
+            assert dirs[1] == second
+        finally:
+            os.environ.pop("STOPTIMES_SOURCES", None)
+
+    def test_defaults_to_examples_agencies_under_cwd(self, tmp_path, monkeypatch):
+        from stoptimes.core.config import sources_search_path
+
+        os.environ.pop("STOPTIMES_SOURCES", None)
+        monkeypatch.chdir(tmp_path)
+        dirs = sources_search_path()
+        assert dirs == [tmp_path / "examples" / "agencies"]
+
+
+class TestAgencyProfileFiles:
+    """Phase 1 C2: agency profiles move out of code and into
+    examples/agencies/<agency>.yaml -- resolution order is explicit env var
+    -> profile file -> generic defaults (docs/PLAN.md §5 C2)."""
+
+    def _reset_env(self):
+        for var in (
+            "ETA_AGENCY",
+            "ETA_TIMEZONE",
+            "ETA_HOLIDAY_REGION",
+            "ETA_MODEL_KEY",
+            "ETA_MODEL_FALLBACK_KEY",
+            "STOPTIMES_AGENCY",
+            "STOPTIMES_AGENCY_FILE",
+            "STOPTIMES_TIMEZONE",
+            "STOPTIMES_HOLIDAY_REGION",
+            "STOPTIMES_MODEL_KEY",
+            "STOPTIMES_MODEL_FALLBACK_KEY",
+            "STOPTIMES_SOURCES",
+        ):
+            os.environ.pop(var, None)
+
+    def test_profile_file_via_stoptimes_agency_file(self, tmp_path):
+        """STOPTIMES_AGENCY_FILE points straight at a profile, bypassing the
+        sources search path entirely."""
+        from stoptimes.core.config import get_config, reset_config
+
+        reset_config()
+        self._reset_env()
+        profile = tmp_path / "custom.yaml"
+        profile.write_text(
+            "timezone: Europe/Lisbon\n"
+            "holiday_region: PT\n"
+            "serving:\n"
+            "  primary_model: custom_primary\n"
+            "  fallback_model: custom_fallback\n"
+        )
+        os.environ["STOPTIMES_AGENCY_FILE"] = str(profile)
+        try:
+            config = get_config()
+            assert config.default_timezone == "Europe/Lisbon"
+            assert config.default_region == "PT"
+            assert config.served_model_key == "custom_primary"
+            assert config.served_model_fallback_key == "custom_fallback"
+        finally:
+            self._reset_env()
+            reset_config()
+
+    def test_profile_file_via_stoptimes_agency_and_sources_dir(self, tmp_path):
+        """STOPTIMES_AGENCY=<id> is looked up by name on the sources search
+        path (here: an explicit STOPTIMES_SOURCES dir)."""
+        from stoptimes.core.config import get_config, reset_config
+
+        reset_config()
+        self._reset_env()
+        (tmp_path / "acme.yaml").write_text(
+            "timezone: Asia/Tokyo\nholiday_region: JP\n"
+        )
+        os.environ["STOPTIMES_SOURCES"] = str(tmp_path)
+        os.environ["STOPTIMES_AGENCY"] = "acme"
+        try:
+            config = get_config()
+            assert config.agency == "acme"
+            assert config.default_timezone == "Asia/Tokyo"
+            assert config.default_region == "JP"
+            # No `serving` block in the file -> no pin, not an error.
+            assert config.served_model_key is None
+            assert config.served_model_fallback_key is None
+        finally:
+            self._reset_env()
+            reset_config()
+
+    def test_new_env_names_win_over_deprecated_eta_names(self, tmp_path):
+        from stoptimes.core.config import get_config, reset_config
+
+        reset_config()
+        self._reset_env()
+        os.environ["STOPTIMES_SOURCES"] = str(tmp_path)
+        os.environ["ETA_AGENCY"] = "mbta"
+        os.environ["STOPTIMES_AGENCY"] = "bucr-ignored-because-no-file-needed"
+        os.environ["ETA_TIMEZONE"] = "America/Chicago"
+        os.environ["STOPTIMES_TIMEZONE"] = "America/Denver"
+        try:
+            # Both the new and deprecated names are set for each setting, so
+            # neither triggers a fallback warning -- the new name must win.
+            config = get_config()
+            assert config.agency == "bucr-ignored-because-no-file-needed"
+            assert config.default_timezone == "America/Denver"
+        finally:
+            self._reset_env()
+            reset_config()
+
+    def test_deprecated_eta_agency_alone_warns(self, tmp_path, monkeypatch):
+        from stoptimes.core.config import get_config, reset_config
+
+        reset_config()
+        self._reset_env()
+        monkeypatch.chdir(tmp_path)
+        os.environ["ETA_TIMEZONE"] = "America/Chicago"
+        try:
+            with pytest.warns(DeprecationWarning, match="ETA_TIMEZONE"):
+                config = get_config()
+                assert config.default_timezone == "America/Chicago"
+        finally:
+            self._reset_env()
+            reset_config()
+
+    def test_generic_defaults_for_unknown_agency_with_no_profile(self, tmp_path, monkeypatch):
+        """An agency with no profile file and no legacy builtin entry falls
+        through to generic defaults, not a KeyError."""
+        from stoptimes.core.config import get_config, reset_config
+
+        reset_config()
+        self._reset_env()
+        monkeypatch.chdir(tmp_path)
+        os.environ["STOPTIMES_AGENCY"] = "some_new_agency_nobody_configured"
+        try:
+            config = get_config()
+            assert config.default_timezone == "UTC"
+            assert config.default_region is None
+            assert config.served_model_key is None
+            assert config.served_model_fallback_key is None
+        finally:
+            self._reset_env()
+            reset_config()
+
+    def test_legacy_builtin_bucr_pin_used_when_no_profile_file_found(self, tmp_path, monkeypatch):
+        """Regression coverage for the SIMOVI production databus/VPS
+        deployments that set ETA_AGENCY=bucr with no examples/agencies/
+        checked out alongside them (docs/PLAN.md §5 C2 / docs/notes/p1-c2.md):
+        the deprecated `_LEGACY_BUILTIN_PROFILES` fallback must still resolve
+        the real bUCR served-model pin, with a DeprecationWarning, when no
+        profile file can be found anywhere on the search path."""
+        from stoptimes.core.config import (
+            _LEGACY_BUILTIN_PROFILES,
+            get_config,
+            reset_config,
+        )
+
+        reset_config()
+        self._reset_env()
+        monkeypatch.chdir(tmp_path)  # no ./examples/agencies here
+        os.environ["ETA_AGENCY"] = "bucr"
+        try:
+            with pytest.warns(DeprecationWarning, match="bucr"):
+                config = get_config()
+                assert config.agency == "bucr"
+                assert config.default_timezone == "America/Costa_Rica"
+                assert config.default_region == "CR"
+                expected = _LEGACY_BUILTIN_PROFILES["bucr"]["serving"]
+                assert config.served_model_key == expected["primary_model"]
+                assert config.served_model_fallback_key == expected["fallback_model"]
+        finally:
+            self._reset_env()
+            reset_config()
+
+    def test_agency_temporal_defaults_table_still_indexable_via_profile_file(self, tmp_path):
+        """`AGENCY_TEMPORAL_DEFAULTS[agency]` (used directly by
+        stoptimes.core.segments and stoptimes.train.datasets.dataset_builder)
+        keeps working when an agency resolves via a profile file rather than
+        the legacy builtin table."""
+        from stoptimes.core.config import AGENCY_TEMPORAL_DEFAULTS
+
+        (tmp_path / "acme.yaml").write_text("timezone: Asia/Tokyo\nholiday_region: JP\n")
+        os.environ["STOPTIMES_SOURCES"] = str(tmp_path)
+        try:
+            assert "acme" in AGENCY_TEMPORAL_DEFAULTS
+            assert AGENCY_TEMPORAL_DEFAULTS["acme"] == {"timezone": "Asia/Tokyo", "region": "JP"}
+        finally:
+            os.environ.pop("STOPTIMES_SOURCES", None)
+
+    def test_agency_model_defaults_table_reads_serving_block(self, tmp_path):
+        from stoptimes.core.config import AGENCY_MODEL_DEFAULTS
+
+        (tmp_path / "acme.yaml").write_text(
+            "serving:\n  primary_model: p\n  fallback_model: f\n"
+        )
+        os.environ["STOPTIMES_SOURCES"] = str(tmp_path)
+        try:
+            assert AGENCY_MODEL_DEFAULTS["acme"] == {"primary": "p", "fallback": "f"}
+        finally:
+            os.environ.pop("STOPTIMES_SOURCES", None)
+
+    def test_stoptimes_model_registry_dir_preferred_over_deprecated_name(self, tmp_path):
+        from stoptimes.core.config import get_config, reset_config
+
+        reset_config()
+        os.environ.pop("MODEL_REGISTRY_DIR", None)
+        os.environ["STOPTIMES_MODEL_REGISTRY_DIR"] = str(tmp_path / "new")
+        os.environ["MODEL_REGISTRY_DIR"] = str(tmp_path / "old")
+        try:
+            config = get_config()
+            assert config.model_registry_dir == (tmp_path / "new").resolve()
+        finally:
+            os.environ.pop("STOPTIMES_MODEL_REGISTRY_DIR", None)
+            os.environ.pop("MODEL_REGISTRY_DIR", None)
+            reset_config()
+
+    def test_deprecated_model_registry_dir_alone_warns(self, tmp_path):
+        from stoptimes.core.config import get_config, reset_config
+
+        reset_config()
+        os.environ.pop("STOPTIMES_MODEL_REGISTRY_DIR", None)
+        os.environ["MODEL_REGISTRY_DIR"] = str(tmp_path)
+        try:
+            with pytest.warns(DeprecationWarning, match="MODEL_REGISTRY_DIR"):
+                config = get_config()
+                assert config.model_registry_dir == tmp_path.resolve()
+        finally:
+            os.environ.pop("MODEL_REGISTRY_DIR", None)
+            reset_config()
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

@@ -1,0 +1,30 @@
+# bUCR — databus dev stack. One agency, configured like any other.
+# Base URL is configurable; default points at a local databus dev server.
+name: bucr
+gtfs_static_url: http://localhost:8000/feed/schedule/feed.zip
+vehicle_positions_url: http://localhost:8000/feed/realtime/vehicle_positions.json
+trip_updates_url: http://localhost:8000/feed/realtime/trip_updates.json
+poll_interval_s: 5
+
+headers: {}
+
+# Ground-truth detector parameters.
+arrival_radius_m: 30.0
+dwell_s: 0.0
+shape_threshold_m: 25.0
+
+# Agency profile (stoptimes.core.config): timezone + holiday-calendar region
+# for temporal feature extraction, and the served-model pin the databus path
+# (stoptimes.serve.estimator.estimate_stop_times) uses when the caller
+# doesn't pass an explicit model_key -- this is what keeps the registry's
+# metric-only get_best_model() ranking (no dataset/agency awareness) from
+# ever being consulted for bUCR. Update these when a newer/better bUCR model
+# is trained and promoted, or override per-deployment with
+# STOPTIMES_MODEL_KEY / STOPTIMES_MODEL_FALLBACK_KEY.
+timezone: America/Costa_Rica
+holiday_region: CR
+serving:
+  primary_model: >-
+    xgboost_bucr_segments_corpus_spatial-temporal_global_20260824_215905_handle_nan=drop_learning_rate=0.05_max_depth=5_n_estimators=200
+  fallback_model: >-
+    polyreg_distance_bucr_segments_corpus_distance_global_20260824_215904_degree=2_route_specific=no

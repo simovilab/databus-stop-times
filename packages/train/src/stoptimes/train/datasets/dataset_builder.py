@@ -240,9 +240,11 @@ def build_vp_training_dataset(
         attach_weather: Whether to fetch weather data
         use_shapes: Whether to use GTFS shapes for accurate progress calculation
         agency: Which agency's timezone + holiday region to use for temporal
-            features (see stoptimes.core.config.AGENCY_TEMPORAL_DEFAULTS) -- the same
-            table the live estimator resolves through, so training and
-            serving compute temporal features identically
+            features -- resolved from that agency's profile file
+            (examples/agencies/<agency>.yaml) via
+            stoptimes.core.config.AGENCY_TEMPORAL_DEFAULTS, the same lookup
+            the live estimator uses, so training and serving compute
+            temporal features identically
         tz_for_temporal: Explicit timezone override; defaults to `agency`'s
             timezone if not given
         pg_conn: PostgreSQL connection for shape loading (defaults to Django connection)
