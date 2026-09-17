@@ -38,7 +38,7 @@ REQUIRED_RAW_COLUMNS: List[str] = [
 ]
 
 # estado -> GTFS-RT VehicleStopStatus name. Literals copied from the MBTA
-# path (feature_engineering/dataset_builder.py:146, .../tests/test_rt_source.py:32)
+# path (stoptimes.train.datasets.dataset_builder / tests/test_rt_source.py)
 # so the two frames use exactly the same status vocabulary downstream.
 _ESTADO_TO_STATUS = {
     "detenido": "STOPPED_AT",
@@ -123,7 +123,13 @@ def navsat_to_vehicle_positions(df: pd.DataFrame) -> pd.DataFrame:
     # interpreted AS UTC (never local time) -- same rule as
     # stoptimes.record.storage.schema.add_partition_columns. `cr_datetime_utc` is
     # already UTC by name/contract, so this only guarantees the dtype.
-    out["ts"] = pd.to_datetime(df["cr_datetime_utc"], utc=True, errors="coerce")
+    # Pin to ns resolution explicitly: pandas >= 2.2 infers `us` resolution
+    # from some inputs instead of the historical `ns` default, and downstream
+    # code (and this adapter's own contract, see docstring) still expects
+    # `datetime64[ns, UTC]`.
+    out["ts"] = pd.to_datetime(df["cr_datetime_utc"], utc=True, errors="coerce").astype(
+        "datetime64[ns, UTC]"
+    )
     out["lat"] = pd.to_numeric(df["lat"], errors="coerce")
     out["lon"] = pd.to_numeric(df["lon"], errors="coerce")
     out["bearing"] = np.nan  # BUCR navsat has no heading field -- never fabricated.
