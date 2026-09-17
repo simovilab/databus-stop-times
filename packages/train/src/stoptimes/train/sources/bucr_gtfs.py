@@ -11,15 +11,12 @@ monotonic-assigned stop sequences that the next step scores traces against.
 Pure/deterministic, no network: sourcing (S3 snapshot / direct download) is
 a separate concern (see docs/BUCR_DATASET_PROMPT.md), this module only reads
 a local path. Mirrors the error-handling/style of
-``feature_engineering/navsat_adapter.py``.
+``stoptimes.train.sources.navsat_adapter``.
 
-``etaval`` (the map-matching library this module reuses) lives in a sibling
-repo, not on PyPI -- ``git.no_sync/etaval`` next to this repo's root. It is
-wired in as the ``bucr`` dependency group (see ``pyproject.toml``), installed
-as a real, non-editable package rather than via ``.pth``/editable mechanisms,
-so ``import etaval`` works under a plain ``uv run --group bucr`` without
-relying on any ``sys.path`` shim. Callers that need this module must run with
-that group active (e.g. ``uv run --group bucr ...``).
+The map-matching this module's callers reuse now lives in-workspace as
+``stoptimes.core.spatial.polyline`` (formerly the standalone ``etaval``
+library) -- no separate dependency group or sibling checkout needed; a plain
+``uv sync --group dev`` at the workspace root installs it.
 """
 
 from __future__ import annotations

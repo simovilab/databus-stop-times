@@ -21,8 +21,9 @@ feed the same trainers / leakage probe / metrics unchanged.
 Pure/deterministic: no I/O, no network, no mutation of inputs. GTFS parsing from
 ``stoptimes.train.sources.bucr_gtfs`` (a generic loader despite its name -- it reads
 any standard GTFS zip/dir, MBTA's included); map-matching from
-``stoptimes.core.spatial.polyline``. Runs under ``uv run --group bucr`` (needs
-``etaval``).
+``stoptimes.core.spatial.polyline`` (the in-workspace map-matching module,
+formerly the standalone ``etaval`` library). No extra dependency group is
+needed -- a plain ``uv sync --group dev`` at the workspace root installs it.
 """
 
 from __future__ import annotations

@@ -17,7 +17,7 @@ or dropped straight into a report table:
    separately from the repeated warm calls (p50/p95/p99/mean), because for
    a serving system that distinction is a real operational number, not
    noise to discard. Note the registry has no in-process model cache (see
-   ``models/common/registry.py::load_model``), so even "warm" calls
+   ``stoptimes.models.common.registry::load_model``), so even "warm" calls
    re-unpickle the model from disk on every call -- this module reports
    what's actually happening, it doesn't paper over it.
 
@@ -155,7 +155,7 @@ def latency_quantiles(latencies_seconds: Sequence[float]) -> Dict[str, float]:
     of per-call latencies measured in seconds.
 
     Uses ``numpy.percentile`` default (linear) interpolation -- the same
-    convention used elsewhere in this codebase (models/evaluation/stats.py).
+    convention used elsewhere in this codebase (stoptimes.train.evaluation.stats).
     """
     arr = np.asarray(latencies_seconds, dtype=float)
     if arr.size == 0:
@@ -355,7 +355,7 @@ def cost_accuracy_table(rows: Sequence[Dict[str, Any]]) -> pd.DataFrame:
     Each row of ``rows`` is a dict with at least ``model``, ``mae_seconds``,
     ``train_seconds``, ``p95_inference_ms`` -- extra keys pass through
     untouched. Sorted by MAE ascending (best model first), matching
-    ``models/evaluation/stats.py::compare_all``'s convention.
+    ``stoptimes.train.evaluation.stats::compare_all``'s convention.
     """
     required = {"model", "mae_seconds", "train_seconds", "p95_inference_ms"}
     for row in rows:

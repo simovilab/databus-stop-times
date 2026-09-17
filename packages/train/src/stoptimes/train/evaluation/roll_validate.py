@@ -7,14 +7,10 @@ import pandas as pd
 import numpy as np
 from typing import Dict, List, Callable, Optional
 from datetime import timedelta
-import sys
-from pathlib import Path
 
-sys.path.append(str(Path(__file__).parent.parent))
-
-from common.data import load_dataset
-from common.metrics import compute_all_metrics
-from common.utils import print_metrics_table
+from stoptimes.models.common.data import load_dataset
+from stoptimes.models.common.metrics import compute_all_metrics
+from stoptimes.models.common.utils import print_metrics_table
 
 
 class RollingValidator:
@@ -245,16 +241,14 @@ def quick_rolling_validate(model_class,
 
 if __name__ == "__main__":
     # Example: Rolling validation for EWMA model
-    import sys
-    sys.path.append(str(Path(__file__).parent.parent))
-    from ewma.train import EWMAModel
-    
+    from stoptimes.models.ewma.train import EWMAModel
+
     results = quick_rolling_validate(
         model_class=EWMAModel,
         model_params={'alpha': 0.3, 'group_by': ['route_id', 'stop_sequence']},
         train_window_days=7
     )
-    
+
     # Save results
-    results.to_csv("models/rolling_validation_results.csv", index=False)
-    print("Results saved to models/rolling_validation_results.csv")
+    results.to_csv("rolling_validation_results.csv", index=False)
+    print("Results saved to rolling_validation_results.csv")

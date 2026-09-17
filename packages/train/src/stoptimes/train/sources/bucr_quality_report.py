@@ -34,7 +34,7 @@ result into a structured report covering:
 
 Everything except ``main`` (the S3/CLI entry point) is pure and unit-tested
 with synthetic frames -- no network, no filesystem, deterministic given the
-same input. See ``feature_engineering/tests/test_bucr_quality_report.py``.
+same input. See ``packages/train/tests/test_bucr_quality_report.py``.
 """
 
 from __future__ import annotations
