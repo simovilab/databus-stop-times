@@ -3,8 +3,8 @@
 The curated layout and column names here are a contract shared with the
 collectors and readers -- MBTA's is documented in full in
 ``eta_prediction/docs/S3_LAYOUT.md`` and mirrored in
-``rt_pipeline/storage/schema.py``. Changing a prefix or dedup key here without
-updating those readers breaks the dataset builder.
+``stoptimes.record.storage.schema``. Changing a prefix or dedup key here
+without updating those readers breaks the dataset builder.
 """
 
 from __future__ import annotations

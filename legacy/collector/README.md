@@ -1,5 +1,15 @@
 # 🚍 GTFS-RT Ingestion Pipeline
 
+> ⚠️ **Reference only in this repo.** `rt_pipeline`'s Django-free parts —
+> `storage/`, `compaction/`, `tu_records.py`, and `status.py` — have moved to
+> `packages/record/src/stoptimes/record/` (see `packages/record/README.md`).
+> This Django app is kept here for history and comparison only; its own
+> imports of `rt_pipeline.storage`, `rt_pipeline.compaction`, etc. are
+> intentionally left unchanged, so this app will not run against the new
+> package layout. SIMOVI production does not run from this tree: it still
+> runs from the pre-extraction `gtfs-rt-pipeline` checkout on the VPS (see
+> `docs/PLAN.md` §8, Phase 4 G3, for the cutover plan).
+
 > ⚠️ **This README describes the original Postgres-only design and is out of
 > date.** VP ingestion no longer writes to Postgres — it polls into a local
 > DuckDB spool, flushes hourly to S3, and compacts nightly (rebuilt
