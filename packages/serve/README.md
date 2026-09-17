@@ -1,26 +1,26 @@
-# ETA Service
+# stoptimes.serve
 
 Real-time arrival time estimation service for transit vehicles.
 
 ## Overview
 
-The `eta_service` provides a production-ready interface for generating ETA predictions from live vehicle positions. It bridges the real-time data stream (MQTT/Redis) with trained ML models.
+`stoptimes.serve.estimator` provides a production-ready interface for generating ETA predictions from live vehicle positions. It bridges the real-time data stream (MQTT/Redis) with trained ML models.
 
 ## Features
 
 - `estimate_stop_times()` - Main prediction function
 - Smart model selection (route-specific → global → fallback)
 - Temporal + spatial feature extraction
-- Structured logging via `core.logging`
-- Input validation via `core.validation`
-- Configurable defaults via `core.config`
+- Structured logging via `stoptimes.core.logging`
+- Input validation via `stoptimes.core.validation`
+- Configurable defaults via `stoptimes.core.config`
 
 ---
 
 ## Quick Start
 
 ```python
-from eta_service import estimate_stop_times
+from stoptimes.serve.estimator import estimate_stop_times
 from datetime import datetime, timezone
 
 # Vehicle position from MQTT/Redis (matches your MQTT format)
@@ -125,15 +125,13 @@ estimate_stop_times(
 Run the test suite:
 
 ```bash
-cd eta_prediction/
-python eta_service/test_estimator.py
+uv run --no-sync python -m pytest packages/serve/tests -q
 ```
 
-Test individual scenarios:
+Test an individual scenario:
 
-```python
-from eta_service.test_estimator import test_basic_prediction
-test_basic_prediction()
+```bash
+uv run --no-sync python -m pytest packages/serve/tests/test_estimator.py::test_basic_prediction -q
 ```
 
 ---
@@ -171,23 +169,29 @@ Return predictions dict
 ## Directory Structure
 
 ```
-eta_service/
-├── __init__.py          # Module exports
-├── estimator.py         # Main estimation logic
-├── test_estimator.py    # Test suite
-└── README.md            # This file
+packages/serve/
+├── src/stoptimes/serve/
+│   ├── __init__.py
+│   ├── estimator.py      # Main estimation logic
+│   ├── pipeline.py
+│   ├── sinks.py
+│   └── tripupdates.py
+├── tests/
+│   ├── fixtures/sample.parquet
+│   └── test_*.py
+└── README.md              # This file
 ```
 
-Configuration, logging, and validation are now provided by the `core/` module at the project root.
+Configuration, logging, and validation are provided by `stoptimes.core` (`packages/core`).
 
 ---
 
 ## Dependencies
 
-- `core` module (config, logging, validation, exceptions)
-- `feature_engineering` module (temporal, spatial)
-- `models` module (registry, trained models)
-- Python 3.10+
+- `stoptimes.core` (config, logging, validation, exceptions)
+- `stoptimes.core.features` / `stoptimes.core.spatial` (temporal, spatial)
+- `stoptimes.models` (registry, trained models)
+- Python 3.12+
 
 ---
 

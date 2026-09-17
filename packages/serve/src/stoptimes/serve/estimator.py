@@ -439,7 +439,7 @@ def estimate_stop_times(
             'progress_ratio': progress_ratio,
             # 0-indexed to match the training-side convention: the dataset
             # builder assigns stops_ahead=0 to the closest upcoming stop
-            # (feature_engineering/dataset_builder.py, `stops_ahead =
+            # (now stoptimes.train.datasets.dataset_builder, `stops_ahead =
             # int(stop_order_arr[j] - closest_stop_order)` starting at
             # j=closest_idx). upcoming_stops[0] is that same closest stop,
             # so it must be served as stops_ahead=0, not 1 (roadmap 1.2:

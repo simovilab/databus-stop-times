@@ -7,7 +7,7 @@ scratchpad validation done separately for datasets/mbta_segments_corpus.parquet
 and datasets/bucr_segments_corpus.parquet).
 
 Run with:
-    PYTHONPATH=.:models .venv-dl/bin/python -m pytest models/tests/test_splits.py -q
+    uv run --no-sync python -m pytest packages/models/tests/test_splits.py -q
 """
 
 from __future__ import annotations
