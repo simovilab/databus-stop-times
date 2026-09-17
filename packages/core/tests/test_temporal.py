@@ -106,3 +106,19 @@ def test_holiday_false_when_calendar_missing(monkeypatch):
     ts_local = datetime(2025, 7, 4, 9, 0, 0, tzinfo=temporal.zoneinfo.ZoneInfo("America/New_York"))
     feats = temporal.extract_temporal_features(ts_local, tz="America/New_York", region="US_MA")
     assert feats["is_holiday"] is False
+
+
+def test_holiday_calendar_none_region_means_no_holidays():
+    from stoptimes.core.features.temporal import _get_holiday_calendar
+
+    assert _get_holiday_calendar(None) is None
+
+
+def test_holiday_calendar_generic_country_and_subdivision():
+    from datetime import date
+
+    from stoptimes.core.features.temporal import _get_holiday_calendar
+
+    assert date(2026, 7, 14) in _get_holiday_calendar("FR")
+    assert date(2026, 4, 20) in _get_holiday_calendar("US_MA")  # Patriots' Day
+    assert _get_holiday_calendar("ZZ") is None

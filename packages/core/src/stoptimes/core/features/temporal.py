@@ -8,28 +8,24 @@ try:
 except ImportError:  # pragma: no cover
     from backports import zoneinfo  # type: ignore
 
-def _get_holiday_calendar(region: str):
+def _get_holiday_calendar(region: str | None):
     """
-    Try to build a holiday calendar. Falls back to empty set if 'holidays' isn't installed.
-    region:
-      - 'US_MA' → U.S. w/ Massachusetts state holidays (good for MBTA)
-      - 'CR'    → Costa Rica
+    Build a holiday calendar for ``COUNTRY`` or ``COUNTRY_SUBDIVISION``
+    (e.g. 'CR', 'US_MA' for U.S. + Massachusetts). Returns None when the
+    region is None, unknown, or the 'holidays' package isn't installed.
     """
+    if not region:
+        return None
     try:
         import holidays
     except Exception:
         return None
 
-    if region.upper() == "US_MA":
-        return holidays.US(state="MA")
-    if region.upper() == "CR":
-        # Requires holidays>=0.52 which includes CostaRica
-        try:
-            return holidays.CostaRica()
-        except Exception:
-            return None
-    # Fallback: US federal only
-    return holidays.US()
+    country, _, subdiv = region.upper().partition("_")
+    try:
+        return holidays.country_holidays(country, subdiv=subdiv or None)
+    except Exception:
+        return None
 
 def _to_local(dt: datetime, tz: str) -> datetime:
     """Ensure timezone-aware datetime localized to tz."""
