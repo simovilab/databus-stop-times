@@ -115,12 +115,11 @@ State after 0.3: `cli` 3 passed · `core` 105 passed · `val` 430 passed 1 skipp
 `record` collection error (`storage/test_spool_compaction`) ·
 `train` collection errors (`test_dataset_builder`, `test_weather`).
 
-**P0-A · models + serve** — owns `packages/models/**`, `packages/serve/**`
+**P0-A · models + serve** — owns `packages/models/**`, `packages/serve/**`, `packages/core/src/stoptimes/core/config.py`
 - `test_lstm.py`: skip cleanly when torch is absent (`pytest.importorskip`); passes with `uv sync --group dl`.
 - `serve/tests/test_eta_wiring.py`: fixture moved to `packages/serve/tests/fixtures/sample.parquet`.
 - Registry location: no repo-root discovery. `MODEL_REGISTRY_DIR` keeps working; add `STOPTIMES_HOME`;
-  default `./artifacts/models`. Touches `stoptimes.core.config` → coordinate via note (see §9), or
-  keep the change inside `models/common/registry.py`.
+  default `./artifacts/models` (P0-A owns `core/config.py` for this; no other Phase 0 track touches core).
 - **Legacy pickles:** loading an artifact pickled under `models.*` / `core.*` / `eta_service.*` /
   `feature_engineering.*` must work, via a `find_class` remapping unpickler in the registry
   (not a global import hook). Test with a pickle built from a class re-homed under a legacy module name.
