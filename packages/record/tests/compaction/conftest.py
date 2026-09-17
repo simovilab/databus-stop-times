@@ -1,5 +1,5 @@
 """Shared fixtures: a local-directory Storage + DuckDB, so nothing under
-`rt_pipeline/compaction/tests/` touches S3, `mc`, or the `duckdb` CLI binary.
+`packages/record/tests/compaction/` touches S3, `mc`, or the `duckdb` CLI binary.
 """
 
 from __future__ import annotations

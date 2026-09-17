@@ -2,8 +2,9 @@
 
 Django-free on purpose: this is the part worth unit-testing (route scoping,
 horizon capping, enum naming, the fields MBTA does and does not publish), and
-it should be testable without a settings module or a database. The Celery
-task in ``rt_pipeline.tasks`` supplies ``feed_name`` and the config values.
+it should be testable without a settings module or a database. The legacy
+collector task in ``legacy/collector/rt_pipeline/tasks.py`` supplies
+``feed_name`` and the config values.
 
 Scoping decisions live here rather than downstream because storage is the
 constraint: the TU feed is ~22x the VP feed per poll, and a row not built is

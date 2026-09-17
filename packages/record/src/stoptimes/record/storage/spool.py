@@ -10,7 +10,8 @@ bound, and eventually OOM-killed the worker (see the plan / commit history
 for the full incident writeup).
 
 The fix: a poll writes to this local spool instead (~200ms), and a separate
-hourly task (``rt_pipeline.tasks.flush_vp_spool_s3``) drains it to S3 with
+hourly legacy collector task (``flush_vp_spool_s3`` in
+``legacy/collector/rt_pipeline/tasks.py``) drains it to S3 with
 ONE ``COPY ... PARTITION_BY (year, month, day)`` per (day) partition --
 ``route_id`` is deliberately excluded from the flush partitioning; that is
 the fan-out this module exists to avoid.

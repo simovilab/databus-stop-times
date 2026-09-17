@@ -1,7 +1,7 @@
 """S3 Hive-partitioned Parquet layout + schema for MBTA VehiclePositions.
 
 Source of truth for the persisted columns is the flat ingest model
-``rt_pipeline.models.VehiclePosition``. Partition keys live in the object
+``legacy/collector/rt_pipeline/models.py:VehiclePosition``. Partition keys live in the object
 path (Hive style) so route-filtered reads prune partitions cheaply.
 
 Layout::
