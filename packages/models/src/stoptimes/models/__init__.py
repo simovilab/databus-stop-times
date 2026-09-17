@@ -1,13 +1,19 @@
 """
-ETA Prediction Models Package
+stoptimes.models -- ETA prediction model families.
 
 Comprehensive modeling framework for transit ETA prediction.
 
 Example usage:
-    >>> from models import train_all_baselines, get_registry
-    >>> models = train_all_baselines("sample_dataset")
+    >>> from stoptimes.models import get_registry
     >>> registry = get_registry()
     >>> best_key = registry.get_best_model()
+
+Training orchestration (``train_all_models``) lives in ``stoptimes.train``,
+not here: ``core <- models <- serve <- train`` is the required dependency
+direction (see docs/PLAN.md §1), so models must never import train, even
+lazily. Import it directly where you need it:
+
+    >>> from stoptimes.train.train_all_models import train_all_models
 """
 
 __version__ = "1.0.0"
@@ -42,20 +48,11 @@ from .polyreg_distance.predict import predict_eta as predict_polyreg_distance
 from .polyreg_time.predict import predict_eta as predict_polyreg_time
 from .ewma.predict import predict_eta as predict_ewma
 
-# Evaluation moved to stoptimes.train.evaluation (models must not depend on train).
-
-# Main training pipeline
-# from .train_all_models import train_all_baselines, train_advanced_configurations
-#
-# train_all_models is deliberately NOT imported eagerly here: it pulls in
-# xgb.train -> xgboost, a heavy training-only dependency (the `train` extra
-# in pyproject.toml). Importing it at package-import time would force every
-# inference-only consumer (e.g. the live gtfs-rt-pipeline collector, or a
-# downstream project that only calls stoptimes.models.common.registry /
-# models.*.predict) to install xgboost even though they never train models.
-# See __getattr__ below for the lazy PEP 562 accessor that keeps
-# `from models import train_all_models` / `stoptimes.train.train_all_models(...)`
-# working unchanged for training users.
+# Evaluation and training orchestration (train_all_models) both moved to
+# stoptimes.train -- models must not depend on train, not even lazily (see
+# module docstring). There is deliberately no train_all_models symbol, PEP
+# 562 accessor, or other back-reference to stoptimes.train anywhere in this
+# package.
 
 
 __all__ = [
@@ -87,10 +84,7 @@ __all__ = [
     'train_polyreg_distance',
     'train_polyreg_time',
     'train_ewma',
-    # 'train_all_baselines',
-    'train_all_models'
-    'train_advanced_configurations',
-    
+
     # Prediction
     'predict_historical_mean',
     'predict_polyreg_distance',
@@ -145,24 +139,25 @@ def quick_start_guide():
     guide = """
     ETA Prediction Models - Quick Start
     ====================================
-    
-    1. Train all baselines:
-       >>> from models import train_all_baselines
-       >>> results = train_all_baselines("sample_dataset")
-    
+
+    1. Train baselines (from stoptimes.train, not stoptimes.models):
+       >>> from stoptimes.train.train_all_models import train_all_models
+       >>> results = train_all_models("sample_dataset")
+
     2. Compare models:
-       >>> from models import quick_compare, get_registry
+       >>> from stoptimes.train.evaluation.leaderboard import quick_compare
+       >>> from stoptimes.models import get_registry
        >>> registry = get_registry()
        >>> model_keys = registry.list_models()['model_key'].tolist()
        >>> comparison = quick_compare(model_keys)
-    
+
     3. Load and use best model:
        >>> best_key = registry.get_best_model(metric='test_mae_seconds')
        >>> model = registry.load_model(best_key)
        >>> predictions = model.predict(your_data)
-    
+
     4. Make single prediction:
-       >>> from models import predict_polyreg_time
+       >>> from stoptimes.models import predict_polyreg_time
        >>> result = predict_polyreg_time(
        ...     model_key=best_key,
        ...     distance_to_stop=1500.0,
@@ -170,50 +165,7 @@ def quick_start_guide():
        ...     is_peak_hour=True
        ... )
        >>> print(f"ETA: {result['eta_formatted']}")
-    
-    For more details, see models/README.md
+
+    For more details, see packages/models/README.md
     """
     print(guide)
-
-
-# Training-only symbols, imported lazily (PEP 562) so `import models` never
-# pulls in xgboost. See the comment above `__all__` for why.
-_LAZY_TRAINING_ATTRS = {"train_all_models"}
-
-
-def __getattr__(name: str):
-    if name in _LAZY_TRAINING_ATTRS:
-        # importlib.import_module (not `from . import train_all_models`)
-        # deliberately: `from`-import syntax resolves via _handle_fromlist,
-        # which probes the package with hasattr() before importing the
-        # submodule -- and hasattr() on this module re-enters __getattr__
-        # for the very name we're resolving, recursing infinitely. Direct
-        # module-path import skips that probe.
-        import importlib
-        _train_all_models_module = importlib.import_module(f"{__name__}.train_all_models")
-        value = getattr(_train_all_models_module, name)
-        globals()[name] = value  # cache: subsequent access skips __getattr__
-        return value
-    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
-
-
-# Auto-create directories
-def _setup_directories():
-    """Create necessary directories if they don't exist."""
-    from pathlib import Path
-    base_dir = Path(__file__).parent
-    
-    dirs = [
-        base_dir / 'trained',
-        base_dir.parent / 'datasets',
-        base_dir.parent / 'datasets' / 'metadata',
-        base_dir.parent / 'datasets' / 'production',
-        base_dir.parent / 'datasets' / 'experimental'
-    ]
-    
-    for dir_path in dirs:
-        dir_path.mkdir(parents=True, exist_ok=True)
-
-
-# Run setup on import
-_setup_directories()
