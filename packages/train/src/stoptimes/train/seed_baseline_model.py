@@ -3,14 +3,13 @@ seed_baseline_model.py — seed ONE global polyreg_distance model into the regis
 
 Usage:
     export MODEL_REGISTRY_DIR=/tmp/gtfs_eta_registry
-    python -m stoptimes.train.seed_baseline_model
+    stoptimes train seed-baseline
+    # or: uv run --no-sync python -m stoptimes.train.seed_baseline_model
 
-Ported from databus's vendored copy (backend/gtfs-eta/gtfs_eta/seed_baseline_model.py)
-onto this repo's layout: ``PolyRegDistanceModel`` lives in
-``stoptimes.models.polyreg_distance.train`` here (not ``stoptimes.models.polyreg_distance.model``),
-and the four top-level packages are already importable without sys.path
-manipulation (editable install exposes core/, eta_service/,
-feature_engineering/, models/, and this gtfs_eta/ alias package globally).
+``PolyRegDistanceModel`` lives in ``stoptimes.models.polyreg_distance.train``
+(not ``stoptimes.models.polyreg_distance.model``); it and
+``stoptimes.models.common.registry`` are ordinary workspace-package imports,
+no path manipulation needed.
 
 The script:
   1. Builds synthetic constant-speed data (distance / 4.5 m/s ~= urban bus avg).

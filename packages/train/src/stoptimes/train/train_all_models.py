@@ -3,21 +3,17 @@ Train all models either globally or per-route for comparative analysis.
 """
 
 import argparse
-import sys
 import time
-from pathlib import Path
-import pandas as pd
 from typing import Tuple
 
-sys.path.append(str(Path(__file__).parent))          # models/
-sys.path.append(str(Path(__file__).parent.parent))   # eta_prediction/ (for feature_engineering)
+import pandas as pd
 
-from common.data import load_dataset
-from historical_mean.train import train_historical_mean
-from polyreg_distance.train import train_polyreg_distance
-from polyreg_time.train import train_polyreg_time
-from ewma.train import train_ewma
-from xgb.train import train_xgboost
+from stoptimes.models.common.data import load_dataset
+from stoptimes.models.historical_mean.train import train_historical_mean
+from stoptimes.models.polyreg_distance.train import train_polyreg_distance
+from stoptimes.models.polyreg_time.train import train_polyreg_time
+from stoptimes.models.ewma.train import train_ewma
+from stoptimes.models.xgb.train import train_xgboost
 from stoptimes.train.datasets import progress as ui
 
 
