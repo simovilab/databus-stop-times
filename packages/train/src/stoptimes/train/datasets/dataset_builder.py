@@ -9,12 +9,12 @@ from pathlib import Path
 
 from django.db import connection as django_connection
 from sch_pipeline.models import StopTime, Stop, Trip
-from core.config import AGENCY_TEMPORAL_DEFAULTS, DEFAULT_AGENCY
-from feature_engineering.rt_source import fetch_vehicle_positions
-from feature_engineering.temporal import extract_temporal_features
-from feature_engineering.spatial import calculate_distance_features_with_shape, load_shape_for_trip
-from feature_engineering.weather import fetch_weather
-from feature_engineering import progress as ui
+from stoptimes.core.config import AGENCY_TEMPORAL_DEFAULTS, DEFAULT_AGENCY
+from stoptimes.train.datasets.rt_source import fetch_vehicle_positions
+from stoptimes.core.features.temporal import extract_temporal_features
+from stoptimes.core.spatial.geo import calculate_distance_features_with_shape, load_shape_for_trip
+from stoptimes.train.datasets.weather import fetch_weather
+from stoptimes.train.datasets import progress as ui
 
 
 def haversine_distance(lat1, lon1, lat2, lon2):
@@ -220,7 +220,7 @@ def build_vp_training_dataset(
         attach_weather: Whether to fetch weather data
         use_shapes: Whether to use GTFS shapes for accurate progress calculation
         agency: Which agency's timezone + holiday region to use for temporal
-            features (see core.config.AGENCY_TEMPORAL_DEFAULTS) -- the same
+            features (see stoptimes.core.config.AGENCY_TEMPORAL_DEFAULTS) -- the same
             table the live estimator resolves through, so training and
             serving compute temporal features identically
         tz_for_temporal: Explicit timezone override; defaults to `agency`'s
@@ -641,7 +641,7 @@ def build_vp_training_dataset(
     # ============================================================
     # Weather needs rethinking (source, caching, leakage) and is out of scope.
     # Re-add temperature_c / precipitation_mm / wind_speed_kmh here when ready,
-    # then register them in models.common.data.ETADataset.FEATURE_GROUPS.
+    # then register them in stoptimes.models.common.data.ETADataset.FEATURE_GROUPS.
     # (See feature_engineering/weather.py.)
 
     # ============================================================

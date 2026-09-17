@@ -30,7 +30,7 @@ class ETADataset:
     - Target: actual_arrival, time_to_arrival_seconds (+ *_computed / *_stopped_at)
 
     All non-target groups are *serveable* — every feature is computable online by
-    eta_service.estimator from a live VehiclePosition + scheduled stops, so the
+    stoptimes.serve.estimator from a live VehiclePosition + scheduled stops, so the
     trained models stay in sync with serving.
     """
 
@@ -120,7 +120,7 @@ class ETADataset:
         """
         Split dataset by time (avoids data leakage).
 
-        Delegates to `models.common.splits.fraction_split` (roadmap 3.2):
+        Delegates to `stoptimes.models.common.splits.fraction_split` (roadmap 3.2):
         rows are sorted by `vp_ts` with a stable, deterministic secondary
         key (independent of input row order), cut at the given fractions,
         then any group in `group_cols` that straddles a split boundary is

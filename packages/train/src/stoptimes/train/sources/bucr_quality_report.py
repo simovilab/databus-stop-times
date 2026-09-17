@@ -48,20 +48,20 @@ from typing import Dict, List, Mapping, Optional, Sequence, Tuple
 import numpy as np
 import pandas as pd
 
-from feature_engineering.bucr_gtfs import BucrGtfs, load_gtfs, route_directions, route_direction_candidates
-from feature_engineering.bucr_gtfs import RouteDirectionCandidate
-from feature_engineering.bucr_trip_inference import (
+from stoptimes.train.sources.bucr_gtfs import BucrGtfs, load_gtfs, route_directions, route_direction_candidates
+from stoptimes.train.sources.bucr_gtfs import RouteDirectionCandidate
+from stoptimes.train.sources.bucr_trip_inference import (
     OUTPUT_COLUMNS,
     InferenceStats,
     infer_bucr_trips,
 )
-from feature_engineering.navsat_adapter import navsat_to_vehicle_positions
-from feature_engineering.navsat_cleaning import (
+from stoptimes.train.sources.navsat_adapter import navsat_to_vehicle_positions
+from stoptimes.train.sources.navsat_cleaning import (
     DEFAULT_STALENESS_THRESHOLD_SECONDS,
     TraceCleaningReport,
     clean_navsat_trace,
 )
-from feature_engineering.navsat_normalize import normalize_raw_navsat
+from stoptimes.train.sources.navsat_normalize import normalize_raw_navsat
 
 __all__ = [
     "SELF_LOOP_SHAPE_IDS",

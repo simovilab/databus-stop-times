@@ -2,7 +2,7 @@
 
 Loads the five GTFS files trip inference needs (``routes.txt``, ``trips.txt``,
 ``stops.txt``, ``stop_times.txt``, ``shapes.txt``) and exposes them in the
-shape ready to hand to ``etaval.spatial.polyline`` -- see
+shape ready to hand to ``stoptimes.core.spatial.polyline`` -- see
 ``docs/BUCR_DATASET_PROMPT.md`` step 3. This module does NOT do trip
 inference itself (matching a raw GPS trace to a route+direction+trip
 instance); it only turns the static feed into candidate polylines and
@@ -32,8 +32,8 @@ from typing import List, Optional, Tuple, Union
 
 import pandas as pd
 
-from etaval.domain.models import Stop as EtavalStop
-from etaval.spatial.polyline import (
+from stoptimes.core.domain.models import Stop as EtavalStop
+from stoptimes.core.spatial.polyline import (
     PolylinePoint,
     assign_stops_monotonic,
     build_polyline,
@@ -179,7 +179,7 @@ def shape_points(data: BucrGtfs, shape_id: str) -> List[Tuple[float, float, Opti
     ``shape_dist_traveled`` is ``None`` for every point when the column is
     absent or not fully populated for this shape -- ``build_shape_polyline``
     then falls back to cumulative haversine, matching
-    ``etaval.spatial.polyline.build_polyline``'s own fallback rule.
+    ``stoptimes.core.spatial.polyline.build_polyline``'s own fallback rule.
 
     Raises:
         BucrGtfsError: no rows exist for ``shape_id``.

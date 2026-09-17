@@ -4,7 +4,7 @@ Four screens (F1..F4): CONSOLE (launch + watch a run live), LEADERBOARD
 (browse completed runs), EXPLORER (results table + horizon-MAE bars),
 TELEMETRY (poll /api/telemetry + tail /api/telemetry/events).
 
-The app owns a single :class:`~etaval.tui.client.ApiClient` (or an injected
+The app owns a single :class:`~stoptimes.val.tui.client.ApiClient` (or an injected
 fake for tests) reachable from any screen via ``self.app.client``.
 """
 
@@ -16,8 +16,8 @@ from pathlib import Path
 from textual.app import App
 from textual.binding import Binding
 
-from etaval.tui.client import ApiClient
-from etaval.tui.screens import (
+from stoptimes.val.tui.client import ApiClient
+from stoptimes.val.tui.screens import (
     ConsoleScreen,
     ExplorerScreen,
     LeaderboardScreen,

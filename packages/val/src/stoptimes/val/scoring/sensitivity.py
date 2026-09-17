@@ -25,7 +25,7 @@ Two entry points, with different fidelity
 HONEST LIMITATION — why the CLI ``--sensitivity --db`` path cannot re-detect
 ------------------------------------------------------------------------------
 ``etaval run`` persists ``PredictionSample`` and ``ActualArrival`` rows to
-SQLite (see ``etaval.engine.runtime.run_engine`` — every configured detector's
+SQLite (see ``stoptimes.val.engine.runtime.run_engine`` — every configured detector's
 arrivals are saved each tick, not only the ``primary_method`` one used for
 scoring). It does **not** persist raw per-tick position history
 (lat/lon/progress_m samples): only the detectors' *output* (arrivals) and the
@@ -41,7 +41,7 @@ This is what powers ``etaval report --sensitivity --db <sqlite>``. A
 Parquet-only report (no ``--db``) carries neither samples-by-predictor keyed
 to raw arrivals-by-method nor position history, so ``etaval report
 --sensitivity`` without ``--db`` is declined outright with an explanatory
-message (see ``etaval.cli.main.report``) instead of silently doing nothing
+message (see ``stoptimes.val.cli.main.report``) instead of silently doing nothing
 useful.
 """
 
@@ -51,18 +51,18 @@ import math
 from dataclasses import dataclass, field
 from typing import Any
 
-from etaval.domain.models import ActualArrival, PredictionSample, Stop, TripInstance, VehicleState
-from etaval.scoring.metrics import PerPredictorMetrics, compute_metrics
-from etaval.scoring.scorer import Scorer
+from stoptimes.core.domain.models import ActualArrival, PredictionSample, Stop, TripInstance, VehicleState
+from stoptimes.val.scoring.metrics import PerPredictorMetrics, compute_metrics
+from stoptimes.val.scoring.scorer import Scorer
 
 
 @dataclass(frozen=True)
 class TripContext:
-    """One trip's inputs to a :class:`~etaval.domain.interfaces.GroundTruthDetector`.
+    """One trip's inputs to a :class:`~stoptimes.val.domain.interfaces.GroundTruthDetector`.
 
     Mirrors the ``(trip, position_history, stops)`` arguments detectors
     receive from the engine tick loop, plus an optional ``route_id`` used
-    only to enrich re-scored :class:`~etaval.domain.models.ValidationResult`
+    only to enrich re-scored :class:`~stoptimes.core.domain.models.ValidationResult`
     rows the same way the engine's ``_route_id_map`` does.
     """
 

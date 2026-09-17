@@ -5,7 +5,7 @@
 - FeedAdapter.poll() -> parsed entities
 - Storage.save_samples / save_arrivals / save_results / load_results
 
-Note: StopPrediction is defined in etaval.predictors.base (Phase P3). It is referenced
+Note: StopPrediction is defined in stoptimes.val.predictors.base (Phase P3). It is referenced
 here only under TYPE_CHECKING so that the interfaces module has zero runtime dependency
 on the predictors package.
 """
@@ -15,7 +15,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any, Protocol
 
 if TYPE_CHECKING:
-    from etaval.domain.models import (
+    from stoptimes.core.domain.models import (
         ActualArrival,
         PredictionSample,
         Stop,
@@ -23,7 +23,7 @@ if TYPE_CHECKING:
         ValidationResult,
         VehicleState,
     )
-    from etaval.predictors.base import StopPrediction
+    from stoptimes.val.predictors.base import StopPrediction
 
 
 class Predictor(Protocol):

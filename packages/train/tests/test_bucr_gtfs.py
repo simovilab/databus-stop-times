@@ -1,4 +1,4 @@
-"""Tests for the BUCR static GTFS loader (feature_engineering.bucr_gtfs).
+"""Tests for the BUCR static GTFS loader (stoptimes.train.sources.bucr_gtfs).
 
 Two kinds of coverage:
   * A synthetic in-memory feed (tiny, hand-built) so the suite never depends
@@ -16,7 +16,7 @@ from typing import Dict, List
 
 import pytest
 
-from feature_engineering.bucr_gtfs import (
+from stoptimes.train.sources.bucr_gtfs import (
     BucrGtfsError,
     load_gtfs,
     route_direction_candidates,

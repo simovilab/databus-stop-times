@@ -22,7 +22,7 @@ from zoneinfo import ZoneInfo
 import pandas as pd
 from scipy import stats as scipy_stats
 
-from etaval.domain.models import ValidationResult
+from stoptimes.core.domain.models import ValidationResult
 
 # ── Horizon bucket edges (seconds) ────────────────────────────────────────────
 

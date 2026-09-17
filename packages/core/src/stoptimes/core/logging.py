@@ -85,7 +85,7 @@ class ETALogger:
     Structured logger for ETA system components.
 
     Usage:
-        from core.logging import get_logger
+        from stoptimes.core.logging import get_logger
 
         logger = get_logger("estimator")
         logger.info("Processing vehicle", vehicle_id="V123", route="171")
@@ -214,7 +214,7 @@ def get_logger(
         ETALogger instance
 
     Usage:
-        from core.logging import get_logger
+        from stoptimes.core.logging import get_logger
 
         logger = get_logger("estimator")
         logger.info("Starting prediction", vehicle_id="V123")

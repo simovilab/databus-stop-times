@@ -11,8 +11,8 @@ from typing import Dict, Any, Optional, List, Tuple
 from datetime import datetime
 import pandas as pd
 
-from core.config import get_config
-from core.logging import get_logger
+from stoptimes.core.config import get_config
+from stoptimes.core.logging import get_logger
 from .provenance import build_provenance
 
 _logger = get_logger("registry")
@@ -39,7 +39,7 @@ class ModelRegistry:
         """
         # get_config().model_registry_dir already resolves MODEL_REGISTRY_DIR (if
         # set) or falls back to <project_root>/models/trained -- anchored on
-        # core.config._find_project_root(), not the caller's cwd. That matters
+        # stoptimes.core.config._find_project_root(), not the caller's cwd. That matters
         # for out-of-tree consumers (e.g. etaval, which imports this package as
         # an editable dependency and runs from its own directory).
         resolved_base = base_dir or os.getenv("MODEL_REGISTRY_DIR") or get_config().model_registry_dir
@@ -183,7 +183,7 @@ class ModelRegistry:
             Without the cache this unpickled from disk on *every* call, so a
             serving path that calls it per prediction paid model-load cost per
             prediction -- measured at 23-109 ms p50 through
-            eta_service.estimator, dominated by loading rather than inference
+            stoptimes.serve.estimator, dominated by loading rather than inference
             (see models/evaluation/cost.py). The cache is keyed by model key
             and invalidated by the artifact's mtime and size, so replacing a
             .pkl on disk is picked up without a restart.

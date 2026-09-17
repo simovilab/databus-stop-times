@@ -1,8 +1,8 @@
 """Pytest coverage for the served-model pin that keeps the databus path on
 the BUCR corpus model.
 
-See ``core.config.AGENCY_MODEL_DEFAULTS`` / ``ETA_MODEL_KEY`` and the
-"SMART MODEL SELECTION" block in ``eta_service.estimator.estimate_stop_times``:
+See ``stoptimes.core.config.AGENCY_MODEL_DEFAULTS`` / ``ETA_MODEL_KEY`` and the
+"SMART MODEL SELECTION" block in ``stoptimes.serve.estimator.estimate_stop_times``:
 when the active agency has a pinned model, it's used outright and
 ``ModelRegistry.get_best_model``'s metric-only ranking (which has no
 dataset/agency awareness) is never consulted -- these tests seed a
@@ -15,10 +15,10 @@ import numpy as np
 import pandas as pd
 import pytest
 
-import models.common.registry as registry_module
-from eta_service import estimator as estimator_module
-from eta_service.estimator import estimate_stop_times
-from models.polyreg_distance.train import PolyRegDistanceModel
+import stoptimes.models.common.registry as registry_module
+from stoptimes.serve import estimator as estimator_module
+from stoptimes.serve.estimator import estimate_stop_times
+from stoptimes.models.polyreg_distance.train import PolyRegDistanceModel
 
 PRIMARY_KEY = "xgboost_bucr_segments_corpus_pin_test"
 FALLBACK_KEY = "polyreg_distance_bucr_segments_corpus_pin_test"

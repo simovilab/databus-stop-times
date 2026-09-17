@@ -13,7 +13,7 @@ import datetime as dt
 import pandas as pd
 import pytest
 
-from feature_engineering.dataset_builder import (
+from stoptimes.train.datasets.dataset_builder import (
     _angle_diff,
     _initial_bearing,
     _seconds_of_day,

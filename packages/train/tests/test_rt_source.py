@@ -11,8 +11,8 @@ import datetime as dt
 
 import pandas as pd
 
-from feature_engineering.rt_source import OUTPUT_COLUMNS, fetch_vehicle_positions
-from rt_pipeline.storage import write_vehicle_positions
+from stoptimes.train.datasets.rt_source import OUTPUT_COLUMNS, fetch_vehicle_positions
+from stoptimes.record.storage import write_vehicle_positions
 
 
 def _sample(route_id: str, n: int, vp: str = "v", with_null_trip: bool = False):

@@ -13,7 +13,7 @@ of ``navsat_cleaning.clean_navsat_trace`` -> ``navsat_adapter
 Per (vehicle_id x service-day) this module:
 
   1. Projects the trace onto every candidate (route+direction+shape-variant)
-     polyline via ``etaval.spatial.polyline.project_point_to_polyline`` and
+     polyline via ``stoptimes.core.spatial.polyline.project_point_to_polyline`` and
      scores each candidate by a high-percentile (``DIVERGENCE_SCORE_PERCENTILE``)
      cross-track error + a monotonic-progress fraction (how much of the
      trace advances along-shape rather than backward). Assignment is
@@ -52,7 +52,7 @@ thresholds are re-exported here for convenience and documented in full below.
 
 Pure/deterministic: no I/O, no network, no mutation of inputs. All spatial
 math (haversine, projection, stop assignment) is reused from
-``etaval.spatial.polyline`` -- this module only orchestrates scoring,
+``stoptimes.core.spatial.polyline`` -- this module only orchestrates scoring,
 segmentation, and row assembly. Mirrors the error-handling style of
 ``navsat_adapter.py``.
 """
@@ -65,8 +65,8 @@ from typing import Dict, List, Sequence, Tuple
 import numpy as np
 import pandas as pd
 
-from feature_engineering.bucr_gtfs import RouteDirectionCandidate
-from feature_engineering.bucr_trip_scoring import (
+from stoptimes.train.sources.bucr_gtfs import RouteDirectionCandidate
+from stoptimes.train.sources.bucr_trip_scoring import (
     AMBIGUITY_MARGIN_M,
     DISTINGUISHING_STOP_RADIUS_M,
     DIVERGENCE_SCORE_PERCENTILE,
@@ -133,8 +133,8 @@ REQUIRED_VP_COLUMNS: List[str] = [
 # Output columns: mirrors ``rt_source.OUTPUT_COLUMNS`` (LEGACY_COLUMNS +
 # EXTRA_COLUMNS) exactly, plus ``route_id`` (BUCR has one route today but the
 # schema stays general). Spelled out here rather than imported from
-# ``feature_engineering.rt_source`` because that module transitively imports
-# ``rt_pipeline.storage``, which is not an installed dependency under the
+# ``stoptimes.train.datasets.rt_source`` because that module transitively imports
+# ``stoptimes.record.storage``, which is not an installed dependency under the
 # ``bucr`` uv group (a pre-existing repo quirk affecting ``rt_source.py`` and
 # ``dataset_builder.py`` too -- out of scope to fix here; see this module's
 # test-run report for the two known-broken test files it causes).

@@ -28,21 +28,21 @@ from typing import Any
 
 import httpx
 
-from etaval.domain.models import SourceConfig
-from etaval.engine.runtime import FeedSnapshot, LiveFeedSource
-from etaval.feeds.gtfsrt_json import (
+from stoptimes.core.domain.models import SourceConfig
+from stoptimes.val.engine.runtime import FeedSnapshot, LiveFeedSource
+from stoptimes.core.realtime.gtfsrt_json import (
     TripUpdatesPoller,
     VehiclePositionRecord,
     VehiclePositionsPoller,
 )
-from etaval.feeds.static import GtfsStaticLoader
-from etaval.groundtruth.position_radius import PositionRadiusDetector
-from etaval.groundtruth.shape_distance import ShapeDistanceDetector
-from etaval.groundtruth.stop_status import StopStatusDetector
-from etaval.predictors.constant_speed import ConstantSpeedPredictor
-from etaval.predictors.gtfs_eta_models import GtfsEtaModelPredictor
-from etaval.predictors.gtfsrt_tripupdates import GtfsRtTripUpdatesPredictor
-from etaval.predictors.schedule_baseline import ScheduleBaselinePredictor
+from stoptimes.core.gtfs.static import GtfsStaticLoader
+from stoptimes.val.groundtruth.position_radius import PositionRadiusDetector
+from stoptimes.val.groundtruth.shape_distance import ShapeDistanceDetector
+from stoptimes.val.groundtruth.stop_status import StopStatusDetector
+from stoptimes.val.predictors.constant_speed import ConstantSpeedPredictor
+from stoptimes.val.predictors.gtfs_eta_models import GtfsEtaModelPredictor
+from stoptimes.val.predictors.gtfsrt_tripupdates import GtfsRtTripUpdatesPredictor
+from stoptimes.val.predictors.schedule_baseline import ScheduleBaselinePredictor
 
 # ── Predictor registry ────────────────────────────────────────────────────────
 #
@@ -199,7 +199,7 @@ def _attach_static_loader(predictors: list[Any], static_loader: GtfsStaticLoader
     Duck-typed opt-in, mirroring the ``accepts_position_history`` pattern:
     any predictor instance with a callable ``attach_static_loader`` attribute
     is called with *static_loader*; predictors without the method are left
-    untouched. Currently only :class:`~etaval.predictors.schedule_baseline.
+    untouched. Currently only :class:`~stoptimes.val.predictors.schedule_baseline.
     ScheduleBaselinePredictor` uses this hook.
     """
     for predictor in predictors:
@@ -314,7 +314,7 @@ class ReplayRunDeps:
     does not own and must NOT delete.
     """
 
-    feed_source: Any  # ArchiveReplayFeedSource (etaval.feeds.replay_archive)
+    feed_source: Any  # ArchiveReplayFeedSource (stoptimes.val.feeds.replay_archive)
     static_loader: GtfsStaticLoader
     predictors: list[Any]
     detectors: list[Any]
@@ -336,9 +336,9 @@ def build_replay_run(
     """Assemble all dependencies for an archived-Parquet replay run.
 
     Mirrors :func:`build_live_run`'s wiring of predictors/detectors, but
-    sources snapshots from :class:`~etaval.feeds.replay_archive.ArchiveReplayFeedSource`
+    sources snapshots from :class:`~stoptimes.val.feeds.replay_archive.ArchiveReplayFeedSource`
     instead of live HTTP polling, and resolves the static GTFS zip via
-    :func:`~etaval.feeds.replay_archive.resolve_static_gtfs` (a local
+    :func:`~stoptimes.val.feeds.replay_archive.resolve_static_gtfs` (a local
     ``static_gtfs_zip`` / ``static_gtfs_dir`` snapshot matched to the first
     archived tick's date, rather than downloading ``cfg.gtfs_static_url``).
 
@@ -366,7 +366,7 @@ def build_replay_run(
         FileNotFoundError: the resolved static GTFS zip does not exist, or no
             dated snapshot <= the target date was found in static_gtfs_dir.
     """
-    from etaval.feeds.replay_archive import ArchiveReplayFeedSource, resolve_static_gtfs
+    from stoptimes.val.feeds.replay_archive import ArchiveReplayFeedSource, resolve_static_gtfs
 
     if static_gtfs_zip is None and static_gtfs_dir is None:
         raise ValueError(

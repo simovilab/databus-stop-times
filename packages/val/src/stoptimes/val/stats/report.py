@@ -2,7 +2,7 @@
 
 compute_metrics_with_ci(results, n_boot=1000, ci=0.95, seed=0, tz="UTC") -> ReportWithCI
 
-Reuses :mod:`etaval.scoring.metrics` for the base per-predictor numbers, and
+Reuses :mod:`stoptimes.val.scoring.metrics` for the base per-predictor numbers, and
 adds a bootstrap confidence interval around each predictor's MAE (mean
 absolute error), computed deterministically from the given seed.
 """
@@ -11,9 +11,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from etaval.domain.models import ValidationResult
-from etaval.scoring.metrics import MetricsReport, compute_metrics
-from etaval.stats.bootstrap import CIResult, bootstrap_ci
+from stoptimes.core.domain.models import ValidationResult
+from stoptimes.val.scoring.metrics import MetricsReport, compute_metrics
+from stoptimes.val.stats.bootstrap import CIResult, bootstrap_ci
 
 
 @dataclass(frozen=True)

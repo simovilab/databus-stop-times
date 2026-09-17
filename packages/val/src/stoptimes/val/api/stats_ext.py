@@ -5,12 +5,12 @@ Implements the pinned ``GET /api/runs/{id}/metrics?stats=1`` contract:
 - ``mae_ci`` + ``latency`` per predictor
 - top-level ``significance`` (wilcoxon + diebold_mariano, Holm-corrected
   within each test family, one row per unordered predictor pair)
-- top-level ``calibration`` (:func:`~etaval.stats.calibration.calibration_by_horizon`
+- top-level ``calibration`` (:func:`~stoptimes.val.stats.calibration.calibration_by_horizon`
   bins over every result in the run)
 - top-level ``seed`` (always ``STATS_SEED`` — deterministic)
 
 Nothing here talks to the network, storage, or FastAPI — it is a pure
-function of ``(results, summary)`` so :class:`~etaval.api.runs.RunManager`
+function of ``(results, summary)`` so :class:`~stoptimes.val.api.runs.RunManager`
 can cache its output per-run and compute it exactly once.
 """
 
@@ -22,13 +22,13 @@ from dataclasses import asdict
 from itertools import combinations
 from typing import Any
 
-from etaval.domain.models import ValidationResult
-from etaval.engine.runtime import RunSummary
-from etaval.stats.bootstrap import CIResult
-from etaval.stats.calibration import calibration_by_horizon
-from etaval.stats.correction import holm
-from etaval.stats.report import compute_metrics_with_ci
-from etaval.stats.significance import SignificanceResult, diebold_mariano, wilcoxon_test
+from stoptimes.core.domain.models import ValidationResult
+from stoptimes.val.engine.runtime import RunSummary
+from stoptimes.val.stats.bootstrap import CIResult
+from stoptimes.val.stats.calibration import calibration_by_horizon
+from stoptimes.val.stats.correction import holm
+from stoptimes.val.stats.report import compute_metrics_with_ci
+from stoptimes.val.stats.significance import SignificanceResult, diebold_mariano, wilcoxon_test
 
 # Deterministic seed for every stats computation — pinned by the API contract.
 STATS_SEED: int = 0

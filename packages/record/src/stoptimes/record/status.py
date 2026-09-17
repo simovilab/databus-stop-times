@@ -132,7 +132,7 @@ def update(
     try:
         _update(name, status_dir, fields, event=event)
     except Exception:  # never let status reporting break the caller
-        logger.exception("rt_pipeline.status.update failed for %r", name)
+        logger.exception("stoptimes.record.status.update failed for %r", name)
 
 
 def _update(

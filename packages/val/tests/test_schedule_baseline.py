@@ -15,9 +15,9 @@ from __future__ import annotations
 import pandas as pd
 import pytest
 
-from etaval.domain.models import Stop, TripInstance, VehicleState
-from etaval.engine.assembly import PREDICTOR_REGISTRY
-from etaval.predictors.schedule_baseline import ScheduleBaselinePredictor, _parse_gtfs_time
+from stoptimes.core.domain.models import Stop, TripInstance, VehicleState
+from stoptimes.val.engine.assembly import PREDICTOR_REGISTRY
+from stoptimes.val.predictors.schedule_baseline import ScheduleBaselinePredictor, _parse_gtfs_time
 
 TRIP = TripInstance(
     source="test",

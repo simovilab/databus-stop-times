@@ -1,5 +1,5 @@
 """Tests for the shared segment core
-(``feature_engineering.segment_core``).
+(``stoptimes.core.segments``).
 
 The two agency builders (bUCR / MBTA) are covered end-to-end by
 ``test_segment_dataset_builder.py`` and ``test_mbta_segments.py``; those exercise
@@ -17,7 +17,7 @@ from typing import Optional
 import pandas as pd
 import pytest
 
-from feature_engineering.segment_core import (
+from stoptimes.core.segments import (
     OUTPUT_COLUMNS,
     TripInstance,
     build_segments_from_instances,

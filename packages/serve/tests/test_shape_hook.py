@@ -11,10 +11,10 @@ import numpy as np
 import pandas as pd
 import pytest
 
-import models.common.registry as registry_module
-from eta_service.estimator import estimate_stop_times
-from feature_engineering.spatial import ShapePolyline
-from models.polyreg_distance.train import PolyRegDistanceModel
+import stoptimes.models.common.registry as registry_module
+from stoptimes.serve.estimator import estimate_stop_times
+from stoptimes.core.spatial.geo import ShapePolyline
+from stoptimes.models.polyreg_distance.train import PolyRegDistanceModel
 
 MODEL_KEY = "shape_hook_test_model"
 

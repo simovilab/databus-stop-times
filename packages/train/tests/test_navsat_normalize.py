@@ -7,7 +7,7 @@ import datetime as dt
 import pandas as pd
 import pytest
 
-from feature_engineering.navsat_normalize import (
+from stoptimes.train.sources.navsat_normalize import (
     COSTA_RICA_TZ,
     NavsatSchemaError,
     normalize_raw_navsat,

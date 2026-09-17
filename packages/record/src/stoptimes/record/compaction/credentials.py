@@ -48,7 +48,7 @@ def load_credentials(alias: str, endpoint: str | None = None) -> S3Credentials:
     access = os.environ.get("AWS_ACCESS_KEY_ID")
     secret = os.environ.get("AWS_SECRET_ACCESS_KEY")
     # AWS_ENDPOINT_URL is this repo's convention (see docs/S3_LAYOUT.md and
-    # rt_pipeline.storage.config.S3Config.from_env) and is what the collector's
+    # stoptimes.record.storage.config.S3Config.from_env) and is what the collector's
     # .env actually sets; S3_ENDPOINT is what the standalone script this module
     # was adopted from used. Accept both, preferring the repo's own, and strip
     # a scheme if one is present since `mc`/DuckDB want a bare host here.

@@ -3,11 +3,11 @@ seed_baseline_model.py — seed ONE global polyreg_distance model into the regis
 
 Usage:
     export MODEL_REGISTRY_DIR=/tmp/gtfs_eta_registry
-    python -m gtfs_eta.seed_baseline_model
+    python -m stoptimes.train.seed_baseline_model
 
 Ported from databus's vendored copy (backend/gtfs-eta/gtfs_eta/seed_baseline_model.py)
 onto this repo's layout: ``PolyRegDistanceModel`` lives in
-``models.polyreg_distance.train`` here (not ``models.polyreg_distance.model``),
+``stoptimes.models.polyreg_distance.train`` here (not ``stoptimes.models.polyreg_distance.model``),
 and the four top-level packages are already importable without sys.path
 manipulation (editable install exposes core/, eta_service/,
 feature_engineering/, models/, and this gtfs_eta/ alias package globally).
@@ -23,8 +23,8 @@ MODEL_REGISTRY_DIR is read by the registry singleton; set it before running.
 import numpy as np
 import pandas as pd
 
-from models.common.registry import get_registry
-from models.polyreg_distance.train import PolyRegDistanceModel
+from stoptimes.models.common.registry import get_registry
+from stoptimes.models.polyreg_distance.train import PolyRegDistanceModel
 
 # -- Constants ----------------------------------------------------------------
 

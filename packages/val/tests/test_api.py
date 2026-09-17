@@ -14,16 +14,16 @@ from pathlib import Path
 import httpx
 import pytest
 
-from etaval.api.app import create_app
-from etaval.api.runs import RunManager
-from etaval.engine.assembly import (
+from stoptimes.val.api.app import create_app
+from stoptimes.val.api.runs import RunManager
+from stoptimes.val.engine.assembly import (
     DEFAULT_PREDICTOR_IDS,
     LiveRunDeps,
     build_detectors,
     build_predictors,
 )
-from etaval.engine.runtime import ReplayFeedSource
-from etaval.feeds.static import GtfsStaticLoader
+from stoptimes.val.engine.runtime import ReplayFeedSource
+from stoptimes.core.gtfs.static import GtfsStaticLoader
 
 # Reuse the snapshot builder from the engine replay test.
 from tests.test_engine_replay import _build_snapshots

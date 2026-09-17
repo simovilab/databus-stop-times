@@ -12,7 +12,7 @@ Two entry points:
 
 from __future__ import annotations
 
-from etaval.domain.models import ActualArrival, PredictionSample, ValidationResult
+from stoptimes.core.domain.models import ActualArrival, PredictionSample, ValidationResult
 
 
 class Scorer:

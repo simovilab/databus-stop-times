@@ -1,7 +1,7 @@
 """Shared core for the segment ETA dataset builders (roadmap 3.1).
 
-Both agency builders -- :mod:`feature_engineering.segment_dataset_builder`
-(bUCR, inferred trips) and :mod:`feature_engineering.mbta_segments` (MBTA, real
+Both agency builders -- :mod:`stoptimes.train.datasets.segment_dataset_builder`
+(bUCR, inferred trips) and :mod:`stoptimes.train.datasets.mbta_segments` (MBTA, real
 GTFS trips) -- reduce to the *same* problem once each has resolved its raw feed
 into **trip instances**: given, per instance, an ordered VP frame plus the
 instance's ordered stops (with along-shape ``progress_m``) and shape polyline,
@@ -16,8 +16,8 @@ identical and lives here, so the two builders share one tested implementation
 instead of duplicating it.
 
 Pure/deterministic: no I/O, no network, no mutation of inputs. Spatial math is
-reused from ``etaval.spatial.polyline``; temporal features from
-``feature_engineering.temporal``. Runs under ``uv run --group bucr``.
+reused from ``stoptimes.core.spatial.polyline``; temporal features from
+``stoptimes.core.features.temporal``. Runs under ``uv run --group bucr``.
 """
 
 from __future__ import annotations
@@ -29,10 +29,10 @@ from typing import Iterable, List, Optional, Tuple
 import numpy as np
 import pandas as pd
 
-from etaval.spatial.polyline import haversine_m, project_point_to_polyline
+from stoptimes.core.spatial.polyline import haversine_m, project_point_to_polyline
 
-from core.config import AGENCY_TEMPORAL_DEFAULTS
-from feature_engineering.temporal import extract_temporal_features
+from stoptimes.core.config import AGENCY_TEMPORAL_DEFAULTS
+from stoptimes.core.features.temporal import extract_temporal_features
 
 __all__ = [
     "ARRIVAL_RADIUS_M",

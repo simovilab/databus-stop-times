@@ -17,14 +17,14 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal
 
-from etaval.api.stats_ext import compute_stats_extension
-from etaval.api.telemetry import TelemetryCollector
-from etaval.domain.models import ValidationResult
-from etaval.engine.assembly import LiveRunDeps, build_live_run
-from etaval.engine.runtime import RunSummary, TickEvent, run_engine
-from etaval.feeds.source_config import load_named_source
-from etaval.provenance import RunProvenance, build_run_provenance, write_provenance_sidecar
-from etaval.storage.sqlite import SqliteStorage
+from stoptimes.val.api.stats_ext import compute_stats_extension
+from stoptimes.val.api.telemetry import TelemetryCollector
+from stoptimes.core.domain.models import ValidationResult
+from stoptimes.val.engine.assembly import LiveRunDeps, build_live_run
+from stoptimes.val.engine.runtime import RunSummary, TickEvent, run_engine
+from stoptimes.val.feeds.source_config import load_named_source
+from stoptimes.val.provenance import RunProvenance, build_run_provenance, write_provenance_sidecar
+from stoptimes.val.storage.sqlite import SqliteStorage
 
 
 @dataclass

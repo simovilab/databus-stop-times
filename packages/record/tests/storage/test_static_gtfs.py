@@ -1,4 +1,4 @@
-"""Tests for weekly static GTFS snapshots (rt_pipeline.storage.static_gtfs).
+"""Tests for weekly static GTFS snapshots (stoptimes.record.storage.static_gtfs).
 
 `requests.get`, `subprocess.run`, and credential resolution are all
 monkeypatched -- no network or `mc` dependency, same spirit as the other
@@ -14,7 +14,7 @@ import zipfile
 import pytest
 import requests
 
-from rt_pipeline.storage import static_gtfs as sg
+from stoptimes.record.storage import static_gtfs as sg
 
 
 def _zip_bytes(members: dict[str, str]) -> bytes:
@@ -92,7 +92,7 @@ def test_put_snapshot_builds_dated_key_and_pipes_content(monkeypatch):
 
     monkeypatch.setattr(sg.subprocess, "run", fake_run)
     monkeypatch.setattr(
-        "rt_pipeline.compaction.credentials.load_credentials", lambda alias: None
+        "stoptimes.record.compaction.credentials.load_credentials", lambda alias: None
     )
 
     key = sg.put_snapshot(b"zip-bytes", "mbta", dt.date(2026, 8, 17))
@@ -109,7 +109,7 @@ def test_put_snapshot_raises_on_mc_failure(monkeypatch):
         lambda cmd, input, capture_output: _FakeCompletedProcess(1, b"access denied"),
     )
     monkeypatch.setattr(
-        "rt_pipeline.compaction.credentials.load_credentials", lambda alias: None
+        "stoptimes.record.compaction.credentials.load_credentials", lambda alias: None
     )
 
     with pytest.raises(sg.StaticGtfsError, match="access denied"):
@@ -139,7 +139,7 @@ def test_list_snapshots_parses_and_sorts_dates(monkeypatch):
 
     monkeypatch.setattr(sg.subprocess, "run", fake_run)
     monkeypatch.setattr(
-        "rt_pipeline.compaction.credentials.load_credentials", lambda alias: None
+        "stoptimes.record.compaction.credentials.load_credentials", lambda alias: None
     )
 
     result = sg.list_snapshots("mbta")
@@ -161,7 +161,7 @@ def test_list_snapshots_returns_empty_when_prefix_missing(monkeypatch):
         ),
     )
     monkeypatch.setattr(
-        "rt_pipeline.compaction.credentials.load_credentials", lambda alias: None
+        "stoptimes.record.compaction.credentials.load_credentials", lambda alias: None
     )
 
     assert sg.list_snapshots("bucr") == []
@@ -174,7 +174,7 @@ def test_list_snapshots_returns_empty_for_no_output(monkeypatch):
         lambda cmd, capture_output: _FakeLsCompletedProcess(0, stdout=b""),
     )
     monkeypatch.setattr(
-        "rt_pipeline.compaction.credentials.load_credentials", lambda alias: None
+        "stoptimes.record.compaction.credentials.load_credentials", lambda alias: None
     )
 
     assert sg.list_snapshots("bucr") == []
@@ -187,7 +187,7 @@ def test_list_snapshots_raises_on_other_mc_failure(monkeypatch):
         lambda cmd, capture_output: _FakeLsCompletedProcess(1, stderr=b"access denied"),
     )
     monkeypatch.setattr(
-        "rt_pipeline.compaction.credentials.load_credentials", lambda alias: None
+        "stoptimes.record.compaction.credentials.load_credentials", lambda alias: None
     )
 
     with pytest.raises(sg.StaticGtfsError, match="access denied"):
@@ -203,7 +203,7 @@ def test_get_snapshot_builds_key_and_returns_bytes(monkeypatch):
 
     monkeypatch.setattr(sg.subprocess, "run", fake_run)
     monkeypatch.setattr(
-        "rt_pipeline.compaction.credentials.load_credentials", lambda alias: None
+        "stoptimes.record.compaction.credentials.load_credentials", lambda alias: None
     )
 
     result = sg.get_snapshot("mbta", dt.date(2026, 8, 17))
@@ -225,7 +225,7 @@ def test_get_snapshot_raises_on_missing_date(monkeypatch):
         ),
     )
     monkeypatch.setattr(
-        "rt_pipeline.compaction.credentials.load_credentials", lambda alias: None
+        "stoptimes.record.compaction.credentials.load_credentials", lambda alias: None
     )
 
     with pytest.raises(sg.StaticGtfsError, match="Object does not exist"):

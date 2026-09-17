@@ -36,7 +36,7 @@ Receiving the static schedule
 The engine has no built-in concept of "predictors that need GTFS static
 data" — instead this predictor duck-types an optional hook,
 ``attach_static_loader(loader)``, that the run assembly (see
-``etaval.engine.assembly._attach_static_loader``) calls with the run's
+``stoptimes.val.engine.assembly._attach_static_loader``) calls with the run's
 ``GtfsStaticLoader`` for any predictor that exposes it. Only ``loader.stop_times``
 (a DataFrame with ``trip_id``/``stop_id``/``stop_sequence``/``arrival_time``/
 ``departure_time`` columns) is required, so the hook accepts anything
@@ -60,8 +60,8 @@ from __future__ import annotations
 
 from typing import Any, Protocol
 
-from etaval.domain.models import Stop, TripInstance, VehicleState
-from etaval.predictors.base import StopPrediction
+from stoptimes.core.domain.models import Stop, TripInstance, VehicleState
+from stoptimes.val.predictors.base import StopPrediction
 
 
 def _parse_gtfs_time(value: Any) -> int | None:
@@ -121,7 +121,7 @@ class ScheduleBaselinePredictor:
 
         Called by the engine assembly (``build_live_run`` / ``build_replay_run``)
         for every predictor that exposes this method — see
-        ``etaval.engine.assembly._attach_static_loader``. Resets the per-trip
+        ``stoptimes.val.engine.assembly._attach_static_loader``. Resets the per-trip
         schedule cache so a new loader is never mixed with stale entries.
         """
         self._loader = loader

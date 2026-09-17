@@ -14,7 +14,7 @@ import numpy as np
 import numpy.typing as npt
 from scipy import stats as scipy_stats
 
-# Horizon bands (seconds), matching etaval.scoring.metrics bucket conventions.
+# Horizon bands (seconds), matching stoptimes.val.scoring.metrics bucket conventions.
 _BAND_LABELS: list[str] = ["<2m", "2-5m", "5-10m", ">10m"]
 _BAND_EDGES: list[tuple[float, float]] = [
     (0.0, 120.0),

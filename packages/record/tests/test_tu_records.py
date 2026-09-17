@@ -1,4 +1,4 @@
-"""Tests for GTFS-RT TripUpdates -> archive records (rt_pipeline.tu_records).
+"""Tests for GTFS-RT TripUpdates -> archive records (stoptimes.record.tu_records).
 
 Django-free: these build FeedMessage objects in memory, so they exercise the
 scoping and field-mapping decisions without a settings module, a database, or
@@ -12,7 +12,7 @@ import datetime as dt
 import pytest
 from google.transit import gtfs_realtime_pb2
 
-from rt_pipeline.tu_records import feed_records, parse_routes, trip_update_records
+from stoptimes.record.tu_records import feed_records, parse_routes, trip_update_records
 
 INGESTED = dt.datetime(2026, 9, 4, 12, 0, 30, tzinfo=dt.timezone.utc)
 HEADER_TS = dt.datetime(2026, 9, 4, 12, 0, 0, tzinfo=dt.timezone.utc)

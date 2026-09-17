@@ -11,8 +11,8 @@ from pathlib import Path
 import httpx
 import pytest
 
-from etaval.api.app import create_app
-from etaval.api.runs import RunManager
+from stoptimes.val.api.app import create_app
+from stoptimes.val.api.runs import RunManager
 from tests.test_api import _replay_deps_builder, _wait_done
 
 # ── Fixtures ───────────────────────────────────────────────────────────────────

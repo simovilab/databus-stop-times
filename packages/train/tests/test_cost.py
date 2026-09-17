@@ -10,7 +10,7 @@ import time
 import numpy as np
 import pytest
 
-from models.evaluation.cost import (
+from stoptimes.train.evaluation.cost import (
     LATENCY_QUANTILE_KEYS,
     TRAINING_COST_KEYS,
     TrainingCost,

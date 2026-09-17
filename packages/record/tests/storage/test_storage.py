@@ -13,13 +13,13 @@ import os
 import pandas as pd
 import pytest
 
-from rt_pipeline.storage import (
+from stoptimes.record.storage import (
     available_routes,
     list_partitions,
     read_vehicle_positions,
     write_vehicle_positions,
 )
-from rt_pipeline.storage.schema import add_partition_columns, missing_columns
+from stoptimes.record.storage.schema import add_partition_columns, missing_columns
 
 
 def _sample(route_id: str, day: int, n: int, vehicle_prefix: str = "v") -> pd.DataFrame:

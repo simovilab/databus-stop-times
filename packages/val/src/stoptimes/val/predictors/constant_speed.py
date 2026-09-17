@@ -13,7 +13,7 @@ Speed estimation (priority order)
 
 Receiving position history
 --------------------------
-The :class:`~etaval.domain.interfaces.Predictor` Protocol passes only
+The :class:`~stoptimes.val.domain.interfaces.Predictor` Protocol passes only
 ``vehicle_state`` (the latest sample).  To use history the engine passes it as
 the optional keyword-only argument ``position_history``.  The argument has a
 default of ``None`` so calling ``predict(trip, upcoming, state, tu)`` — i.e.
@@ -25,8 +25,8 @@ from __future__ import annotations
 
 from typing import Any
 
-from etaval.domain.models import Stop, TripInstance, VehicleState
-from etaval.predictors.base import StopPrediction
+from stoptimes.core.domain.models import Stop, TripInstance, VehicleState
+from stoptimes.val.predictors.base import StopPrediction
 
 
 class ConstantSpeedPredictor:

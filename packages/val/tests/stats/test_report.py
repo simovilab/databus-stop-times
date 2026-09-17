@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import pytest
 
-from etaval.domain.models import ValidationResult
-from etaval.stats.report import PredictorWithCI, ReportWithCI, compute_metrics_with_ci
+from stoptimes.core.domain.models import ValidationResult
+from stoptimes.val.stats.report import PredictorWithCI, ReportWithCI, compute_metrics_with_ci
 
 _TRIP_KEY = "src:trip1:v1:20240101"
 
@@ -78,7 +78,7 @@ class TestComputeMetricsWithCI:
         assert r1.per_predictor_ci[0].mae_ci == r2.per_predictor_ci[0].mae_ci
 
     def test_base_report_matches_compute_metrics(self) -> None:
-        from etaval.scoring.metrics import compute_metrics
+        from stoptimes.val.scoring.metrics import compute_metrics
 
         results = [_result("s1", error_s=10.0, horizon_s=300.0)]
         report = compute_metrics_with_ci(results)

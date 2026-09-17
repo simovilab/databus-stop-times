@@ -10,11 +10,11 @@ from datetime import datetime, timezone
 
 
 class TestConfig:
-    """Tests for core.config module."""
+    """Tests for stoptimes.core.config module."""
 
     def test_get_config_returns_singleton(self):
         """Config should return the same instance."""
-        from core.config import get_config, reset_config
+        from stoptimes.core.config import get_config, reset_config
 
         reset_config()  # Start fresh
         config1 = get_config()
@@ -23,7 +23,7 @@ class TestConfig:
 
     def test_config_project_root_exists(self):
         """Project root should be a valid directory."""
-        from core.config import get_config
+        from stoptimes.core.config import get_config
 
         config = get_config()
         assert config.project_root.exists()
@@ -31,7 +31,7 @@ class TestConfig:
 
     def test_config_model_registry_dir(self):
         """Model registry dir should be configurable via env var."""
-        from core.config import get_config, reset_config
+        from stoptimes.core.config import get_config, reset_config
 
         # Test default
         reset_config()
@@ -50,7 +50,7 @@ class TestConfig:
         while serving MBTA predictions, a train/serve skew from models
         trained via dataset_builder's America/New_York / US_MA default.
         """
-        from core.config import get_config, reset_config
+        from stoptimes.core.config import get_config, reset_config
 
         reset_config()
         for var in ("ETA_AGENCY", "ETA_TIMEZONE", "ETA_HOLIDAY_REGION"):
@@ -64,7 +64,7 @@ class TestConfig:
 
     def test_config_agency_temporal_defaults_per_agency(self):
         """Each agency's timezone/region resolves from one shared table."""
-        from core.config import AGENCY_TEMPORAL_DEFAULTS, get_config, reset_config
+        from stoptimes.core.config import AGENCY_TEMPORAL_DEFAULTS, get_config, reset_config
 
         reset_config()
         os.environ["ETA_AGENCY"] = "bucr"
@@ -80,7 +80,7 @@ class TestConfig:
 
     def test_config_explicit_overrides_win_over_agency_default(self):
         """ETA_TIMEZONE/ETA_HOLIDAY_REGION still override the agency default."""
-        from core.config import get_config, reset_config
+        from stoptimes.core.config import get_config, reset_config
 
         reset_config()
         os.environ["ETA_AGENCY"] = "mbta"
@@ -97,7 +97,7 @@ class TestConfig:
 
     def test_config_paths(self):
         """Config should provide valid paths."""
-        from core.config import get_config
+        from stoptimes.core.config import get_config
 
         config = get_config()
         assert config.models_dir == config.project_root / "models"
@@ -106,18 +106,18 @@ class TestConfig:
 
 
 class TestLogging:
-    """Tests for core.logging module."""
+    """Tests for stoptimes.core.logging module."""
 
     def test_get_logger_returns_logger(self):
         """get_logger should return an ETALogger instance."""
-        from core.logging import get_logger, ETALogger
+        from stoptimes.core.logging import get_logger, ETALogger
 
         logger = get_logger("test")
         assert isinstance(logger, ETALogger)
 
     def test_logger_levels(self):
         """Logger should support all standard levels."""
-        from core.logging import get_logger
+        from stoptimes.core.logging import get_logger
 
         logger = get_logger("test_levels")
         # These should not raise
@@ -128,7 +128,7 @@ class TestLogging:
 
     def test_logger_with_fields(self):
         """Logger should accept structured fields."""
-        from core.logging import get_logger
+        from stoptimes.core.logging import get_logger
 
         logger = get_logger("test_fields")
         # This should not raise
@@ -136,7 +136,7 @@ class TestLogging:
 
     def test_logger_caching(self):
         """Loggers should be cached by component name."""
-        from core.logging import get_logger
+        from stoptimes.core.logging import get_logger
 
         logger1 = get_logger("cached_test")
         logger2 = get_logger("cached_test")
@@ -145,11 +145,11 @@ class TestLogging:
 
 
 class TestExceptions:
-    """Tests for core.exceptions module."""
+    """Tests for stoptimes.core.exceptions module."""
 
     def test_base_exception(self):
         """ETAError should format messages correctly."""
-        from core.exceptions import ETAError
+        from stoptimes.core.exceptions import ETAError
 
         err = ETAError("Test error", code="TEST_CODE", key1="val1")
         assert "TEST_CODE" in str(err)
@@ -158,7 +158,7 @@ class TestExceptions:
 
     def test_exception_to_dict(self):
         """Exceptions should convert to dict for JSON serialization."""
-        from core.exceptions import ETAError
+        from stoptimes.core.exceptions import ETAError
 
         err = ETAError("Test", foo="bar")
         d = err.to_dict()
@@ -167,7 +167,7 @@ class TestExceptions:
 
     def test_model_not_found_error(self):
         """ModelNotFoundError should include model details."""
-        from core.exceptions import ModelNotFoundError
+        from stoptimes.core.exceptions import ModelNotFoundError
 
         err = ModelNotFoundError(model_key="xgb_global")
         assert "xgb_global" in str(err)
@@ -175,7 +175,7 @@ class TestExceptions:
 
     def test_validation_error_hierarchy(self):
         """Validation errors should inherit from ETAError."""
-        from core.exceptions import (
+        from stoptimes.core.exceptions import (
             ETAError,
             ValidationError,
             InvalidVehiclePositionError,
@@ -188,11 +188,11 @@ class TestExceptions:
 
 
 class TestValidation:
-    """Tests for core.validation module."""
+    """Tests for stoptimes.core.validation module."""
 
     def test_validate_vehicle_position_valid(self):
         """Valid vehicle position should pass validation."""
-        from core.validation import validate_vehicle_position, VehiclePosition
+        from stoptimes.core.validation import validate_vehicle_position, VehiclePosition
 
         data = {
             "vehicle_id": "V123",
@@ -210,8 +210,8 @@ class TestValidation:
 
     def test_validate_vehicle_position_missing_id(self):
         """Missing vehicle_id should raise error."""
-        from core.validation import validate_vehicle_position
-        from core.exceptions import InvalidVehiclePositionError
+        from stoptimes.core.validation import validate_vehicle_position
+        from stoptimes.core.exceptions import InvalidVehiclePositionError
 
         data = {
             "lat": 9.93,
@@ -225,8 +225,8 @@ class TestValidation:
 
     def test_validate_vehicle_position_invalid_lat(self):
         """Invalid latitude should raise error."""
-        from core.validation import validate_vehicle_position
-        from core.exceptions import InvalidVehiclePositionError
+        from stoptimes.core.validation import validate_vehicle_position
+        from stoptimes.core.exceptions import InvalidVehiclePositionError
 
         data = {
             "vehicle_id": "V123",
@@ -241,7 +241,7 @@ class TestValidation:
 
     def test_validate_vehicle_position_alternate_field_names(self):
         """Should accept alternate field names."""
-        from core.validation import validate_vehicle_position
+        from stoptimes.core.validation import validate_vehicle_position
 
         # Using alternate field names
         data = {
@@ -257,7 +257,7 @@ class TestValidation:
 
     def test_validate_stop_valid(self):
         """Valid stop should pass validation."""
-        from core.validation import validate_stop, Stop
+        from stoptimes.core.validation import validate_stop, Stop
 
         data = {
             "stop_id": "S100",
@@ -272,8 +272,8 @@ class TestValidation:
 
     def test_validate_stop_missing_coordinates(self):
         """Missing coordinates should raise error."""
-        from core.validation import validate_stop
-        from core.exceptions import InvalidStopError
+        from stoptimes.core.validation import validate_stop
+        from stoptimes.core.exceptions import InvalidStopError
 
         data = {
             "stop_id": "S100",
@@ -284,7 +284,7 @@ class TestValidation:
 
     def test_validate_stops_list(self):
         """Should validate a list of stops."""
-        from core.validation import validate_stops_list
+        from stoptimes.core.validation import validate_stops_list
 
         data = [
             {"stop_id": "S1", "lat": 9.93, "lon": -84.08},
@@ -298,7 +298,7 @@ class TestValidation:
 
     def test_validate_stops_list_from_dict(self):
         """Should handle dict with 'stops' key."""
-        from core.validation import validate_stops_list
+        from stoptimes.core.validation import validate_stops_list
 
         data = {
             "stops": [
@@ -310,7 +310,7 @@ class TestValidation:
 
     def test_is_valid_vehicle_position_helper(self):
         """is_valid_vehicle_position should return bool."""
-        from core.validation import is_valid_vehicle_position
+        from stoptimes.core.validation import is_valid_vehicle_position
 
         valid_data = {
             "vehicle_id": "V1",
@@ -326,7 +326,7 @@ class TestValidation:
 
     def test_to_dict_compatibility(self):
         """Validated objects should convert back to dicts."""
-        from core.validation import validate_vehicle_position, validate_stop
+        from stoptimes.core.validation import validate_vehicle_position, validate_stop
 
         vp_data = {
             "vehicle_id": "V1",
@@ -351,9 +351,9 @@ class TestIntegration:
 
     def test_logging_with_validation_error(self):
         """Logging should work with validation errors."""
-        from core.logging import get_logger
-        from core.validation import validate_vehicle_position
-        from core.exceptions import InvalidVehiclePositionError
+        from stoptimes.core.logging import get_logger
+        from stoptimes.core.validation import validate_vehicle_position
+        from stoptimes.core.exceptions import InvalidVehiclePositionError
 
         logger = get_logger("integration_test")
 
@@ -365,7 +365,7 @@ class TestIntegration:
 
     def test_config_paths_importable(self):
         """Modules should be importable after config initialization."""
-        from core.config import get_config
+        from stoptimes.core.config import get_config
 
         config = get_config()
 
@@ -374,7 +374,7 @@ class TestIntegration:
         assert str(config.project_root) in sys.path
 
         # These imports should work because config sets up sys.path
-        from feature_engineering.temporal import extract_temporal_features
+        from stoptimes.core.features.temporal import extract_temporal_features
 
         assert callable(extract_temporal_features)
 
@@ -382,7 +382,7 @@ class TestIntegration:
 class TestAgencyTemporalParity:
     """Roadmap Phase 1.1: builder (training) and estimator (serving) must
     resolve timezone/holiday-region identically for a given agency, both
-    sourced from core.config.AGENCY_TEMPORAL_DEFAULTS -- not two independent
+    sourced from stoptimes.core.config.AGENCY_TEMPORAL_DEFAULTS -- not two independent
     hardcoded defaults that can drift apart. Regression coverage for the
     2026-08-14 finding: dataset_builder hardcoded America/New_York/US_MA
     while the deployed estimator defaulted to America/Costa_Rica/CR.
@@ -394,13 +394,13 @@ class TestAgencyTemporalParity:
 
     def test_builder_default_matches_estimator_config_for_mbta(self):
         # dataset_builder.build_vp_training_dataset's `agency` parameter
-        # defaults to core.config.DEFAULT_AGENCY itself (not a re-typed
+        # defaults to stoptimes.core.config.DEFAULT_AGENCY itself (not a re-typed
         # string literal), so this constant *is* what a caller gets if they
         # don't pass `agency` -- import-checking it directly, rather than
         # importing the (Django + sch_pipeline-coupled) builder module,
         # keeps this test dependency-light while still exercising the real
         # shared default.
-        from core.config import AGENCY_TEMPORAL_DEFAULTS, DEFAULT_AGENCY, get_config, reset_config
+        from stoptimes.core.config import AGENCY_TEMPORAL_DEFAULTS, DEFAULT_AGENCY, get_config, reset_config
 
         reset_config()
         self._reset_env()
@@ -423,8 +423,8 @@ class TestAgencyTemporalParity:
 
     def test_same_timestamp_produces_identical_features_builder_vs_serving(self):
         from datetime import datetime, timezone as dt_timezone
-        from core.config import get_config, reset_config
-        from feature_engineering.temporal import extract_temporal_features
+        from stoptimes.core.config import get_config, reset_config
+        from stoptimes.core.features.temporal import extract_temporal_features
 
         reset_config()
         self._reset_env()

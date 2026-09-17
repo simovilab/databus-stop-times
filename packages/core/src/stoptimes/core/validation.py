@@ -15,7 +15,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple, Union
 
-from core.exceptions import (
+from stoptimes.core.exceptions import (
     InvalidVehiclePositionError,
     InvalidStopError,
     InvalidRouteError,
@@ -127,7 +127,7 @@ def validate_vehicle_position(
         InvalidVehiclePositionError: If validation fails
 
     Example:
-        >>> from core.validation import validate_vehicle_position
+        >>> from stoptimes.core.validation import validate_vehicle_position
         >>> raw = {"id": "V123", "lat": 9.93, "lon": -84.08, "timestamp": "2024-01-15T10:00:00Z", "route": "171"}
         >>> vp = validate_vehicle_position(raw)
         >>> print(vp.vehicle_id, vp.lat, vp.lon)

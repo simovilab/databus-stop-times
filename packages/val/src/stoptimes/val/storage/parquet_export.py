@@ -13,7 +13,7 @@ from pathlib import Path
 
 import pandas as pd
 
-from etaval.domain.models import ValidationResult
+from stoptimes.core.domain.models import ValidationResult
 
 # Column order mirrors ValidationResult field order exactly.
 _COLUMNS: list[str] = [
@@ -59,7 +59,7 @@ def load_results_parquet(path: str | Path) -> list[ValidationResult]:
         path: Path to the Parquet file.
 
     Returns:
-        List of :class:`~etaval.domain.models.ValidationResult` in file order.
+        List of :class:`~stoptimes.core.domain.models.ValidationResult` in file order.
         Returns an empty list if the file has no rows.
 
     Raises:

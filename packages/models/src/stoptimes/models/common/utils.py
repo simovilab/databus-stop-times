@@ -11,7 +11,7 @@ from datetime import datetime
 import logging
 
 
-# --- lean terminal reporting (styled to match feature_engineering.progress) ---
+# --- lean terminal reporting (styled to match stoptimes.train.datasets.progress) ---
 
 def _ui_on() -> bool:
     return sys.stdout.isatty() and os.environ.get("NO_COLOR") is None
@@ -87,7 +87,7 @@ def clip_predictions(predictions: np.ndarray,
     .. deprecated::
         Thin re-export kept for backwards compatibility. The canonical
         implementation (with documented bounds/rationale) now lives in
-        ``models.common.preprocessing.clip_predictions`` — import from
+        ``stoptimes.models.common.preprocessing.clip_predictions`` — import from
         there in new code. All five model families (ewma, historical_mean,
         polyreg_distance, polyreg_time, xgb) call that implementation.
 

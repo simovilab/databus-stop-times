@@ -1,6 +1,6 @@
 """Sample-row builders and a bare parquet writer for compaction tests.
 
-Deliberately independent of `rt_pipeline.storage` -- the compaction package
+Deliberately independent of `stoptimes.record.storage` -- the compaction package
 only needs a Parquet file with the right columns to exist at a path; it does
 not go through the collectors' write path.
 """
@@ -33,7 +33,7 @@ def mbta_rows(
     route_id: str = "39",
     include_route_id: bool = False,
 ) -> pd.DataFrame:
-    """Rows matching `rt_pipeline.storage.schema.DATA_COLUMNS`.
+    """Rows matching `stoptimes.record.storage.schema.DATA_COLUMNS`.
 
     `include_route_id=True` mirrors the hourly-staging spool (route_id is a
     real data column there, per the plan's spool schema); leave it False for

@@ -16,7 +16,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from feature_engineering.bucr_quality_report import (
+from stoptimes.train.sources.bucr_quality_report import (
     SELF_LOOP_SHAPE_IDS,
     SELF_LOOP_SIBLING_SHAPES,
     CleaningSummary,
@@ -32,8 +32,8 @@ from feature_engineering.bucr_quality_report import (
     trip_instance_table,
     trips_per_day_table,
 )
-from feature_engineering.bucr_trip_inference import InferenceStats, OUTPUT_COLUMNS
-from feature_engineering.navsat_cleaning import TraceCleaningReport
+from stoptimes.train.sources.bucr_trip_inference import InferenceStats, OUTPUT_COLUMNS
+from stoptimes.train.sources.navsat_cleaning import TraceCleaningReport
 
 
 # ---------------------------------------------------------------------------

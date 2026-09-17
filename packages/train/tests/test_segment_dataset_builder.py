@@ -1,5 +1,5 @@
 """Tests for the BUCR segment dataset builder
-(``feature_engineering.segment_dataset_builder``).
+(``stoptimes.train.datasets.segment_dataset_builder``).
 
 Deterministic synthetic candidates + inferred VP frames: a straight
 west->east shape with three evenly spaced stops, a vehicle that arrives at
@@ -13,15 +13,15 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
-from etaval.domain.models import Stop as EtavalStop
-from etaval.spatial.polyline import assign_stops_monotonic, build_polyline
+from stoptimes.core.domain.models import Stop as EtavalStop
+from stoptimes.core.spatial.polyline import assign_stops_monotonic, build_polyline
 
-from feature_engineering.bucr_gtfs import RouteDirectionCandidate
-from feature_engineering.segment_dataset_builder import (
+from stoptimes.train.sources.bucr_gtfs import RouteDirectionCandidate
+from stoptimes.train.datasets.segment_dataset_builder import (
     OUTPUT_COLUMNS,
     build_bucr_segment_dataset,
 )
-from models.common.data import ETADataset
+from stoptimes.models.common.data import ETADataset
 
 _LAT = 9.9300
 # Three stops ~ every 0.0020 deg lon (~220 m at this latitude).

@@ -43,9 +43,9 @@ import typer
 from rich.console import Console
 from rich.table import Table
 
-import etaval
-from etaval.backtest import walk_forward
-from etaval.engine.assembly import (
+import stoptimes.val
+from stoptimes.val.backtest import walk_forward
+from stoptimes.val.engine.assembly import (
     DEFAULT_PREDICTOR_IDS,
     PREDICTOR_REGISTRY,
     _attach_static_loader,
@@ -55,31 +55,31 @@ from etaval.engine.assembly import (
     download_gtfs,
     parse_duration,
 )
-from etaval.engine.runtime import (
+from stoptimes.val.engine.runtime import (
     LiveFeedSource,
     ReplayFeedSource,
     RunSummary,
     run_engine,
 )
-from etaval.feeds.gtfsrt_json import (
+from stoptimes.core.realtime.gtfsrt_json import (
     TripUpdatesPoller,
     VehiclePositionsPoller,
 )
-from etaval.feeds.source_config import list_sources, load_named_source
-from etaval.feeds.static import GtfsStaticLoader
-from etaval.figures import render_all_figures
-from etaval.provenance import RunProvenance, build_run_provenance, write_provenance_sidecar
-from etaval.scoring.metrics import compute_metrics
-from etaval.scoring.sensitivity import sensitivity_from_persisted_arrivals
-from etaval.storage.parquet_export import export_results, load_results_parquet
-from etaval.storage.sqlite import SqliteStorage
+from stoptimes.val.feeds.source_config import list_sources, load_named_source
+from stoptimes.core.gtfs.static import GtfsStaticLoader
+from stoptimes.val.figures import render_all_figures
+from stoptimes.val.provenance import RunProvenance, build_run_provenance, write_provenance_sidecar
+from stoptimes.val.scoring.metrics import compute_metrics
+from stoptimes.val.scoring.sensitivity import sensitivity_from_persisted_arrivals
+from stoptimes.val.storage.parquet_export import export_results, load_results_parquet
+from stoptimes.val.storage.sqlite import SqliteStorage
 
 app = typer.Typer(help="etaval — ETA Prediction Validation Tool", no_args_is_help=True)
 
 # ``parse_duration`` and ``_RouteFilterLiveSource`` are imported from
-# ``etaval.engine.assembly`` above so the CLI and the future API share one
+# ``stoptimes.val.engine.assembly`` above so the CLI and the future API share one
 # implementation.  They remain importable from this module for backward compat
-# (e.g. ``from etaval.cli.main import parse_duration`` in tests).
+# (e.g. ``from stoptimes.val.cli.main import parse_duration`` in tests).
 
 
 # ── Core validation function (testable without network) ───────────────────────
@@ -100,7 +100,7 @@ async def _run_validation(
     seed: int | None = None,
     provenance: RunProvenance | None = None,
 ) -> RunSummary:
-    """Thin async core that delegates to :func:`~etaval.engine.runtime.run_engine`.
+    """Thin async core that delegates to :func:`~stoptimes.val.engine.runtime.run_engine`.
 
     Keeping all dependency construction *outside* this function lets tests
     call it directly with ``ReplayFeedSource`` + ``SqliteStorage(":memory:")``
@@ -121,7 +121,7 @@ async def _run_validation(
         provenance:      Optional pre-built RunProvenance, threaded through unchanged.
 
     Returns:
-        :class:`~etaval.engine.runtime.RunSummary` with counts.
+        :class:`~stoptimes.val.engine.runtime.RunSummary` with counts.
     """
     return await run_engine(
         feed_source,
@@ -150,7 +150,7 @@ def _main() -> None:
 @app.command()
 def version() -> None:
     """Print the etaval version."""
-    typer.echo(etaval.__version__)
+    typer.echo(stoptimes.val.__version__)
 
 
 # ── sources ───────────────────────────────────────────────────────────────────
@@ -343,7 +343,7 @@ def run(
             pass
 
     # Give any predictor that exposes attach_static_loader() the run's loader
-    # (e.g. ScheduleBaselinePredictor). See etaval.engine.assembly.build_live_run
+    # (e.g. ScheduleBaselinePredictor). See stoptimes.val.engine.assembly.build_live_run
     # for the same wiring used on the assembly-based path.
     _attach_static_loader(predictors, static_loader)
 
@@ -491,7 +491,7 @@ def report(
 
     With ``--sensitivity --db <sqlite>``, also renders a fourth section
     showing how scored MAE shifts per predictor when the ground-truth
-    detector method is swapped (see ``etaval.scoring.sensitivity`` for what
+    detector method is swapped (see ``stoptimes.val.scoring.sensitivity`` for what
     this can and cannot re-derive from storage). ``--sensitivity`` without
     ``--db`` is declined — see below.
     """
@@ -665,7 +665,7 @@ def walk_forward_cmd(
     Splits ``[--replay-start, --replay-end]`` into windows (``--windows`` for
     an equal COUNT, or ``--width`` for a fixed WIDTH — exactly one required),
     runs a fresh replay per window with the SAME ``--seed``, and writes a
-    :class:`~etaval.backtest.WalkForwardResult` (per-window MAE+CI, the
+    :class:`~stoptimes.val.backtest.WalkForwardResult` (per-window MAE+CI, the
     cross-window aggregate, provenance, and the M6 split_note) to *out*.
     """
     if replay_gtfs is None and replay_gtfs_dir is None:

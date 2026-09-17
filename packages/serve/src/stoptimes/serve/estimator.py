@@ -7,26 +7,26 @@ from datetime import datetime, timezone
 import math
 
 # Use centralized configuration (eliminates sys.path manipulation)
-from core.config import get_config
-from core.logging import get_logger
-from core.exceptions import (
+from stoptimes.core.config import get_config
+from stoptimes.core.logging import get_logger
+from stoptimes.core.exceptions import (
     ModelNotFoundError,
     ModelLoadError,
     PredictionError,
 )
-from core.validation import (
+from stoptimes.core.validation import (
     validate_vehicle_position,
     validate_stops_list,
 )
-from core.exceptions import InvalidVehiclePositionError, InvalidStopError
+from stoptimes.core.exceptions import InvalidVehiclePositionError, InvalidStopError
 
 # Initialize config to ensure paths are set up
 _config = get_config()
 _logger = get_logger("estimator")
 
-from feature_engineering.temporal import extract_temporal_features
-from feature_engineering.spatial import calculate_distance_features_with_shape
-from models.common.registry import get_registry
+from stoptimes.core.features.temporal import extract_temporal_features
+from stoptimes.core.spatial.geo import calculate_distance_features_with_shape
+from stoptimes.models.common.registry import get_registry
 
 
 def haversine_distance(lat1, lon1, lat2, lon2):
@@ -110,7 +110,7 @@ def _predict_with_model(model_key, model_type, features, distance_m):
     """
 
     if model_type == 'historical_mean':
-        from models.historical_mean.predict import predict_eta
+        from stoptimes.models.historical_mean.predict import predict_eta
         return predict_eta(
             model_key=model_key,
             route_id=features.get('route_id', 'unknown'),
@@ -134,7 +134,7 @@ def _predict_with_model(model_key, model_type, features, distance_m):
         )
 
     elif model_type == 'polyreg_distance':
-        from models.polyreg_distance.predict import predict_eta
+        from stoptimes.models.polyreg_distance.predict import predict_eta
         return predict_eta(
             model_key=model_key,
             distance_to_stop=distance_m
@@ -142,9 +142,9 @@ def _predict_with_model(model_key, model_type, features, distance_m):
 
     elif model_type in ('polyreg_time', 'xgboost'):
         if model_type == 'polyreg_time':
-            from models.polyreg_time.predict import predict_eta
+            from stoptimes.models.polyreg_time.predict import predict_eta
         else:
-            from models.xgb.predict import predict_eta
+            from stoptimes.models.xgb.predict import predict_eta
 
         return predict_eta(
             model_key=model_key,
@@ -188,7 +188,7 @@ def estimate_stop_times(
     """Estimate arrival times for upcoming stops from a live vehicle position.
 
     ``shape`` is an optional pre-loaded ``ShapePolyline`` (see
-    ``feature_engineering.spatial``) for the vehicle's current trip. When
+    ``stoptimes.core.spatial.geo``) for the vehicle's current trip. When
     provided, it's used to compute shape-projected distance/progress
     features instead of the haversine proxy. Per-stop, an even more
     authoritative signal wins over both: if an ``upcoming_stops`` entry
@@ -237,7 +237,7 @@ def estimate_stop_times(
     #    SMART MODEL SELECTION
     # ============================================================
     if model_key is None:
-        # Served-model pin (core.config.AGENCY_MODEL_DEFAULTS / ETA_MODEL_KEY):
+        # Served-model pin (stoptimes.core.config.AGENCY_MODEL_DEFAULTS / ETA_MODEL_KEY):
         # when the active agency has one, it wins outright. This is what
         # guarantees the databus path serves the BUCR corpus model rather
         # than registry.get_best_model()'s metric-only ranking, which has no

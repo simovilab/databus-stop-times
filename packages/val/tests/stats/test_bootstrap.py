@@ -7,7 +7,7 @@ import math
 import numpy as np
 import pytest
 
-from etaval.stats.bootstrap import CIResult, bootstrap_ci
+from stoptimes.val.stats.bootstrap import CIResult, bootstrap_ci
 
 
 class TestBootstrapCI:

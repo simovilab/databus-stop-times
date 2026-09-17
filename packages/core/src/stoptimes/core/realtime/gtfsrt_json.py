@@ -17,7 +17,7 @@ from typing import Any
 
 import httpx
 
-from etaval.domain.models import VehicleState
+from stoptimes.core.domain.models import VehicleState
 
 # ---------------------------------------------------------------------------
 # Data containers (returned by parse_* functions and poll())

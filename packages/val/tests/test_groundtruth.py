@@ -21,10 +21,10 @@ from __future__ import annotations
 
 import pytest
 
-from etaval.domain.models import Stop, TripInstance, VehicleState
-from etaval.groundtruth.position_radius import PositionRadiusDetector
-from etaval.groundtruth.shape_distance import ShapeDistanceDetector
-from etaval.groundtruth.stop_status import StopStatusDetector
+from stoptimes.core.domain.models import Stop, TripInstance, VehicleState
+from stoptimes.val.groundtruth.position_radius import PositionRadiusDetector
+from stoptimes.val.groundtruth.shape_distance import ShapeDistanceDetector
+from stoptimes.val.groundtruth.stop_status import StopStatusDetector
 
 # ---------------------------------------------------------------------------
 # Constants for stop lat/lon placement

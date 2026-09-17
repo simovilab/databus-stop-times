@@ -12,7 +12,7 @@ and wraps it in a :class:`TripUpdateInput` before calling ``predict()``.
 - ``header_timestamp: float`` — the TU feed ``header.timestamp`` epoch; used as
   ``made_at_epoch`` on every emitted ``StopPrediction``.
 - ``stop_time_updates: list[StopTimeUpdate]`` — per-stop predictions from
-  ``etaval.feeds.gtfsrt_json.StopTimeUpdate``.
+  ``stoptimes.core.realtime.gtfsrt_json.StopTimeUpdate``.
 
 Matching priority:  stop_id first (exact string match), then stop_sequence as
 fallback.  Stops with no matching TU entry or with ``arrival_time=None`` are
@@ -24,9 +24,9 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
-from etaval.domain.models import Stop, TripInstance, VehicleState
-from etaval.feeds.gtfsrt_json import StopTimeUpdate
-from etaval.predictors.base import StopPrediction
+from stoptimes.core.domain.models import Stop, TripInstance, VehicleState
+from stoptimes.core.realtime.gtfsrt_json import StopTimeUpdate
+from stoptimes.val.predictors.base import StopPrediction
 
 
 @dataclass(frozen=True)
@@ -46,10 +46,10 @@ class TripUpdateInput:
     ------
     header_timestamp:
         ``header.timestamp`` from the TU feed; used as ``made_at_epoch`` on every
-        emitted :class:`~etaval.predictors.base.StopPrediction`.
+        emitted :class:`~stoptimes.val.predictors.base.StopPrediction`.
     stop_time_updates:
         Per-stop arrival/departure predictions for the matching trip entity,
-        as parsed by ``etaval.feeds.gtfsrt_json.parse_tu_feed``.
+        as parsed by ``stoptimes.core.realtime.gtfsrt_json.parse_tu_feed``.
     """
 
     header_timestamp: float
@@ -68,7 +68,7 @@ class GtfsRtTripUpdatesPredictor:
     Input contract for ``trip_updates``
     ------------------------------------
     Pass a :class:`TripUpdateInput` carrying ``header_timestamp`` and the list of
-    :class:`~etaval.feeds.gtfsrt_json.StopTimeUpdate` objects for this trip.
+    :class:`~stoptimes.core.realtime.gtfsrt_json.StopTimeUpdate` objects for this trip.
     If ``trip_updates`` is ``None`` or not a ``TripUpdateInput``, ``predict()``
     returns an empty list without raising.
     """

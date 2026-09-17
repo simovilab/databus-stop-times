@@ -1,6 +1,6 @@
 """Regression test for the train/serve stops_ahead off-by-one (roadmap 1.2).
 
-Root cause: ``feature_engineering.dataset_builder`` (the loop building
+Root cause: ``stoptimes.train.datasets.dataset_builder`` (the loop building
 ``mbta_bus_222_15_37_*`` stop-level datasets) labels the closest upcoming
 stop to the vehicle with ``stops_ahead=0`` (see
 ``stops_ahead = int(stop_order_arr[j] - closest_stop_order)`` where ``j``
@@ -27,9 +27,9 @@ import numpy as np
 import pandas as pd
 import pytest
 
-import models.common.registry as registry_module
+import stoptimes.models.common.registry as registry_module
 import common.registry as bare_registry_module  # noqa: E402
-from eta_service.estimator import estimate_stop_times
+from stoptimes.serve.estimator import estimate_stop_times
 
 MODEL_KEY = "stops_ahead_alignment_test_model"
 
@@ -50,7 +50,7 @@ class _StopsAheadSpyModel:
 def seeded_registry(tmp_path, monkeypatch):
     """Point the registry singleton at a throwaway dir seeded with one global model.
 
-    PYTHONPATH=.:models makes ``models.common.registry`` and ``common.registry``
+    PYTHONPATH=.:models makes ``stoptimes.models.common.registry`` and ``common.registry``
     two *separate* imported modules, each with its own module-level
     ``_registry`` singleton (the latter is what ``models/xgb/predict.py``'s
     ``from common.registry import get_registry`` actually resolves to at

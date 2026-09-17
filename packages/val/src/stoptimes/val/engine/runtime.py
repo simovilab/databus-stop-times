@@ -39,31 +39,31 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import Any
 
-from etaval.domain.models import (
+from stoptimes.core.domain.models import (
     ActualArrival,
     PredictionSample,
     ValidationResult,
     VehicleState,
 )
-from etaval.feeds.gtfsrt_json import (
+from stoptimes.core.realtime.gtfsrt_json import (
     TripUpdateRecord,
     TripUpdatesPoller,
     VehiclePositionRecord,
     VehiclePositionsPoller,
 )
-from etaval.feeds.static import GtfsStaticLoader
-from etaval.feeds.tracker import ActiveTripTracker
-from etaval.predictors.gtfsrt_tripupdates import TripUpdateInput
-from etaval.provenance import LatencyRecorder, LatencyStats, RunProvenance
-from etaval.scoring.scorer import Scorer
-from etaval.spatial.polyline import (
+from stoptimes.core.gtfs.static import GtfsStaticLoader
+from stoptimes.val.feeds.tracker import ActiveTripTracker
+from stoptimes.val.predictors.gtfsrt_tripupdates import TripUpdateInput
+from stoptimes.val.provenance import LatencyRecorder, LatencyStats, RunProvenance
+from stoptimes.val.scoring.scorer import Scorer
+from stoptimes.core.spatial.polyline import (
     PolylinePoint,
     assign_stops_monotonic,
     build_polyline,
     project_point_to_polyline,
     upcoming_stops,
 )
-from etaval.storage.sqlite import SqliteStorage
+from stoptimes.val.storage.sqlite import SqliteStorage
 
 # ── Feed-source seam ──────────────────────────────────────────────────────────
 
@@ -293,7 +293,7 @@ async def run_engine(
             (the loop continues to the next predictor) is unchanged.
         seed: Optional run seed, recorded/threaded only — there is no RNG
             in the tick loop today, so this does not affect execution.
-        provenance: Optional pre-built :class:`~etaval.provenance.RunProvenance`
+        provenance: Optional pre-built :class:`~stoptimes.val.provenance.RunProvenance`
             for this run, carried through unchanged into the returned
             RunSummary.
 

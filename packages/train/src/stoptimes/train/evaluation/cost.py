@@ -9,7 +9,7 @@ or dropped straight into a report table:
    require any change to a trainer's own code.
 
 2. **Inference latency measured through the serving path** --
-   ``measure_serving_latency`` calls ``eta_service.estimator
+   ``measure_serving_latency`` calls ``stoptimes.serve.estimator
    .estimate_stop_times`` the way production actually calls it: once per
    vehicle position, for a handful of upcoming stops -- not
    ``model.predict()`` vectorised over a whole test set. It reports the
@@ -249,7 +249,7 @@ def measure_serving_latency(
     vehicle_position: Optional[Dict[str, Any]] = None,
     upcoming_stops: Optional[List[Dict[str, Any]]] = None,
 ) -> Dict[str, Any]:
-    """Measure ``eta_service.estimator.estimate_stop_times`` latency for one
+    """Measure ``stoptimes.serve.estimator.estimate_stop_times`` latency for one
     pinned model, single call at a time -- this is the production call
     shape (one vehicle position, a handful of upcoming stops), not a
     vectorised ``model.predict(big_df)``.
@@ -265,7 +265,7 @@ def measure_serving_latency(
     stops = upcoming_stops or _default_upcoming_stops(max_stops)
 
     try:
-        from eta_service.estimator import estimate_stop_times
+        from stoptimes.serve.estimator import estimate_stop_times
     except Exception as e:  # pragma: no cover - import-time failure path
         return {
             "model_key": model_key,

@@ -8,9 +8,9 @@ from __future__ import annotations
 
 import datetime as dt
 
-from rt_pipeline.compaction import run_compaction
-from rt_pipeline.compaction.duckdb_ops import DuckDB
-from rt_pipeline.compaction.storage import LocalStorage
+from stoptimes.record.compaction import run_compaction
+from stoptimes.record.compaction.duckdb_ops import DuckDB
+from stoptimes.record.compaction.storage import LocalStorage
 
 import duckdb
 

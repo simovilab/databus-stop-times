@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 """CLI entrypoint for the compaction package.
 
-    python -m rt_pipeline.compaction.cli                  # compact everything up to today
-    python -m rt_pipeline.compaction.cli --dry-run         # show what would happen, touch nothing
-    python -m rt_pipeline.compaction.cli --feed bucr_navsat
-    python -m rt_pipeline.compaction.cli --since 2026-07-01 --until 2026-07-31  # bounded backfill
-    python -m rt_pipeline.compaction.cli --alias simovilab --bucket transit
+    python -m stoptimes.record.compaction.cli                  # compact everything up to today
+    python -m stoptimes.record.compaction.cli --dry-run         # show what would happen, touch nothing
+    python -m stoptimes.record.compaction.cli --feed bucr_navsat
+    python -m stoptimes.record.compaction.cli --since 2026-07-01 --until 2026-07-31  # bounded backfill
+    python -m stoptimes.record.compaction.cli --alias simovilab --bucket transit
 """
 
 from __future__ import annotations

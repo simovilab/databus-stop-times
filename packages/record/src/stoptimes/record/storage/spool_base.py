@@ -1,6 +1,6 @@
 """Agency-agnostic DuckDB spool machinery shared by the VP and TU pollers.
 
-The VehiclePositions spool (``rt_pipeline.storage.spool``) exists because a
+The VehiclePositions spool (``stoptimes.record.storage.spool``) exists because a
 per-poll ``COPY ... PARTITION_BY (..., route_id)`` fanned out into ~160 S3
 PUTs every 5 seconds and pushed poll latency past 300s -- see that module's
 docstring for the incident writeup. TripUpdates archival (``tu_spool``) has

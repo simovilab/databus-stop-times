@@ -17,11 +17,11 @@ from __future__ import annotations
 
 import re
 
-from models.common.data import load_dataset
-from models.common.keys import ModelKey
-from models.common.provenance import build_provenance, file_content_hash, git_sha, lib_versions
-from models.common.registry import ModelRegistry
-from models.xgb.train import train_xgboost
+from stoptimes.models.common.data import load_dataset
+from stoptimes.models.common.keys import ModelKey
+from stoptimes.models.common.provenance import build_provenance, file_content_hash, git_sha, lib_versions
+from stoptimes.models.common.registry import ModelRegistry
+from stoptimes.models.xgb.train import train_xgboost
 
 DATASET_NAME = "sample"
 _SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
@@ -137,7 +137,7 @@ class TestProvenanceShapeOnSavedModel:
     def test_deterministic_family_records_null_seed(self, tmp_path):
         # historical_mean has no RNG -- its provenance seed should be
         # explicitly null, not a made-up value.
-        from models.historical_mean.train import train_historical_mean
+        from stoptimes.models.historical_mean.train import train_historical_mean
 
         registry = ModelRegistry(base_dir=str(tmp_path))
         train_df, val_df, test_df = _small_pre_split()

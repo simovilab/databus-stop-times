@@ -2,8 +2,8 @@
 
 Splits a replay window ``[start, end]`` into contiguous, non-overlapping
 sub-windows (either an equal COUNT of windows via ``n_windows``, or a fixed
-WIDTH in seconds via ``width``), runs a fresh :func:`~etaval.engine.assembly.
-build_replay_run` + :func:`~etaval.engine.runtime.run_engine` for each window
+WIDTH in seconds via ``width``), runs a fresh :func:`~stoptimes.val.engine.assembly.
+build_replay_run` + :func:`~stoptimes.val.engine.runtime.run_engine` for each window
 (same shared ``seed`` every window, for reproducibility), and computes each
 window's per-predictor MAE with a bootstrap confidence interval.
 
@@ -37,12 +37,12 @@ from typing import Any
 
 import numpy as np
 
-from etaval.domain.models import SourceConfig
-from etaval.engine.assembly import DEFAULT_PREDICTOR_IDS, build_detectors, build_replay_run
-from etaval.engine.runtime import run_engine
-from etaval.provenance import RunProvenance, build_run_provenance
-from etaval.stats.bootstrap import CIResult, bootstrap_ci
-from etaval.storage.sqlite import SqliteStorage
+from stoptimes.core.domain.models import SourceConfig
+from stoptimes.val.engine.assembly import DEFAULT_PREDICTOR_IDS, build_detectors, build_replay_run
+from stoptimes.val.engine.runtime import run_engine
+from stoptimes.val.provenance import RunProvenance, build_run_provenance
+from stoptimes.val.stats.bootstrap import CIResult, bootstrap_ci
+from stoptimes.val.storage.sqlite import SqliteStorage
 
 EpochLike = float | int | str | dt.datetime | None
 
@@ -249,13 +249,13 @@ async def walk_forward(
     """Run a walk-forward backtest over ``[start, end]``.
 
     For each window (see :func:`split_windows`), builds a FRESH
-    :func:`~etaval.engine.assembly.build_replay_run` + runs
-    :func:`~etaval.engine.runtime.run_engine` against an in-memory
-    :class:`~etaval.storage.sqlite.SqliteStorage`, scoped exactly to that
+    :func:`~stoptimes.val.engine.assembly.build_replay_run` + runs
+    :func:`~stoptimes.val.engine.runtime.run_engine` against an in-memory
+    :class:`~stoptimes.val.storage.sqlite.SqliteStorage`, scoped exactly to that
     window (via ``build_replay_run``'s ``start``/``end``), using the SAME
     ``seed`` every window. Each window's persisted ValidationResults are
     reduced to a per-predictor MAE with a bootstrap CI
-    (:func:`~etaval.stats.bootstrap.bootstrap_ci`).
+    (:func:`~stoptimes.val.stats.bootstrap.bootstrap_ci`).
 
     Args:
         cfg: SourceConfig (detector params + provenance source name).

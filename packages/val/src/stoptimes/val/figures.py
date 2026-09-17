@@ -15,7 +15,7 @@ load_latency_from_summary(summary_path) -> dict[str, dict[str, float]]
 render_all_figures(results_path, out_dir, *, summary_path=None) -> dict[str, Path | None]
 
 Every figure function takes an already-loaded results DataFrame (the schema
-written by ``etaval.storage.parquet_export.export_results`` /
+written by ``stoptimes.val.storage.parquet_export.export_results`` /
 ``read_results_df`` — one row per ValidationResult) and an output path; it
 writes a PNG and returns the path, or ``None`` when there is nothing to plot.
 """
@@ -34,8 +34,8 @@ import matplotlib.pyplot as plt  # noqa: E402
 import numpy as np  # noqa: E402
 import pandas as pd  # noqa: E402
 
-from etaval.stats.bootstrap import bootstrap_ci  # noqa: E402
-from etaval.stats.calibration import calibration_by_horizon  # noqa: E402
+from stoptimes.val.stats.bootstrap import bootstrap_ci  # noqa: E402
+from stoptimes.val.stats.calibration import calibration_by_horizon  # noqa: E402
 
 # ── Okabe-Ito colorblind-safe palette (black held back as a neutral/last) ────
 _PALETTE: list[str] = [
@@ -332,7 +332,7 @@ def load_latency_from_summary(summary_path: str | Path) -> dict[str, dict[str, f
     """Read the ``inference_latency`` block from a ``<...>.summary.json`` sidecar.
 
     The sidecar is written by the CLI (``etaval run --out <path>``) as
-    ``RunSummary.to_dict()`` — see ``etaval.cli.main._write_sidecars_if_requested``.
+    ``RunSummary.to_dict()`` — see ``stoptimes.val.cli.main._write_sidecars_if_requested``.
 
     Returns:
         ``{predictor_id: {"count": ..., "p50_s": ..., "p95_s": ..., "p99_s": ...}}``,
@@ -362,7 +362,7 @@ def render_all_figures(
     """Load a results Parquet file and write all applicable figures under *out_dir*.
 
     Args:
-        results_path: Parquet file written by ``etaval.storage.parquet_export.
+        results_path: Parquet file written by ``stoptimes.val.storage.parquet_export.
             export_results`` (one row per ValidationResult).
         out_dir: Destination directory (created if missing); each figure is
             written as ``<name>.png``.

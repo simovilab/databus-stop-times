@@ -86,7 +86,7 @@ def _gtfs_eta_repo_root() -> Path | None:
     Defensive: any import failure or resolution failure degrades to None.
     """
     try:
-        from etaval.predictors.gtfs_eta_models import GtfsEtaModelPredictor
+        from stoptimes.val.predictors.gtfs_eta_models import GtfsEtaModelPredictor
 
         registry_dir = GtfsEtaModelPredictor._resolve_model_registry_dir()
     except Exception:  # noqa: BLE001

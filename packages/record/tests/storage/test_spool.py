@@ -1,4 +1,4 @@
-"""Tests for the local DuckDB spool (rt_pipeline.storage.spool).
+"""Tests for the local DuckDB spool (stoptimes.record.storage.spool).
 
 Run against tmp_path so there's no dependency on Django settings or a real
 S3/MinIO endpoint -- flush_to_staging is exercised against a local directory
@@ -13,7 +13,7 @@ import datetime as dt
 import pandas as pd
 import pytest
 
-from rt_pipeline.storage.spool import NATURAL_KEY, SPOOL_COLUMNS, Spool, flush_to_staging
+from stoptimes.record.storage.spool import NATURAL_KEY, SPOOL_COLUMNS, Spool, flush_to_staging
 
 
 def _sample(
@@ -249,7 +249,7 @@ def test_flush_leaves_spool_intact_when_write_raises(tmp_path, monkeypatch):
             pass
 
     monkeypatch.setattr(
-        "rt_pipeline.storage.spool.connect", lambda base_uri, config=None: _FailingConnection()
+        "stoptimes.record.storage.spool.connect", lambda base_uri, config=None: _FailingConnection()
     )
 
     with pytest.raises(RuntimeError, match="simulated S3 PUT failure"):
@@ -267,7 +267,7 @@ def test_flush_verify_mismatch_raises_and_preserves_spool(tmp_path, monkeypatch)
     base_uri = str(tmp_path / "staging")
     cutoff = dt.datetime(2025, 1, 3, tzinfo=dt.timezone.utc)
 
-    import rt_pipeline.storage.spool as spool_mod
+    import stoptimes.record.storage.spool as spool_mod
 
     real_connect = spool_mod.connect
 

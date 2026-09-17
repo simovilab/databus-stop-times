@@ -24,16 +24,16 @@ from pathlib import Path
 
 import pytest
 
-from etaval.engine.runtime import FeedSnapshot, ReplayFeedSource, RunSummary, run_engine
-from etaval.feeds.gtfsrt_json import parse_tu_feed, parse_vp_feed
-from etaval.feeds.static import GtfsStaticLoader
-from etaval.groundtruth.position_radius import PositionRadiusDetector
-from etaval.groundtruth.shape_distance import ShapeDistanceDetector
-from etaval.predictors.constant_speed import ConstantSpeedPredictor
-from etaval.predictors.gtfsrt_tripupdates import GtfsRtTripUpdatesPredictor
-from etaval.provenance import build_run_provenance
-from etaval.scoring.metrics import compute_metrics
-from etaval.storage.sqlite import SqliteStorage
+from stoptimes.val.engine.runtime import FeedSnapshot, ReplayFeedSource, RunSummary, run_engine
+from stoptimes.core.realtime.gtfsrt_json import parse_tu_feed, parse_vp_feed
+from stoptimes.core.gtfs.static import GtfsStaticLoader
+from stoptimes.val.groundtruth.position_radius import PositionRadiusDetector
+from stoptimes.val.groundtruth.shape_distance import ShapeDistanceDetector
+from stoptimes.val.predictors.constant_speed import ConstantSpeedPredictor
+from stoptimes.val.predictors.gtfsrt_tripupdates import GtfsRtTripUpdatesPredictor
+from stoptimes.val.provenance import build_run_provenance
+from stoptimes.val.scoring.metrics import compute_metrics
+from stoptimes.val.storage.sqlite import SqliteStorage
 
 # ── Fixture paths ─────────────────────────────────────────────────────────────
 
@@ -249,7 +249,7 @@ async def test_engine_replay_produces_samples_and_results() -> None:
         assert not (r.horizon_s != r.horizon_s)
 
     # ── At least one result should have a recognisable horizon bucket ─────────
-    from etaval.scoring.metrics import _assign_bucket
+    from stoptimes.val.scoring.metrics import _assign_bucket
 
     buckets_seen = {_assign_bucket(r.horizon_s) for r in results}
     # The first tick has horizon ≈ 100–300 s (2-5m or 5-10m range).
@@ -344,7 +344,7 @@ async def test_on_tick_hook_fires_per_tick() -> None:
     """on_tick coroutine receives one TickEvent per engine tick."""
     import math
 
-    from etaval.engine.runtime import TickEvent
+    from stoptimes.val.engine.runtime import TickEvent
 
     static_loader = GtfsStaticLoader(_MINI_GTFS)
     storage = SqliteStorage(":memory:")
@@ -520,7 +520,7 @@ async def test_error_counters_default_empty_when_no_errors() -> None:
 
 def test_run_summary_to_dict_includes_error_counters() -> None:
     """RunSummary.to_dict() surfaces predictor_errors/detector_errors."""
-    from etaval.engine.runtime import RunSummary
+    from stoptimes.val.engine.runtime import RunSummary
 
     summary = RunSummary(
         ticks=3,
@@ -543,7 +543,7 @@ async def test_tick_event_carries_cumulative_error_counters() -> None:
     storage = SqliteStorage(":memory:")
     snapshots = _build_snapshots()
 
-    from etaval.engine.runtime import TickEvent
+    from stoptimes.val.engine.runtime import TickEvent
 
     captured: list[TickEvent] = []
 
@@ -571,7 +571,7 @@ async def test_tick_event_carries_cumulative_error_counters() -> None:
 def test_tick_event_default_error_dicts_are_backward_compatible() -> None:
     """Existing positional TickEvent(...) construction (no error kwargs)
     still works and defaults both dicts to empty."""
-    from etaval.engine.runtime import TickEvent
+    from stoptimes.val.engine.runtime import TickEvent
 
     ev = TickEvent(
         tick=1,
@@ -655,7 +655,7 @@ def test_run_summary_from_dict_round_trips_latency_and_provenance() -> None:
         predictor_ids=["gtfsrt"],
         seed=99,
     )
-    from etaval.provenance import LatencyStats
+    from stoptimes.val.provenance import LatencyStats
 
     summary = RunSummary(
         ticks=5,

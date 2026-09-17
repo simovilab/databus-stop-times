@@ -17,7 +17,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from models.evaluation.stats import (
+from stoptimes.train.evaluation.stats import (
     BootstrapResult,
     PairedTestResult,
     bootstrap_metric_ci,
@@ -28,7 +28,7 @@ from models.evaluation.stats import (
     paired_test,
     prediction_intervals_by,
 )
-from models.common.metrics import mae_seconds
+from stoptimes.models.common.metrics import mae_seconds
 
 
 # --------------------------------------------------------------------------

@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import datetime as dt
 
-from rt_pipeline.compaction.execution import Stats, recover_staging, stage_key_for
+from stoptimes.record.compaction.execution import Stats, recover_staging, stage_key_for
 
 from .factories import mbta_rows, write_parquet
 

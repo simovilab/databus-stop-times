@@ -1,8 +1,8 @@
 """Tests for the MBTA segment dataset builder
-(``feature_engineering.mbta_segments``).
+(``stoptimes.train.datasets.mbta_segments``).
 
 Deterministic synthetic GTFS (routes/trips/stops/stop_times/shapes frames,
-mirroring ``feature_engineering.bucr_gtfs.load_gtfs``'s output shape) + a
+mirroring ``stoptimes.train.sources.bucr_gtfs.load_gtfs``'s output shape) + a
 synthetic raw VP frame carrying REAL trip_id/route_id -- no trip inference.
 Mirrors ``feature_engineering/tests/test_segment_dataset_builder.py``'s style
 and asserts schema/behavior parity with the bUCR builder.
@@ -14,10 +14,10 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from feature_engineering.bucr_gtfs import BucrGtfs
-from feature_engineering.mbta_segments import build_mbta_segment_dataset
-from feature_engineering.segment_dataset_builder import OUTPUT_COLUMNS
-from models.common.data import ETADataset
+from stoptimes.train.sources.bucr_gtfs import BucrGtfs
+from stoptimes.train.datasets.mbta_segments import build_mbta_segment_dataset
+from stoptimes.train.datasets.segment_dataset_builder import OUTPUT_COLUMNS
+from stoptimes.models.common.data import ETADataset
 
 _LAT = 42.3600
 # Three stops ~ every 0.0027 deg lon (~222 m at this latitude -- wider than

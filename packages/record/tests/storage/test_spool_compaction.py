@@ -1,4 +1,4 @@
-"""Tests for spool file compaction (rt_pipeline.storage.spool_base).
+"""Tests for spool file compaction (stoptimes.record.storage.spool_base).
 
 DuckDB never returns freed blocks to the filesystem, so the VP spool reached
 2.38 GB while holding 146 rows. These tests pin the rewrite that reclaims it:
@@ -15,8 +15,8 @@ import os
 import pandas as pd
 import pytest
 
-from rt_pipeline.storage.spool import Spool
-from rt_pipeline.storage.tests.test_spool import _sample
+from stoptimes.record.storage.spool import Spool
+from stoptimes.record.storage.tests.test_spool import _sample
 
 
 def _spool(tmp_path) -> Spool:

@@ -26,7 +26,7 @@ AGENCY_TEMPORAL_DEFAULTS: dict[str, dict[str, str]] = {
 DEFAULT_AGENCY = "mbta"
 
 # Per-agency served-model pin: the registry key the databus path (via
-# eta_service.estimator.estimate_stop_times) uses when the caller doesn't
+# stoptimes.serve.estimator.estimate_stop_times) uses when the caller doesn't
 # pass an explicit model_key, plus a fallback key tried if the primary is
 # missing from the registry. This is what keeps registry.get_best_model()'s
 # metric-only ranking (which has no dataset/agency awareness and would
@@ -78,7 +78,7 @@ class ProjectConfig:
     Centralized project configuration.
 
     Usage:
-        from core.config import get_config
+        from stoptimes.core.config import get_config
 
         config = get_config()
         print(config.models_dir)
@@ -249,7 +249,7 @@ def get_config() -> ProjectConfig:
     Get or create the global configuration instance.
 
     Usage:
-        from core.config import get_config
+        from stoptimes.core.config import get_config
 
         config = get_config()
         print(f"Project root: {config.project_root}")

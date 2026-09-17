@@ -30,8 +30,8 @@ from dataclasses import asdict
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
-from etaval.api.runs import RunManager, RunState
-from etaval.engine.runtime import TickEvent
+from stoptimes.val.api.runs import RunManager, RunState
+from stoptimes.val.engine.runtime import TickEvent
 
 router = APIRouter()
 
@@ -52,12 +52,12 @@ def _safe_float(v: float | None) -> float | None:
 
 
 def tick_event_to_dict(ev: TickEvent) -> dict:
-    """Serialize a :class:`~etaval.engine.runtime.TickEvent` to a plain dict.
+    """Serialize a :class:`~stoptimes.val.engine.runtime.TickEvent` to a plain dict.
 
     * ``tick``, cumulative counts, and ``header_timestamp`` are included as-is.
-    * ``new_results`` — each :class:`~etaval.domain.models.ValidationResult`
+    * ``new_results`` — each :class:`~stoptimes.core.domain.models.ValidationResult`
       is serialized via ``model_dump()``.
-    * ``vehicles`` — each :class:`~etaval.engine.runtime.VehiclePing`
+    * ``vehicles`` — each :class:`~stoptimes.val.engine.runtime.VehiclePing`
       (a frozen dataclass) is converted with ``dataclasses.asdict``; ``lat``,
       ``lon``, and ``progress_m`` are guarded against NaN / ±Inf.
     """
@@ -83,7 +83,7 @@ def tick_event_to_dict(ev: TickEvent) -> dict:
 
 
 def _snapshot_data(state: RunState) -> dict:
-    """Minimal JSON-serializable representation of a :class:`~etaval.api.runs.RunState`."""
+    """Minimal JSON-serializable representation of a :class:`~stoptimes.val.api.runs.RunState`."""
     summary: dict | None = None
     if state.summary is not None:
         summary = state.summary.to_dict()
@@ -118,10 +118,10 @@ async def stream_run(websocket: WebSocket, run_id: str) -> None:
     --------
     1. Accept the connection.
     2. If *run_id* is unknown close with code 4404 and return.
-    3. Send a ``snapshot`` frame with the current :class:`~etaval.api.runs.RunState`.
+    3. Send a ``snapshot`` frame with the current :class:`~stoptimes.val.api.runs.RunState`.
     4. If the run is already finished (``done`` / ``error``): send ``end`` and close.
     5. Otherwise subscribe to the run's broadcast queue and forward each
-       :class:`~etaval.engine.runtime.TickEvent` as a ``tick`` frame.
+       :class:`~stoptimes.val.engine.runtime.TickEvent` as a ``tick`` frame.
     6. When the ``None`` sentinel arrives (or the timeout-based fallback detects
        the run has ended), send ``end`` and close with code 1000.
     7. Always ``unsubscribe`` in a ``finally`` block — handles client disconnect.

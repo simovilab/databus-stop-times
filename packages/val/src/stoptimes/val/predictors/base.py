@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from etaval.domain.models import PredictionSample
+from stoptimes.core.domain.models import PredictionSample
 
 
 @dataclass(frozen=True)
@@ -47,7 +47,7 @@ class StopPrediction:
         predictor_id: str,
         vehicle_progress_m_at_made: float | None = None,
     ) -> PredictionSample:
-        """Build a :class:`~etaval.domain.models.PredictionSample` for this prediction.
+        """Build a :class:`~stoptimes.core.domain.models.PredictionSample` for this prediction.
 
         The engine (P5) calls this once per prediction to produce the row that is
         persisted to storage and later joined with ``ActualArrival`` by the scorer.

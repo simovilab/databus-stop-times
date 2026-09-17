@@ -16,7 +16,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from models.common.splits import (
+from stoptimes.models.common.splits import (
     SplitError,
     SplitResult,
     assert_no_group_overlap,

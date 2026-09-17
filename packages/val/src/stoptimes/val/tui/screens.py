@@ -1,7 +1,7 @@
 """The four etaval-tui screens: CONSOLE, LEADERBOARD, EXPLORER, TELEMETRY.
 
 Every screen talks to the API exclusively through ``self.app.client`` (an
-:class:`~etaval.tui.client.ApiClient` or a test fake with the same method
+:class:`~stoptimes.val.tui.client.ApiClient` or a test fake with the same method
 signatures) — no widget imports httpx / websockets directly.  This keeps the
 screens testable with ``App.run_test()`` and a fake client (see
 ``tests/tui/test_app.py``).

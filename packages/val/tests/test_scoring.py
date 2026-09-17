@@ -6,9 +6,9 @@ import math
 
 import pytest
 
-from etaval.domain.models import ActualArrival, PredictionSample, ValidationResult
-from etaval.scoring.metrics import MetricsReport, _assign_bucket, compute_metrics
-from etaval.scoring.scorer import Scorer
+from stoptimes.core.domain.models import ActualArrival, PredictionSample, ValidationResult
+from stoptimes.val.scoring.metrics import MetricsReport, _assign_bucket, compute_metrics
+from stoptimes.val.scoring.scorer import Scorer
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 

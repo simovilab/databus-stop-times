@@ -24,14 +24,14 @@ import uvicorn
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 
-from etaval.api.config import get_settings
-from etaval.api.runs import RunManager, RunState
-from etaval.api.schemas import MetricsResponse, ResultRow, RunInfo, RunRequest
-from etaval.api.ws import router as ws_router
-from etaval.engine.assembly import DEFAULT_PREDICTOR_IDS, PREDICTOR_REGISTRY, parse_duration
-from etaval.feeds.source_config import list_sources, load_named_source
-from etaval.scoring.metrics import compute_metrics
-from etaval.storage.sqlite import SqliteStorage
+from stoptimes.val.api.config import get_settings
+from stoptimes.val.api.runs import RunManager, RunState
+from stoptimes.val.api.schemas import MetricsResponse, ResultRow, RunInfo, RunRequest
+from stoptimes.val.api.ws import router as ws_router
+from stoptimes.val.engine.assembly import DEFAULT_PREDICTOR_IDS, PREDICTOR_REGISTRY, parse_duration
+from stoptimes.val.feeds.source_config import list_sources, load_named_source
+from stoptimes.val.scoring.metrics import compute_metrics
+from stoptimes.val.storage.sqlite import SqliteStorage
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
 
@@ -180,7 +180,7 @@ def create_app(run_manager: RunManager | None = None) -> FastAPI:
         With ``?stats=1`` (only valid for DONE runs), the response is
         augmented with a per-predictor ``mae_ci``/``latency`` and top-level
         ``significance``/``calibration``/``seed`` — see
-        :mod:`etaval.api.stats_ext` for the full contract. The augmentation
+        :mod:`stoptimes.val.api.stats_ext` for the full contract. The augmentation
         is computed once per run and cached on the RunManager. Without
         ``stats``, the response is byte-identical to the pre-stats contract
         (``response_model_exclude_unset=True`` keeps the three new top-level
@@ -298,7 +298,7 @@ def main() -> None:
     """Launch the uvicorn server using settings from environment variables."""
     settings = get_settings()
     uvicorn.run(
-        "etaval.api.app:create_app",
+        "stoptimes.val.api.app:create_app",
         factory=True,
         host=settings.host,
         port=settings.port,

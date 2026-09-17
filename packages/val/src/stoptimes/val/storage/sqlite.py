@@ -5,7 +5,7 @@ indexed by (trip_key, predictor_id). Implements the Storage protocol.
 
 Usage:
     # File-backed
-    store = SqliteStorage("etaval.db")
+    store = SqliteStorage("stoptimes.val.db")
 
     # In-memory (tests)
     with SqliteStorage(":memory:") as store:
@@ -19,7 +19,7 @@ import sqlite3
 from pathlib import Path
 from typing import Any
 
-from etaval.domain.models import ActualArrival, PredictionSample, ValidationResult
+from stoptimes.core.domain.models import ActualArrival, PredictionSample, ValidationResult
 
 # ── DDL ───────────────────────────────────────────────────────────────────────
 
@@ -195,7 +195,7 @@ class SqliteStorage:
         Used by the A5 detector-sensitivity CLI path (``etaval report
         --sensitivity --db``), which re-scores every persisted sample against
         each detector method's already-persisted arrivals — see
-        ``etaval.scoring.sensitivity`` for why raw position history (and
+        ``stoptimes.val.scoring.sensitivity`` for why raw position history (and
         therefore true re-detection) is not available from storage.
         """
         if predictor_id is not None:
@@ -227,7 +227,7 @@ class SqliteStorage:
         The engine persists arrivals from *every* configured detector each
         tick (not just the ``primary_method`` used for scoring), so this
         returns arrivals for every detector method that ran during the
-        original ``etaval run`` — see ``etaval.scoring.sensitivity``.
+        original ``etaval run`` — see ``stoptimes.val.scoring.sensitivity``.
         """
         if method is not None:
             rows = self._conn.execute(

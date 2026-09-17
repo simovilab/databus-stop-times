@@ -16,8 +16,8 @@ and the next entry starts a fresh window.
 
 from __future__ import annotations
 
-from etaval.domain.models import ActualArrival, Stop, TripInstance, VehicleState
-from etaval.spatial.polyline import haversine_m
+from stoptimes.core.domain.models import ActualArrival, Stop, TripInstance, VehicleState
+from stoptimes.core.spatial.polyline import haversine_m
 
 
 class PositionRadiusDetector:

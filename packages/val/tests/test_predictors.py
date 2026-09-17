@@ -13,11 +13,11 @@ from __future__ import annotations
 
 import pytest
 
-from etaval.domain.models import PredictionSample, Stop, TripInstance, VehicleState
-from etaval.feeds.gtfsrt_json import StopTimeUpdate
-from etaval.predictors.base import StopPrediction
-from etaval.predictors.constant_speed import ConstantSpeedPredictor
-from etaval.predictors.gtfsrt_tripupdates import GtfsRtTripUpdatesPredictor, TripUpdateInput
+from stoptimes.core.domain.models import PredictionSample, Stop, TripInstance, VehicleState
+from stoptimes.core.realtime.gtfsrt_json import StopTimeUpdate
+from stoptimes.val.predictors.base import StopPrediction
+from stoptimes.val.predictors.constant_speed import ConstantSpeedPredictor
+from stoptimes.val.predictors.gtfsrt_tripupdates import GtfsRtTripUpdatesPredictor, TripUpdateInput
 
 # ---------------------------------------------------------------------------
 # Shared test fixtures
@@ -359,7 +359,7 @@ class TestStopPredictionToSample:
 class TestPredictorRegistry:
     def test_registry_contains_expected_ids(self) -> None:
         """PREDICTOR_REGISTRY exposes the live gtfsrt/baseline/gtfs_eta predictors."""
-        from etaval.engine.assembly import PREDICTOR_REGISTRY
+        from stoptimes.val.engine.assembly import PREDICTOR_REGISTRY
 
         expected = {
             "gtfsrt",
@@ -373,7 +373,7 @@ class TestPredictorRegistry:
 
     def test_registry_does_not_contain_retired_ewma(self) -> None:
         """gtfs_eta:ewma was retired upstream and must not be selectable."""
-        from etaval.engine.assembly import PREDICTOR_REGISTRY
+        from stoptimes.val.engine.assembly import PREDICTOR_REGISTRY
 
         assert "gtfs_eta:ewma" not in PREDICTOR_REGISTRY
 
@@ -398,11 +398,11 @@ class TestAcceptsPositionHistory:
         """run_engine dispatches position_history via getattr, not signature sniffing."""
         from pathlib import Path
 
-        from etaval.engine.runtime import FeedSnapshot, ReplayFeedSource, run_engine
-        from etaval.feeds.gtfsrt_json import parse_tu_feed, parse_vp_feed
-        from etaval.feeds.static import GtfsStaticLoader
-        from etaval.groundtruth.shape_distance import ShapeDistanceDetector
-        from etaval.storage.sqlite import SqliteStorage
+        from stoptimes.val.engine.runtime import FeedSnapshot, ReplayFeedSource, run_engine
+        from stoptimes.core.realtime.gtfsrt_json import parse_tu_feed, parse_vp_feed
+        from stoptimes.core.gtfs.static import GtfsStaticLoader
+        from stoptimes.val.groundtruth.shape_distance import ShapeDistanceDetector
+        from stoptimes.val.storage.sqlite import SqliteStorage
 
         fixtures = Path(__file__).parent / "fixtures"
         static_loader = GtfsStaticLoader(fixtures / "mini_gtfs.zip")

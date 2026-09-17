@@ -6,7 +6,7 @@ from pathlib import Path
 
 import yaml
 
-from etaval.domain.models import SourceConfig
+from stoptimes.core.domain.models import SourceConfig
 
 # Default shipped sources directory — resolved relative to this package file,
 # not relative to cwd, so the CLI works from any working directory.

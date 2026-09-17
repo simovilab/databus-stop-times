@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pydantic
 
-from etaval.engine.assembly import parse_duration
+from stoptimes.val.engine.assembly import parse_duration
 
 
 class RunRequest(pydantic.BaseModel):

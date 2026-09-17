@@ -5,9 +5,9 @@ This module provides centralized configuration, logging, validation, and error h
 to ensure consistency across all components (eta_service, models, prefect).
 """
 
-from core.config import get_config, ProjectConfig
-from core.logging import get_logger, LogLevel
-from core.exceptions import (
+from stoptimes.core.config import get_config, ProjectConfig
+from stoptimes.core.logging import get_logger, LogLevel
+from stoptimes.core.exceptions import (
     ETAError,
     ConfigurationError,
     ValidationError,
@@ -18,7 +18,7 @@ from core.exceptions import (
     DataError,
     RedisError,
 )
-from core.validation import (
+from stoptimes.core.validation import (
     validate_vehicle_position,
     validate_stop,
     validate_stops_list,

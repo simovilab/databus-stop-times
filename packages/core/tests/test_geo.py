@@ -1,7 +1,7 @@
 # tests/test_spatial.py
 import pytest
 
-from feature_engineering.spatial import (
+from stoptimes.core.spatial.geo import (
     calculate_distance_features_with_shape,
     ShapePolyline,
 )

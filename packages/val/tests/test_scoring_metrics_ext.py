@@ -12,8 +12,8 @@ from datetime import UTC, datetime
 
 import pytest
 
-from etaval.domain.models import ValidationResult
-from etaval.scoring.metrics import compute_metrics
+from stoptimes.core.domain.models import ValidationResult
+from stoptimes.val.scoring.metrics import compute_metrics
 
 _TRIP_KEY = "src:trip1:v1:20240101"
 

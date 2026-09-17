@@ -4,7 +4,7 @@ BUCR (navsat AVL) hands over none of the structural columns MBTA's GTFS-RT
 feed supplies (``route_id``/``trip_id``/``stop_id``/``current_stop_sequence``)
 -- those are inferred in a later step (``bucr_trip_inference.py``, not this
 module). This adapter only renames/rescales/recasts the raw navsat fields
-into the subset of the canonical VP frame (see ``feature_engineering.rt_source
+into the subset of the canonical VP frame (see ``stoptimes.train.datasets.rt_source
 .OUTPUT_COLUMNS``) that can be derived from BUCR data alone, plus
 ``odometer_km`` which downstream BUCR steps need but which has no MBTA
 equivalent.
@@ -100,7 +100,7 @@ def navsat_to_vehicle_positions(df: pd.DataFrame) -> pd.DataFrame:
         A new DataFrame with columns ``OUTPUT_COLUMNS``, one row per input
         row, in the same order. ``ts`` is a tz-aware UTC ``datetime64[ns, UTC]``
         Series, matching the convention
-        ``rt_pipeline.storage.schema.add_partition_columns`` relies on
+        ``stoptimes.record.storage.schema.add_partition_columns`` relies on
         (tz-naive inputs are interpreted as UTC, never local time).
 
     Raises:
@@ -121,7 +121,7 @@ def navsat_to_vehicle_positions(df: pd.DataFrame) -> pd.DataFrame:
     out["vehicle_id"] = df["plate_number"]
     # utc=True: tz-aware values normalize to UTC, tz-naive values are
     # interpreted AS UTC (never local time) -- same rule as
-    # rt_pipeline.storage.schema.add_partition_columns. `cr_datetime_utc` is
+    # stoptimes.record.storage.schema.add_partition_columns. `cr_datetime_utc` is
     # already UTC by name/contract, so this only guarantees the dtype.
     out["ts"] = pd.to_datetime(df["cr_datetime_utc"], utc=True, errors="coerce")
     out["lat"] = pd.to_numeric(df["lat"], errors="coerce")

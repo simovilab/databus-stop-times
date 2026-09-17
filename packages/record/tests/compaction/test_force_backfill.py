@@ -12,9 +12,9 @@ import datetime as dt
 
 import pandas as pd
 
-from rt_pipeline.compaction.execution import process_leaf
-from rt_pipeline.compaction.feeds import FEEDS_BY_NAME
-from rt_pipeline.compaction.planning import discover_leaves
+from stoptimes.record.compaction.execution import process_leaf
+from stoptimes.record.compaction.feeds import FEEDS_BY_NAME
+from stoptimes.record.compaction.planning import discover_leaves
 
 from .factories import write_parquet
 

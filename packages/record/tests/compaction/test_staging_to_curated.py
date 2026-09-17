@@ -16,9 +16,9 @@ import datetime as dt
 
 import pandas as pd
 
-from rt_pipeline.compaction.execution import process_staging_day
-from rt_pipeline.compaction.feeds import FEEDS_BY_NAME
-from rt_pipeline.compaction.planning import discover_staging_days
+from stoptimes.record.compaction.execution import process_staging_day
+from stoptimes.record.compaction.feeds import FEEDS_BY_NAME
+from stoptimes.record.compaction.planning import discover_staging_days
 
 from .factories import mbta_rows, write_parquet
 

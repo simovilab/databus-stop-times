@@ -2,7 +2,7 @@
 from datetime import datetime, timezone, date
 import pytest
 
-import feature_engineering.temporal as temporal
+import stoptimes.core.features.temporal as temporal
 
 
 class DummyCalendar:

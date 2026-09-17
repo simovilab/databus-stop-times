@@ -2,7 +2,7 @@
 
 Without it, load_model unpickled from disk on every call, so a serving path
 calling it per prediction paid model-load cost per prediction -- measured at
-23-109 ms p50 through eta_service.estimator, dominated by loading rather than
+23-109 ms p50 through stoptimes.serve.estimator, dominated by loading rather than
 inference (models/evaluation/cost.py).
 
 Caching a mutable object changes behaviour: callers now share one instance
@@ -17,7 +17,7 @@ import time
 import numpy as np
 import pytest
 
-from models.common.registry import ModelRegistry
+from stoptimes.models.common.registry import ModelRegistry
 
 
 class _Dummy:

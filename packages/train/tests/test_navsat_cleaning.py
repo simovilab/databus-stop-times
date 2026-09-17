@@ -8,8 +8,8 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from feature_engineering.navsat_adapter import navsat_to_vehicle_positions
-from feature_engineering.navsat_cleaning import (
+from stoptimes.train.sources.navsat_adapter import navsat_to_vehicle_positions
+from stoptimes.train.sources.navsat_cleaning import (
     DEFAULT_STALENESS_THRESHOLD_SECONDS,
     REQUIRED_RAW_COLUMNS,
     TraceCleaningReport,

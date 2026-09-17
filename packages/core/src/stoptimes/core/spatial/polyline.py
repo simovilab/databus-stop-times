@@ -20,7 +20,7 @@ import math
 from collections.abc import Sequence
 from typing import NamedTuple
 
-from etaval.domain.models import Stop
+from stoptimes.core.domain.models import Stop
 
 # ---------------------------------------------------------------------------
 # Constants

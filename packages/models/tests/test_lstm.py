@@ -16,8 +16,8 @@ import pandas as pd
 import pytest
 import torch
 
-from models.common.registry import ModelRegistry
-from models.lstm.data import (
+from stoptimes.models.common.registry import ModelRegistry
+from stoptimes.models.lstm.data import (
     FEATURE_COLUMNS,
     Preprocessor,
     apply_preprocessor,
@@ -26,8 +26,8 @@ from models.lstm.data import (
     fit_preprocessor,
     pad_batch,
 )
-from models.lstm.model import SegmentSequenceModel, masked_loss
-from models.lstm.train import LSTMSegmentModel, train_lstm
+from stoptimes.models.lstm.model import SegmentSequenceModel, masked_loss
+from stoptimes.models.lstm.train import LSTMSegmentModel, train_lstm
 
 
 # --------------------------------------------------------------------------

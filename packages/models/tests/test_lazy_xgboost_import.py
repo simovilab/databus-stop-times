@@ -1,11 +1,11 @@
 """
-Tests for lazy-loading models.train_all_models (and therefore xgboost).
+Tests for lazy-loading stoptimes.train.train_all_models (and therefore xgboost).
 
 xgboost is a training-only dependency (the `train` extra in pyproject.toml).
 models/__init__.py used to import train_all_models eagerly, which chains
 into xgb.train -> xgboost, forcing every inference-only consumer (the live
 gtfs-rt-pipeline collector, or a downstream project that only needs
-models.common.registry / models.*.predict) to install xgboost just to run
+stoptimes.models.common.registry / models.*.predict) to install xgboost just to run
 `import models`.
 
 Each check here runs in a fresh subprocess (via `python -c`) rather than
@@ -42,7 +42,7 @@ class TestPlainImportStaysLight:
 
     def test_import_gtfs_eta_models_does_not_import_xgboost(self):
         result = _run(
-            "import sys; import gtfs_eta.models; "
+            "import sys; import stoptimes.models; "
             "assert 'xgboost' not in sys.modules, sys.modules.keys()"
         )
         assert result.returncode == 0, result.stderr
@@ -52,10 +52,10 @@ class TestPlainImportStaysLight:
         # predict modules. None of these should need xgboost.
         result = _run(
             "import sys\n"
-            "import models.common.registry\n"
-            "import models.historical_mean.predict\n"
-            "import models.ewma.predict\n"
-            "import models.polyreg_distance.predict\n"
+            "import stoptimes.models.common.registry\n"
+            "import stoptimes.models.historical_mean.predict\n"
+            "import stoptimes.models.ewma.predict\n"
+            "import stoptimes.models.polyreg_distance.predict\n"
             "assert 'xgboost' not in sys.modules, sys.modules.keys()\n"
         )
         assert result.returncode == 0, result.stderr
@@ -76,7 +76,7 @@ class TestTrainingPathStillWorks:
             "import sys\n"
             "import models\n"
             "assert 'xgboost' not in sys.modules\n"
-            "fn = models.train_all_models\n"
+            "fn = stoptimes.train.train_all_models\n"
             "assert callable(fn)\n"
             "assert 'xgboost' in sys.modules\n"
         )

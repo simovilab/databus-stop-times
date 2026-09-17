@@ -8,7 +8,7 @@ overall pipeline and the reasoning behind each named threshold.
 
 Pure/deterministic: no I/O, no network, no mutation of inputs. All spatial
 math (haversine, polyline projection) is reused from
-``etaval.spatial.polyline``.
+``stoptimes.core.spatial.polyline``.
 
 Candidate selection is HIERARCHICAL and uses two different signals for its
 two different questions:
@@ -48,9 +48,9 @@ from typing import Dict, List, Optional, Sequence, Set, Tuple
 import numpy as np
 import pandas as pd
 
-from etaval.spatial.polyline import Projection, haversine_m, project_point_to_polyline
+from stoptimes.core.spatial.polyline import Projection, haversine_m, project_point_to_polyline
 
-from feature_engineering.bucr_gtfs import RouteDirectionCandidate
+from stoptimes.train.sources.bucr_gtfs import RouteDirectionCandidate
 
 # ---------------------------------------------------------------------------
 # Named thresholds -- see bucr_trip_inference.py module docstring for the

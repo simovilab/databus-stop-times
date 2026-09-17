@@ -18,7 +18,7 @@ from polyreg_distance.train import train_polyreg_distance
 from polyreg_time.train import train_polyreg_time
 from ewma.train import train_ewma
 from xgb.train import train_xgboost
-from feature_engineering import progress as ui
+from stoptimes.train.datasets import progress as ui
 
 
 def _metric_str(result: dict) -> str:

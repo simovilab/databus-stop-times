@@ -10,18 +10,18 @@ directly through the static GTFS ``trips`` -> ``shape_id`` and through
 
 This module is only the MBTA **resolver**: it maps each ``(trip_id,
 service_date)`` instance to its GTFS shape/stops and hands the resulting
-:class:`~feature_engineering.segment_core.TripInstance` objects to
-:func:`~feature_engineering.segment_core.build_segments_from_instances`, which
+:class:`~stoptimes.core.segments.TripInstance` objects to
+:func:`~stoptimes.core.segments.build_segments_from_instances`, which
 owns the shared arrival-detection / per-segment feature+target emission / schema.
 That shared core is identical to the one the bUCR resolver
-(:mod:`feature_engineering.segment_dataset_builder`) uses, so both agencies emit
-the **same** :data:`~feature_engineering.segment_core.OUTPUT_COLUMNS` schema and
+(:mod:`stoptimes.train.datasets.segment_dataset_builder`) uses, so both agencies emit
+the **same** :data:`~stoptimes.core.segments.OUTPUT_COLUMNS` schema and
 feed the same trainers / leakage probe / metrics unchanged.
 
 Pure/deterministic: no I/O, no network, no mutation of inputs. GTFS parsing from
-``feature_engineering.bucr_gtfs`` (a generic loader despite its name -- it reads
+``stoptimes.train.sources.bucr_gtfs`` (a generic loader despite its name -- it reads
 any standard GTFS zip/dir, MBTA's included); map-matching from
-``etaval.spatial.polyline``. Runs under ``uv run --group bucr`` (needs
+``stoptimes.core.spatial.polyline``. Runs under ``uv run --group bucr`` (needs
 ``etaval``).
 """
 
@@ -31,10 +31,10 @@ from typing import Dict, Iterator, List, Optional
 
 import pandas as pd
 
-from etaval.spatial.polyline import PolylinePoint, assign_stops_monotonic
+from stoptimes.core.spatial.polyline import PolylinePoint, assign_stops_monotonic
 
-from feature_engineering.bucr_gtfs import BucrGtfs, BucrGtfsError, build_shape_polyline, stops_for_trip
-from feature_engineering.segment_core import (
+from stoptimes.train.sources.bucr_gtfs import BucrGtfs, BucrGtfsError, build_shape_polyline, stops_for_trip
+from stoptimes.core.segments import (
     ARRIVAL_RADIUS_M,
     CLOSEST_APPROACH_FALLBACK_M,
     MAX_SEGMENT_SECONDS,
@@ -142,7 +142,7 @@ def build_mbta_segment_dataset(
 
     Args:
         vps_df: Raw MBTA VP frame (e.g. from
-            ``rt_pipeline.storage.s3_writer.read_vehicle_positions``) -- must
+            ``stoptimes.record.storage.s3_writer.read_vehicle_positions``) -- must
             carry ``trip_id``, ``vehicle_id``, ``ts``, ``lat``, ``lon`` (and
             optionally ``bearing``, ``speed``, ``current_status``). A trip
             *instance* is ``(trip_id, service_date)``: MBTA reuses one
@@ -153,8 +153,8 @@ def build_mbta_segment_dataset(
             a run crossing local midnight stays one instance. Rows with a
             null/missing ``trip_id`` are dropped. NO trip inference is
             performed -- ``trip_id`` maps straight through ``gtfs``.
-        gtfs: A :class:`~feature_engineering.bucr_gtfs.BucrGtfs` loaded via
-            ``feature_engineering.bucr_gtfs.load_gtfs`` from the static GTFS
+        gtfs: A :class:`~stoptimes.train.sources.bucr_gtfs.BucrGtfs` loaded via
+            ``stoptimes.train.sources.bucr_gtfs.load_gtfs`` from the static GTFS
             snapshot in effect for this VP window.
         arrival_radius_m: "arrived" radius for the position-derived target.
         closest_fallback_m: closest-approach fallback when no fix lands

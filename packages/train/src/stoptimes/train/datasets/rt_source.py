@@ -1,7 +1,7 @@
 """RT VehiclePosition source for the dataset builder.
 
 Reads collected VehiclePositions from the S3 Hive-partitioned Parquet store
-(``rt_pipeline.storage``) instead of the live Postgres ORM. Returns a frame
+(``stoptimes.record.storage``) instead of the live Postgres ORM. Returns a frame
 with exactly the columns the dataset builder expects, so the rest of the
 pipeline is unchanged. Route filtering pushes down to the ``route_id``
 partition; date filtering pushes down to the year/month/day partitions.
@@ -14,7 +14,7 @@ from typing import List, Optional
 
 import pandas as pd
 
-from rt_pipeline.storage import read_vehicle_positions
+from stoptimes.record.storage import read_vehicle_positions
 
 # The exact schema the legacy ORM path produced (order matters downstream).
 LEGACY_COLUMNS = ["trip_id", "vehicle_id", "ts", "lat", "lon", "bearing", "speed"]

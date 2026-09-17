@@ -53,10 +53,10 @@ from .evaluation.roll_validate import RollingValidator, quick_rolling_validate
 # xgb.train -> xgboost, a heavy training-only dependency (the `train` extra
 # in pyproject.toml). Importing it at package-import time would force every
 # inference-only consumer (e.g. the live gtfs-rt-pipeline collector, or a
-# downstream project that only calls models.common.registry /
+# downstream project that only calls stoptimes.models.common.registry /
 # models.*.predict) to install xgboost even though they never train models.
 # See __getattr__ below for the lazy PEP 562 accessor that keeps
-# `from models import train_all_models` / `models.train_all_models(...)`
+# `from models import train_all_models` / `stoptimes.train.train_all_models(...)`
 # working unchanged for training users.
 
 

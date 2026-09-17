@@ -1,7 +1,7 @@
 """Smoke test: the package imports and exposes a version."""
 
-import etaval
+import stoptimes.val
 
 
 def test_version():
-    assert etaval.__version__
+    assert stoptimes.val.__version__

@@ -5,7 +5,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from etaval.stats.correction import CorrectionResult, benjamini_hochberg, holm
+from stoptimes.val.stats.correction import CorrectionResult, benjamini_hochberg, holm
 
 
 class TestHolm:

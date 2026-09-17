@@ -10,9 +10,9 @@ builder-output fixture.
 
 from __future__ import annotations
 
-from models.common.data import ETADataset, load_dataset, prepare_features_target
-from models.common.registry import ModelRegistry
-from models.historical_mean.train import HistoricalMeanModel
+from stoptimes.models.common.data import ETADataset, load_dataset, prepare_features_target
+from stoptimes.models.common.registry import ModelRegistry
+from stoptimes.models.historical_mean.train import HistoricalMeanModel
 
 TARGET = "time_to_arrival_seconds"
 

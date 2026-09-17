@@ -11,11 +11,11 @@ Modules:
 
 from __future__ import annotations
 
-from etaval.stats.bootstrap import CIResult, bootstrap_ci
-from etaval.stats.calibration import CalibrationBin, calibration_by_horizon
-from etaval.stats.correction import CorrectionResult, benjamini_hochberg, holm
-from etaval.stats.report import PredictorWithCI, ReportWithCI, compute_metrics_with_ci
-from etaval.stats.significance import (
+from stoptimes.val.stats.bootstrap import CIResult, bootstrap_ci
+from stoptimes.val.stats.calibration import CalibrationBin, calibration_by_horizon
+from stoptimes.val.stats.correction import CorrectionResult, benjamini_hochberg, holm
+from stoptimes.val.stats.report import PredictorWithCI, ReportWithCI, compute_metrics_with_ci
+from stoptimes.val.stats.significance import (
     SignificanceResult,
     diebold_mariano,
     wilcoxon_test,

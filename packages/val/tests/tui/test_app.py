@@ -1,7 +1,7 @@
 """tests/tui/test_app.py — Textual pilot-based smoke tests for EtavalApp.
 
 Uses ``App.run_test()`` with a :class:`FakeApi` injected in place of the real
-:class:`~etaval.tui.client.ApiClient`, so these tests never touch the
+:class:`~stoptimes.val.tui.client.ApiClient`, so these tests never touch the
 network. They assert that all four screens mount and can be switched between
 without raising.
 """
@@ -13,8 +13,8 @@ from typing import Any
 
 import pytest
 
-from etaval.tui.app import EtavalApp
-from etaval.tui.screens import ConsoleScreen, ExplorerScreen, LeaderboardScreen, TelemetryScreen
+from stoptimes.val.tui.app import EtavalApp
+from stoptimes.val.tui.screens import ConsoleScreen, ExplorerScreen, LeaderboardScreen, TelemetryScreen
 
 
 def _static_content(widget: Any) -> str:

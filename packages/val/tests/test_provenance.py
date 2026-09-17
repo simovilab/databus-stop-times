@@ -1,14 +1,14 @@
-"""Tests for etaval.provenance — RunProvenance, sidecar I/O, LatencyRecorder."""
+"""Tests for stoptimes.val.provenance — RunProvenance, sidecar I/O, LatencyRecorder."""
 
 from __future__ import annotations
 
 import json
 from pathlib import Path
 
-from etaval import provenance as prov_mod
-from etaval.domain.models import SourceConfig
-from etaval.groundtruth.shape_distance import ShapeDistanceDetector
-from etaval.provenance import (
+from stoptimes.val import provenance as prov_mod
+from stoptimes.core.domain.models import SourceConfig
+from stoptimes.val.groundtruth.shape_distance import ShapeDistanceDetector
+from stoptimes.val.provenance import (
     LatencyRecorder,
     LatencyStats,
     RunProvenance,
@@ -70,7 +70,7 @@ def test_gtfs_eta_repo_root_defensive_on_import_failure(monkeypatch) -> None:
     real_import = builtins.__import__
 
     def _broken_import(name, *args, **kwargs):
-        if name == "etaval.predictors.gtfs_eta_models":
+        if name == "stoptimes.val.predictors.gtfs_eta_models":
             raise ImportError("simulated broken import")
         return real_import(name, *args, **kwargs)
 

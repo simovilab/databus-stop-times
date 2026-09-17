@@ -15,17 +15,17 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from models.common.data import load_dataset
-from models.common.preprocessing import (
+from stoptimes.models.common.data import load_dataset
+from stoptimes.models.common.preprocessing import (
     assert_same_row_set,
     clip_predictions,
     prepare_features,
 )
-from models.ewma.train import EWMAModel, train_ewma
-from models.historical_mean.train import HistoricalMeanModel
-from models.polyreg_distance.train import PolyRegDistanceModel
-from models.polyreg_time.train import PolyRegTimeModel, train_polyreg_time
-from models.xgb.train import XGBTimeModel, train_xgboost
+from stoptimes.models.ewma.train import EWMAModel, train_ewma
+from stoptimes.models.historical_mean.train import HistoricalMeanModel
+from stoptimes.models.polyreg_distance.train import PolyRegDistanceModel
+from stoptimes.models.polyreg_time.train import PolyRegTimeModel, train_polyreg_time
+from stoptimes.models.xgb.train import XGBTimeModel, train_xgboost
 
 DATASET_NAME = "sample"
 
@@ -259,8 +259,8 @@ class TestRowSetEquality:
         assert val_df["distance_to_next_stop"].isna().any()
         assert test_df["distance_to_next_stop"].isna().any()
 
-        from models.historical_mean.train import train_historical_mean
-        from models.polyreg_distance.train import train_polyreg_distance
+        from stoptimes.models.historical_mean.train import train_historical_mean
+        from stoptimes.models.polyreg_distance.train import train_polyreg_distance
 
         results = {
             "ewma": train_ewma(dataset_name=DATASET_NAME, save_model=False, pre_split=pre_split),

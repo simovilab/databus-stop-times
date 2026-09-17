@@ -1,4 +1,4 @@
-"""Tests for BUCR trip/route/stop inference (feature_engineering.bucr_trip_inference).
+"""Tests for BUCR trip/route/stop inference (stoptimes.train.sources.bucr_trip_inference).
 
 Two kinds of coverage, mirroring ``test_bucr_gtfs.py``:
   * Deterministic SYNTHETIC candidates/traces (hand-built, geographically
@@ -20,16 +20,16 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from etaval.domain.models import Stop as EtavalStop
-from etaval.spatial.polyline import assign_stops_monotonic, build_polyline
+from stoptimes.core.domain.models import Stop as EtavalStop
+from stoptimes.core.spatial.polyline import assign_stops_monotonic, build_polyline
 
-from feature_engineering.bucr_gtfs import (
+from stoptimes.train.sources.bucr_gtfs import (
     RouteDirectionCandidate,
     load_gtfs,
     route_direction_candidates,
     route_directions,
 )
-from feature_engineering.bucr_trip_inference import (
+from stoptimes.train.sources.bucr_trip_inference import (
     ANOMALY_CROSS_TRACK_M,
     OUTPUT_COLUMNS,
     REQUIRED_VP_COLUMNS,
@@ -407,7 +407,7 @@ def test_empty_input_returns_empty_frame_with_correct_columns() -> None:
 
 
 def test_presegment_splits_on_long_stationary_dwell() -> None:
-    from feature_engineering.bucr_trip_scoring import presegment_boundaries
+    from stoptimes.train.sources.bucr_trip_scoring import presegment_boundaries
 
     t0 = pd.Timestamp("2026-08-24T12:00:00Z")
     out_leg = _walk_shape_trace(_CANDIDATE_OUT, seed=1, start_ts=t0)
@@ -431,7 +431,7 @@ def test_presegment_splits_on_long_stationary_dwell() -> None:
 
 
 def test_presegment_does_not_split_a_single_continuous_trip() -> None:
-    from feature_engineering.bucr_trip_scoring import presegment_boundaries
+    from stoptimes.train.sources.bucr_trip_scoring import presegment_boundaries
 
     trace = _walk_shape_trace(_CANDIDATE_OUT, seed=1)
     boundary = presegment_boundaries(
@@ -442,7 +442,7 @@ def test_presegment_does_not_split_a_single_continuous_trip() -> None:
 
 
 def test_presegment_splits_on_long_time_gap() -> None:
-    from feature_engineering.bucr_trip_scoring import presegment_boundaries
+    from stoptimes.train.sources.bucr_trip_scoring import presegment_boundaries
 
     leg1 = _walk_shape_trace(_CANDIDATE_OUT, seed=1, start_ts=pd.Timestamp("2026-08-24T12:00:00Z"))
     leg2_start = leg1["ts"].iloc[-1] + pd.Timedelta(hours=1)  # > PRESEGMENT_MAX_GAP_SECONDS
@@ -459,7 +459,7 @@ def test_presegment_splits_on_long_time_gap() -> None:
 def test_presegment_ignores_a_brief_stop() -> None:
     """A short in-service stop (below PRESEGMENT_DWELL_SECONDS) must NOT split a
     trip -- only real terminal turnarounds do."""
-    from feature_engineering.bucr_trip_scoring import presegment_boundaries
+    from stoptimes.train.sources.bucr_trip_scoring import presegment_boundaries
 
     t0 = pd.Timestamp("2026-08-24T12:00:00Z")
     leg1 = _walk_shape_trace(_CANDIDATE_OUT, seed=1, start_ts=t0)
@@ -478,7 +478,7 @@ def test_presegment_ignores_a_brief_stop() -> None:
 
 
 def test_presegment_empty_and_single_point() -> None:
-    from feature_engineering.bucr_trip_scoring import presegment_boundaries
+    from stoptimes.train.sources.bucr_trip_scoring import presegment_boundaries
 
     empty = presegment_boundaries(pd.Series([], dtype="datetime64[ns, UTC]"),
                                   np.array([]), np.array([]))

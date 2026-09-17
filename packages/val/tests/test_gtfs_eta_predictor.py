@@ -11,8 +11,8 @@ from __future__ import annotations
 
 from unittest.mock import patch
 
-from etaval.domain.models import Stop, TripInstance, VehicleState
-from etaval.predictors.gtfs_eta_models import GtfsEtaModelPredictor
+from stoptimes.core.domain.models import Stop, TripInstance, VehicleState
+from stoptimes.val.predictors.gtfs_eta_models import GtfsEtaModelPredictor
 
 TRIP = TripInstance(
     source="test",
@@ -46,7 +46,7 @@ class TestGtfsEtaModelPredictor:
 
     def test_no_upcoming_stops_returns_empty_without_calling_estimator(self):
         predictor = GtfsEtaModelPredictor("xgboost")
-        with patch("etaval.predictors.gtfs_eta_models.estimate_stop_times") as mock_est:
+        with patch("stoptimes.val.predictors.gtfs_eta_models.estimate_stop_times") as mock_est:
             result = predictor.predict(TRIP, [], STATE, None)
         assert result == []
         mock_est.assert_not_called()
@@ -63,7 +63,7 @@ class TestGtfsEtaModelPredictor:
             ]
         }
         with patch(
-            "etaval.predictors.gtfs_eta_models.estimate_stop_times", return_value=fake_result
+            "stoptimes.val.predictors.gtfs_eta_models.estimate_stop_times", return_value=fake_result
         ) as mock_est:
             preds = predictor.predict(TRIP, stops, STATE, None)
 
@@ -95,7 +95,7 @@ class TestGtfsEtaModelPredictor:
             ]
         }
         with patch(
-            "etaval.predictors.gtfs_eta_models.estimate_stop_times", return_value=fake_result
+            "stoptimes.val.predictors.gtfs_eta_models.estimate_stop_times", return_value=fake_result
         ):
             preds = predictor.predict(TRIP, stops, STATE, None)
         assert preds == []
@@ -105,7 +105,7 @@ class TestGtfsEtaModelPredictor:
             "polyreg_time", model_key="polyreg_time_x_y_global_v1"
         )
         with patch(
-            "etaval.predictors.gtfs_eta_models.estimate_stop_times",
+            "stoptimes.val.predictors.gtfs_eta_models.estimate_stop_times",
             return_value={"predictions": []},
         ) as mock_est:
             predictor.predict(TRIP, [_stop("s1", 1)], STATE, None)
@@ -137,7 +137,7 @@ class TestResolveModelRegistryDir:
         distribution -- defensive, never raises."""
         import importlib.metadata
 
-        from etaval.predictors.gtfs_eta_models import _from_installed_dist_info
+        from stoptimes.val.predictors.gtfs_eta_models import _from_installed_dist_info
 
         def _raise_not_found(name):
             raise importlib.metadata.PackageNotFoundError(name)
@@ -150,7 +150,7 @@ class TestResolveModelRegistryDir:
         with a real registry.json is trusted."""
         import json
 
-        from etaval.predictors.gtfs_eta_models import _from_installed_dist_info
+        from stoptimes.val.predictors.gtfs_eta_models import _from_installed_dist_info
 
         fake_source_root = tmp_path / "gtfs-eta-src"
         trained_dir = fake_source_root / "models" / "trained"
@@ -175,7 +175,7 @@ class TestResolveModelRegistryDir:
         through to None rather than returning an empty/wrong directory."""
         import json
 
-        from etaval.predictors.gtfs_eta_models import _from_installed_dist_info
+        from stoptimes.val.predictors.gtfs_eta_models import _from_installed_dist_info
 
         empty_root = tmp_path / "empty-gtfs-eta"
         (empty_root / "models" / "trained").mkdir(parents=True)
@@ -194,7 +194,7 @@ class TestResolveModelRegistryDir:
     def test_resolver_chain_never_raises(self, monkeypatch):
         """Even if every individual resolver misbehaves, the chain degrades
         to None instead of propagating an exception."""
-        import etaval.predictors.gtfs_eta_models as mod
+        import stoptimes.val.predictors.gtfs_eta_models as mod
 
         def _boom():
             raise RuntimeError("boom")

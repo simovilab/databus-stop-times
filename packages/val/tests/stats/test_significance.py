@@ -8,7 +8,7 @@ import numpy as np
 import pytest
 from scipy import stats as scipy_stats
 
-from etaval.stats.significance import SignificanceResult, diebold_mariano, wilcoxon_test
+from stoptimes.val.stats.significance import SignificanceResult, diebold_mariano, wilcoxon_test
 
 
 class TestWilcoxonTest:

@@ -11,7 +11,7 @@ from pathlib import Path
 
 import pandas as pd
 
-from etaval.domain.models import Stop
+from stoptimes.core.domain.models import Stop
 
 
 class GtfsStaticLoader:

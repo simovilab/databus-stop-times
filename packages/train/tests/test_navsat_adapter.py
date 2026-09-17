@@ -8,7 +8,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from feature_engineering.navsat_adapter import (
+from stoptimes.train.sources.navsat_adapter import (
     OUTPUT_COLUMNS,
     navsat_to_vehicle_positions,
 )

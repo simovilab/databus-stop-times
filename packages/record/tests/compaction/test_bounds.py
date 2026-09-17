@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import datetime as dt
 
-from rt_pipeline.compaction.feeds import FEEDS_BY_NAME
-from rt_pipeline.compaction.planning import discover_leaves, discover_staging_days
+from stoptimes.record.compaction.feeds import FEEDS_BY_NAME
+from stoptimes.record.compaction.planning import discover_leaves, discover_staging_days
 
 from .factories import mbta_rows, write_parquet
 

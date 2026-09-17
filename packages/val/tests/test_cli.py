@@ -18,18 +18,18 @@ from pathlib import Path
 import pytest
 from typer.testing import CliRunner
 
-from etaval.cli.main import _run_validation, app, parse_duration
-from etaval.domain.models import ValidationResult
-from etaval.engine.runtime import FeedSnapshot, ReplayFeedSource
-from etaval.feeds.gtfsrt_json import parse_tu_feed, parse_vp_feed
-from etaval.feeds.static import GtfsStaticLoader
-from etaval.groundtruth.position_radius import PositionRadiusDetector
-from etaval.groundtruth.shape_distance import ShapeDistanceDetector
-from etaval.groundtruth.stop_status import StopStatusDetector
-from etaval.predictors.constant_speed import ConstantSpeedPredictor
-from etaval.predictors.gtfsrt_tripupdates import GtfsRtTripUpdatesPredictor
-from etaval.storage.parquet_export import export_results, load_results_parquet
-from etaval.storage.sqlite import SqliteStorage
+from stoptimes.val.cli.main import _run_validation, app, parse_duration
+from stoptimes.core.domain.models import ValidationResult
+from stoptimes.val.engine.runtime import FeedSnapshot, ReplayFeedSource
+from stoptimes.core.realtime.gtfsrt_json import parse_tu_feed, parse_vp_feed
+from stoptimes.core.gtfs.static import GtfsStaticLoader
+from stoptimes.val.groundtruth.position_radius import PositionRadiusDetector
+from stoptimes.val.groundtruth.shape_distance import ShapeDistanceDetector
+from stoptimes.val.groundtruth.stop_status import StopStatusDetector
+from stoptimes.val.predictors.constant_speed import ConstantSpeedPredictor
+from stoptimes.val.predictors.gtfsrt_tripupdates import GtfsRtTripUpdatesPredictor
+from stoptimes.val.storage.parquet_export import export_results, load_results_parquet
+from stoptimes.val.storage.sqlite import SqliteStorage
 
 runner = CliRunner()
 

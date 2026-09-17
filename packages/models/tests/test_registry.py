@@ -1,5 +1,5 @@
 """
-Tests for models.common.registry: relocatable registry directories.
+Tests for stoptimes.models.common.registry: relocatable registry directories.
 
 A registry directory (registry.json + its *.pkl / *_meta.json artifacts) is
 seeded once and then mounted/copied to different absolute paths across
@@ -17,7 +17,7 @@ from __future__ import annotations
 import json
 import shutil
 
-from models.common.registry import ModelRegistry
+from stoptimes.models.common.registry import ModelRegistry
 
 METADATA = {
     "model_type": "diagnostic_test",

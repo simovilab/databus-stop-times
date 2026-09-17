@@ -6,8 +6,8 @@ history, and expires stale trips.
 
 from __future__ import annotations
 
-from etaval.domain.models import TripInstance, VehicleState
-from etaval.feeds.gtfsrt_json import VehiclePositionRecord
+from stoptimes.core.domain.models import TripInstance, VehicleState
+from stoptimes.core.realtime.gtfsrt_json import VehiclePositionRecord
 
 # (trip_id, vehicle_id)
 TripKey = tuple[str, str]

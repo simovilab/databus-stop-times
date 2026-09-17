@@ -10,7 +10,7 @@ roadmap 0.2.
 Uploads go through `mc pipe` rather than DuckDB's httpfs (used elsewhere in
 this package for Parquet) because this is one opaque binary blob, not a
 columnar dataset. Credential resolution is delegated to
-``rt_pipeline.compaction.credentials`` rather than reimplemented here.
+``stoptimes.record.compaction.credentials`` rather than reimplemented here.
 """
 
 from __future__ import annotations
@@ -153,7 +153,7 @@ def put_snapshot(
     """Upload `content` to feeds/<agency>/gtfs_static/<ISO date>.zip.
 
     Returns the bucket-relative key. Resolves `mc` credentials the same way
-    `rt_pipeline.compaction.run_compaction` does (an `mc` alias, else
+    `stoptimes.record.compaction.run_compaction` does (an `mc` alias, else
     environment variables).
     """
     from ..compaction.credentials import load_credentials

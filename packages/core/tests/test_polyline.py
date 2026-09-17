@@ -16,8 +16,8 @@ import math
 
 import pytest
 
-from etaval.domain.models import Stop
-from etaval.spatial.polyline import (
+from stoptimes.core.domain.models import Stop
+from stoptimes.core.spatial.polyline import (
     PolylinePoint,
     Projection,
     assign_stops_monotonic,

@@ -1,6 +1,6 @@
 """GtfsEtaModelPredictor — wraps gtfs-eta's trained ETA models for live validation.
 
-Bridges etaval's ``Predictor`` protocol to ``eta_service.estimator.estimate_stop_times``
+Bridges etaval's ``Predictor`` protocol to ``stoptimes.serve.estimator.estimate_stop_times``
 from the sibling ``gtfs-eta`` repo, so any model trained there (historical_mean, ewma,
 polyreg_distance, polyreg_time, xgboost) can be scored against real arrivals the same
 way ``gtfsrt`` and ``baseline:constant_speed`` are.
@@ -26,7 +26,7 @@ Two environment quirks, both worked around below rather than assumed fixed upstr
    lives, so any fixed ``parents[N]`` guess is next to useless (a first attempt
    at exactly that silently computed ``.venv/lib/python3.14/gtfs-eta`` — plausible
    looking, structurally wrong, and *not caught by any test* since it never
-   raises, just returns an empty registry). ``core.config._find_project_root()``
+   raises, just returns an empty registry). ``stoptimes.core.config._find_project_root()``
    has the identical problem for the same reason: walking up from the
    *installed* copy of ``core/config.py`` finds *etaval's* pyproject.toml first,
    not gtfs-eta's, so it can't be trusted here either.
@@ -56,8 +56,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from etaval.domain.models import Stop, TripInstance, VehicleState
-from etaval.predictors.base import StopPrediction
+from stoptimes.core.domain.models import Stop, TripInstance, VehicleState
+from stoptimes.val.predictors.base import StopPrediction
 
 # Valid only when this file is still in-source (editable install, or pytest's
 # rootdir-based import) -- see point 2 in the module docstring for why a
@@ -328,8 +328,8 @@ if "MODEL_REGISTRY_DIR" not in os.environ:
         )
 
 try:
-    from eta_service.estimator import estimate_stop_times
+    from stoptimes.serve.estimator import estimate_stop_times
 except ModuleNotFoundError:
     if str(_SOURCE_TREE_GTFS_ETA_ROOT) not in sys.path:
         sys.path.insert(0, str(_SOURCE_TREE_GTFS_ETA_ROOT))
-    from eta_service.estimator import estimate_stop_times
+    from stoptimes.serve.estimator import estimate_stop_times

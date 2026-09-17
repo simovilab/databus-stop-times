@@ -1,4 +1,4 @@
-"""tests/api/test_stats_ext_unit.py — unit tests for etaval.api.stats_ext.
+"""tests/api/test_stats_ext_unit.py — unit tests for stoptimes.val.api.stats_ext.
 
 Pure-function tests: no HTTP, no engine, no storage — build ValidationResult
 rows and RunSummary/LatencyStats objects directly.
@@ -6,15 +6,15 @@ rows and RunSummary/LatencyStats objects directly.
 
 from __future__ import annotations
 
-from etaval.api.stats_ext import (
+from stoptimes.val.api.stats_ext import (
     STATS_SEED,
     compute_calibration,
     compute_significance,
     compute_stats_extension,
 )
-from etaval.domain.models import ValidationResult
-from etaval.engine.runtime import RunSummary
-from etaval.provenance import LatencyStats
+from stoptimes.core.domain.models import ValidationResult
+from stoptimes.val.engine.runtime import RunSummary
+from stoptimes.val.provenance import LatencyStats
 
 
 def _result(

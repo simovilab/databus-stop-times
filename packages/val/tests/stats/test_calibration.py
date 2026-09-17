@@ -5,7 +5,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from etaval.stats.calibration import CalibrationBin, calibration_by_horizon
+from stoptimes.val.stats.calibration import CalibrationBin, calibration_by_horizon
 
 
 class TestCalibrationByHorizon:

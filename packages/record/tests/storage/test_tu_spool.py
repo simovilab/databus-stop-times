@@ -12,8 +12,8 @@ import datetime as dt
 import pandas as pd
 import pytest
 
-from rt_pipeline.storage.tu_schema import DATA_COLUMNS, NATURAL_KEY, SERIES_KEY
-from rt_pipeline.storage.tu_spool import (
+from stoptimes.record.storage.tu_schema import DATA_COLUMNS, NATURAL_KEY, SERIES_KEY
+from stoptimes.record.storage.tu_spool import (
     TripUpdateSpool,
     compact_repeated_predictions,
     flush_tu_to_staging,
@@ -241,7 +241,7 @@ def test_flush_leaves_spool_intact_when_write_raises(tmp_path, monkeypatch):
         def close(self): pass
 
     monkeypatch.setattr(
-        "rt_pipeline.storage.tu_spool.connect",
+        "stoptimes.record.storage.tu_spool.connect",
         lambda base_uri, config=None: _FailingConnection(),
     )
     with pytest.raises(RuntimeError, match="simulated S3 PUT failure"):

@@ -17,16 +17,16 @@ import pandas as pd
 import pytest
 from typer.testing import CliRunner
 
-from etaval.backtest import (
+from stoptimes.val.backtest import (
     SPLIT_NOTE,
     WalkForwardResult,
     WindowResult,
     split_windows,
     walk_forward,
 )
-from etaval.cli.main import app
-from etaval.feeds.source_config import load_named_source
-from etaval.stats.bootstrap import CIResult
+from stoptimes.val.cli.main import app
+from stoptimes.val.feeds.source_config import load_named_source
+from stoptimes.val.stats.bootstrap import CIResult
 
 _FIXTURES = Path(__file__).parent / "fixtures"
 _MINI_GTFS = _FIXTURES / "mini_gtfs.zip"
@@ -271,7 +271,7 @@ async def test_walk_forward_default_predictor_ids(tmp_path: Path) -> None:
         static_gtfs_zip=_MINI_GTFS,
     )
     assert len(result.windows) == 1
-    from etaval.engine.assembly import DEFAULT_PREDICTOR_IDS
+    from stoptimes.val.engine.assembly import DEFAULT_PREDICTOR_IDS
 
     assert set(result.windows[0].mae_by_predictor) == set(DEFAULT_PREDICTOR_IDS)
 

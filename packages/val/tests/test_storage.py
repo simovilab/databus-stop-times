@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import pytest
 
-from etaval.domain.models import ActualArrival, PredictionSample, ValidationResult
-from etaval.storage.sqlite import SqliteStorage
+from stoptimes.core.domain.models import ActualArrival, PredictionSample, ValidationResult
+from stoptimes.val.storage.sqlite import SqliteStorage
 
 # ── fixtures & helpers ────────────────────────────────────────────────────────
 

@@ -8,8 +8,8 @@ from pathlib import Path
 
 import pytest
 
-from rt_pipeline.compaction.duckdb_ops import DuckDB
-from rt_pipeline.compaction.storage import LocalStorage
+from stoptimes.record.compaction.duckdb_ops import DuckDB
+from stoptimes.record.compaction.storage import LocalStorage
 
 
 @pytest.fixture

@@ -1,8 +1,8 @@
 """Tests for etaval/figures.py — A9 publication figures.
 
-Headless (matplotlib Agg backend, set at import in etaval.figures). Builds a
+Headless (matplotlib Agg backend, set at import in stoptimes.val.figures). Builds a
 small synthetic ValidationResults DataFrame (matching the Parquet schema from
-etaval.storage.parquet_export) directly rather than running the engine.
+stoptimes.val.storage.parquet_export) directly rather than running the engine.
 """
 
 from __future__ import annotations
@@ -14,9 +14,9 @@ import pandas as pd
 import pytest
 from typer.testing import CliRunner
 
-from etaval.cli.main import app
-from etaval.domain.models import ValidationResult
-from etaval.figures import (
+from stoptimes.val.cli.main import app
+from stoptimes.core.domain.models import ValidationResult
+from stoptimes.val.figures import (
     calibration_diagram,
     convergence_curve,
     cost_accuracy_pareto,
@@ -26,7 +26,7 @@ from etaval.figures import (
     per_route_mae,
     render_all_figures,
 )
-from etaval.storage.parquet_export import export_results
+from stoptimes.val.storage.parquet_export import export_results
 
 runner = CliRunner()
 

@@ -12,8 +12,8 @@ import json
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
-from eta_service.estimator import estimate_stop_times
-from models.common.registry import get_registry
+from stoptimes.serve.estimator import estimate_stop_times
+from stoptimes.models.common.registry import get_registry
 
 
 def get_sample_vp_data(route='1'):

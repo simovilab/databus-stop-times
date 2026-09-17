@@ -19,22 +19,22 @@ from pathlib import Path
 import pytest
 from typer.testing import CliRunner
 
-from etaval.cli.main import _run_validation, app
-from etaval.domain.models import ActualArrival, PredictionSample, Stop, TripInstance, VehicleState
-from etaval.engine.runtime import ReplayFeedSource
-from etaval.feeds.static import GtfsStaticLoader
-from etaval.groundtruth.position_radius import PositionRadiusDetector
-from etaval.groundtruth.shape_distance import ShapeDistanceDetector
-from etaval.groundtruth.stop_status import StopStatusDetector
-from etaval.predictors.constant_speed import ConstantSpeedPredictor
-from etaval.predictors.gtfsrt_tripupdates import GtfsRtTripUpdatesPredictor
-from etaval.scoring.sensitivity import (
+from stoptimes.val.cli.main import _run_validation, app
+from stoptimes.core.domain.models import ActualArrival, PredictionSample, Stop, TripInstance, VehicleState
+from stoptimes.val.engine.runtime import ReplayFeedSource
+from stoptimes.core.gtfs.static import GtfsStaticLoader
+from stoptimes.val.groundtruth.position_radius import PositionRadiusDetector
+from stoptimes.val.groundtruth.shape_distance import ShapeDistanceDetector
+from stoptimes.val.groundtruth.stop_status import StopStatusDetector
+from stoptimes.val.predictors.constant_speed import ConstantSpeedPredictor
+from stoptimes.val.predictors.gtfsrt_tripupdates import GtfsRtTripUpdatesPredictor
+from stoptimes.val.scoring.sensitivity import (
     TripContext,
     compute_detector_sensitivity,
     sensitivity_from_persisted_arrivals,
 )
-from etaval.storage.parquet_export import export_results
-from etaval.storage.sqlite import SqliteStorage
+from stoptimes.val.storage.parquet_export import export_results
+from stoptimes.val.storage.sqlite import SqliteStorage
 
 # Reuse the offline snapshot builder from test_cli.py so this suite stays
 # deterministic and network-free, matching that module's conventions.
@@ -215,7 +215,7 @@ class TestSensitivityFromPersistedArrivals:
 
 
 def _make_result_parquet(tmp_path: Path) -> Path:
-    from etaval.domain.models import ValidationResult
+    from stoptimes.core.domain.models import ValidationResult
 
     results = [
         ValidationResult(

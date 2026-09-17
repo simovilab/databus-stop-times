@@ -14,7 +14,7 @@ This uses the standard GTFS-RT VehiclePosition ``current_status`` /
 
 from __future__ import annotations
 
-from etaval.domain.models import ActualArrival, Stop, TripInstance, VehicleState
+from stoptimes.core.domain.models import ActualArrival, Stop, TripInstance, VehicleState
 
 
 class StopStatusDetector:

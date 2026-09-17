@@ -24,10 +24,10 @@ import pandas as pd
 import pytest
 from typer.testing import CliRunner
 
-from etaval.cli.main import app
-from etaval.engine.assembly import build_replay_run
-from etaval.engine.runtime import FeedSnapshot
-from etaval.feeds.replay_archive import (
+from stoptimes.val.cli.main import app
+from stoptimes.val.engine.assembly import build_replay_run
+from stoptimes.val.engine.runtime import FeedSnapshot
+from stoptimes.val.feeds.replay_archive import (
     ArchiveReplayFeedSource,
     build_archive_snapshots,
     latest_local_snapshot_on_or_before,
@@ -485,7 +485,7 @@ def test_cli_run_replay_requires_gtfs_source(tmp_path: Path) -> None:
 
 def test_build_replay_run_no_matching_vp_rows_raises(tmp_path: Path) -> None:
     vp_dir = _write_vp_archive(tmp_path, _base_vp_rows())
-    from etaval.feeds.source_config import load_named_source
+    from stoptimes.val.feeds.source_config import load_named_source
 
     cfg = load_named_source("mbta")
     with pytest.raises(ValueError, match="No archived"):
@@ -499,7 +499,7 @@ def test_build_replay_run_no_matching_vp_rows_raises(tmp_path: Path) -> None:
 
 def test_build_replay_run_requires_static_gtfs_source(tmp_path: Path) -> None:
     vp_dir = _write_vp_archive(tmp_path, _base_vp_rows())
-    from etaval.feeds.source_config import load_named_source
+    from stoptimes.val.feeds.source_config import load_named_source
 
     cfg = load_named_source("mbta")
     with pytest.raises(ValueError, match="static_gtfs"):

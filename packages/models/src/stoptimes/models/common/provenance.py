@@ -21,7 +21,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, Optional
 
-from core.config import get_config
+from stoptimes.core.config import get_config
 
 _HASH_CHUNK_SIZE = 1024 * 1024  # 1 MiB
 

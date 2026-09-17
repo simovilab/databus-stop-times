@@ -14,17 +14,17 @@ import httpx
 import pytest
 import respx
 
-from etaval.domain.models import VehicleState
-from etaval.feeds.gtfsrt_json import (
+from stoptimes.core.domain.models import VehicleState
+from stoptimes.core.realtime.gtfsrt_json import (
     TripUpdatesPoller,
     VehiclePositionRecord,
     VehiclePositionsPoller,
     parse_tu_feed,
     parse_vp_feed,
 )
-from etaval.feeds.source_config import list_sources, load_named_source, load_source_config
-from etaval.feeds.static import GtfsStaticLoader
-from etaval.feeds.tracker import ActiveTripTracker
+from stoptimes.val.feeds.source_config import list_sources, load_named_source, load_source_config
+from stoptimes.core.gtfs.static import GtfsStaticLoader
+from stoptimes.val.feeds.tracker import ActiveTripTracker
 
 # ── P0: shipped YAML round-trips ──────────────────────────────────────────────
 

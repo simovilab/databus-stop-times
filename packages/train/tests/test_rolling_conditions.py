@@ -1,4 +1,4 @@
-"""Tests for ``feature_engineering.rolling_conditions``.
+"""Tests for ``stoptimes.train.datasets.rolling_conditions``.
 
 The headline requirement of that module is causality: a feature computed for
 a row at time `t` must be identical no matter what happens at or after `t`.
@@ -13,7 +13,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from feature_engineering.rolling_conditions import (
+from stoptimes.train.datasets.rolling_conditions import (
     ROLLING_CONDITIONS_FEATURES,
     RollingConditionsConfig,
     add_rolling_conditions_features,

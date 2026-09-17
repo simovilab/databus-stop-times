@@ -19,7 +19,7 @@ time, never wrapping back to a previous segment.
 
 from __future__ import annotations
 
-from etaval.domain.models import ActualArrival, Stop, TripInstance, VehicleState
+from stoptimes.core.domain.models import ActualArrival, Stop, TripInstance, VehicleState
 
 
 class ShapeDistanceDetector:

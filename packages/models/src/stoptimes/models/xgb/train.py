@@ -36,7 +36,7 @@ class XGBTimeModel(LegacyPickleDefaults):
     """
     Gradient boosted tree model (XGBoost) with temporal/spatial features.
     
-    Features (all serveable online by eta_service.estimator):
+    Features (all serveable online by stoptimes.serve.estimator):
     - Core: distance_to_stop
     - Temporal: hour, day_of_week, is_weekend, is_peak_hour + cyclical sin/cos
     - Spatial: distance_to_next_stop, shape_distance_to_stop, shape_progress,

@@ -34,8 +34,8 @@ from typing import Any
 
 import pandas as pd
 
-from etaval.engine.runtime import FeedSnapshot, ReplayFeedSource
-from etaval.feeds.gtfsrt_json import StopTimeUpdate, TripUpdateRecord, VehiclePositionRecord
+from stoptimes.val.engine.runtime import FeedSnapshot, ReplayFeedSource
+from stoptimes.core.realtime.gtfsrt_json import StopTimeUpdate, TripUpdateRecord, VehiclePositionRecord
 
 EpochLike = float | int | str | dt.datetime | None
 
@@ -184,7 +184,7 @@ def read_vp_groups(
 
 def _row_to_vp_record(row: dict[str, Any]) -> VehiclePositionRecord:
     """Build a VehiclePositionRecord from one archived VP row (dict form)."""
-    from etaval.domain.models import VehicleState
+    from stoptimes.core.domain.models import VehicleState
 
     def _opt_float(v: Any) -> float | None:
         return float(v) if v is not None and pd.notna(v) else None
@@ -379,9 +379,9 @@ def build_archive_snapshots(
 class ArchiveReplayFeedSource(ReplayFeedSource):
     """Replays an archived Parquet VP/TU feed, wall-clock independent.
 
-    Builds the full :class:`~etaval.engine.runtime.FeedSnapshot` sequence
+    Builds the full :class:`~stoptimes.val.engine.runtime.FeedSnapshot` sequence
     eagerly (via :func:`build_archive_snapshots`) and delegates iteration to
-    :class:`~etaval.engine.runtime.ReplayFeedSource` — the engine derives its
+    :class:`~stoptimes.val.engine.runtime.ReplayFeedSource` — the engine derives its
     clock from ``snapshot.header_timestamp``, so it advances to each archived
     timestamp with no dependency on ``time.time()``.
     """
@@ -450,7 +450,7 @@ def resolve_static_gtfs(
     Priority: an explicit *local_zip* wins outright; otherwise *local_dir* is
     searched for the newest dated snapshot <= *target_date* (the default,
     tested path); otherwise, if *s3_agency* is given and gtfs-eta's
-    ``rt_pipeline.storage.static_gtfs`` module is importable, the matching S3
+    ``stoptimes.record.storage.static_gtfs`` module is importable, the matching S3
     snapshot is downloaded to a temp file and that path returned.
 
     Raises:
@@ -482,7 +482,7 @@ def resolve_static_gtfs(
             dt.date.fromisoformat(target_date) if isinstance(target_date, str) else target_date
         )
         try:
-            from rt_pipeline.storage.static_gtfs import (
+            from stoptimes.record.storage.static_gtfs import (
                 get_snapshot,
                 latest_snapshot_on_or_before,
             )

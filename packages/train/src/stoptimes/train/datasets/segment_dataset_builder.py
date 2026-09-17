@@ -15,11 +15,11 @@ any horizon is just the sum of the predicted segment times ahead. See
 
 This module is now only the BUCR **resolver**: it maps each inferred
 ``trip_id`` back to its route-direction candidate (ordered stops + polyline) and
-hands the resulting :class:`~feature_engineering.segment_core.TripInstance`
-objects to :func:`~feature_engineering.segment_core.build_segments_from_instances`,
+hands the resulting :class:`~stoptimes.core.segments.TripInstance`
+objects to :func:`~stoptimes.core.segments.build_segments_from_instances`,
 which owns the shared arrival-detection / per-segment feature+target emission /
 schema (identical across agencies -- MBTA uses the same core via
-:mod:`feature_engineering.mbta_segments`). The constants and ``OUTPUT_COLUMNS``
+:mod:`stoptimes.train.datasets.mbta_segments`). The constants and ``OUTPUT_COLUMNS``
 are re-exported here for backward compatibility with existing importers.
 
 Arrival detection (in the core) reuses the same **50 m first-within-threshold,
@@ -37,8 +37,8 @@ from typing import Dict, Iterator, Optional, Sequence, Tuple
 
 import pandas as pd
 
-from feature_engineering.bucr_gtfs import RouteDirectionCandidate
-from feature_engineering.segment_core import (
+from stoptimes.train.sources.bucr_gtfs import RouteDirectionCandidate
+from stoptimes.core.segments import (
     ARRIVAL_RADIUS_M,
     CLOSEST_APPROACH_FALLBACK_M,
     MAX_SEGMENT_SECONDS,
