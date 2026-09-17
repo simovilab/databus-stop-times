@@ -1,6 +1,6 @@
 # stoptimes — implementation plan
 
-Status: **Phase 0 complete (not pushed)** · next: Phase 1 · branch `feat/stoptimes-scaffold` · last updated 2026-09-16
+Status: **Phase 1 in progress (C1, C2, C3)** · Phase 0 complete (not pushed) · branch `feat/stoptimes-scaffold` · last updated 2026-09-16
 
 This is the working plan for turning SIMOVI's ETA research code (`gtfs-eta`) and its
 validation tool (`etaval`) into **stoptimes**: a general toolkit that lets anyone with
@@ -191,25 +191,32 @@ Also verified: nothing in `packages/` imports legacy modules; `import stoptimes.
 
 Narrow on purpose. Output is code (pydantic models / Protocols + tests) and `docs/CONTRACTS.md`.
 
-**C1 · contracts** (1 agent, Opus review) — owns `packages/core/src/stoptimes/core/contracts/**`, `docs/CONTRACTS.md`, `examples/**`
+**Orchestrator, before fan-out (done):** `contracts/artifact.py` fixed (layout `<registry>/<artifact_id>/{artifact.json, model.<ext>, card.md}`,
+`ArtifactMetadata`, atomic write, `version_mismatches`) so C1 and C3 share it. C1 may add optional fields only.
+
+**C1 · contracts** (1 agent, Opus review) — owns `packages/core/src/stoptimes/core/contracts/**` (except artifact field changes),
+`packages/core/tests/test_contract_*.py`, `docs/CONTRACTS.md`, `examples/experiments/**`
 - `source`: feed/agency description (static URL, realtime endpoints + format, timezone, auth, archive, ground-truth detector).
-- `data`: StaticFeed, Observation (VP/TU, source-agnostic), Arrival (with derivation method); column schemas + parquet layout.
-  Reconcile `core.domain.models`, `record.storage.schema/tu_schema`.
+  Must accept today's val source YAMLs unchanged (new fields optional); test validates them wherever they live.
+- `data`: StaticFeed, Observation (VP/TU, source-agnostic), Arrival (with derivation method); column schemas + parquet layout;
+  timestamps pinned (UTC, `datetime64[ns, UTC]`). Reconcile `core.domain.models`, `record.storage.schema/tu_schema`.
 - `experiment`: experiment.yaml schema (data selection, target, model + params, features, split, seed, outputs).
-- `artifact`: on-disk layout, metadata (data window, features, params, git sha, library versions), model card, scores by horizon.
-- `model`: fit/predict, declared feature needs, serialization; how BYO models (pickle, ONNX, callable, HTTP) satisfy it.
+- `model`: fit/predict Protocol, declared feature needs, serialization; how BYO models (pickle, ONNX, callable, HTTP) satisfy it.
 - `pipeline`: stages `ingest → match → features → predict → postprocess → publish`, hook signatures, context object.
 - `prediction`: per-stop prediction + exact GTFS-RT TripUpdate/StopTimeUpdate mapping.
-- Adapters from existing structures to contracts (no behavior change).
-- `examples/agencies/{bucr,mbta}.yaml`, `examples/experiments/xgb-baseline.yaml` validate against the schemas.
+- Adapters from existing structures to contracts in `contracts/adapters.py` (pure functions, no behavior change elsewhere).
+- `examples/experiments/xgb-baseline.yaml` validates against the schema.
 
-**C2 · de-SIMOVI core config** (parallel) — owns `packages/core/src/stoptimes/core/config.py`, `packages/val/src/stoptimes/val/config/**`
-- Move `AGENCY_MODEL_DEFAULTS`, `DEFAULT_AGENCY`, bUCR pins to `examples/`; settings become generic with a `STOPTIMES_` env prefix,
-  old env names still honored with a deprecation warning.
-- Move val `config/sources/*.yaml` to `examples/agencies/` with a search path (`--sources-dir`, `STOPTIMES_SOURCES`).
+**C2 · de-SIMOVI config** (parallel) — owns `packages/core/src/stoptimes/core/config.py`, its call sites
+(`serve/estimator.py`, `train/datasets/dataset_builder.py` imports only) and their tests, `packages/val/src/stoptimes/val/config/**`,
+`packages/val/src/stoptimes/val/feeds/source_config.py`, val source tests, `examples/agencies/**`
+- Agency profiles (timezone, holiday region, served-model pins) move to `examples/agencies/<agency>.yaml`; settings become
+  generic with a `STOPTIMES_` env prefix; old `ETA_*` names still honored with a `DeprecationWarning`.
+- `git mv` val `config/sources/*.yaml` to `examples/agencies/`; search path `--sources-dir` → `STOPTIMES_SOURCES` → `./examples/agencies`.
 
-**C3 · artifact migration** (parallel) — owns `packages/models/src/stoptimes/models/compat/**`
-- `stoptimes models migrate <dir>`: rewrite legacy registry + pickles into the new artifact layout, recording library versions.
+**C3 · artifact migration** (parallel) — owns `packages/models/src/stoptimes/models/compat/**`, its tests, `models migrate` in `cli/commands/models.py`
+- `stoptimes models migrate <legacy_dir> <registry>`: `{key}.pkl` + `{key}_meta.json` → artifact layout, original meta kept in `legacy`,
+  library versions recorded, idempotent, `--dry-run`; migrated artifacts load and predict identically.
 
 **Gate:** user reviews `docs/CONTRACTS.md`. After sign-off, contract changes need an orchestrator-approved note.
 
