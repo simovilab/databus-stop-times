@@ -1,23 +1,29 @@
-# etaval web UI
+# stoptimes val web UI
 
-Nuxt 4 frontend for the etaval ETA validation platform.
+Nuxt 4 frontend for the `stoptimes val` (etaval) ETA validation platform. It talks to
+the `stoptimes.val.api` FastAPI backend only through the REST + WebSocket contract in
+`app/types/api.ts` / `app/composables/useApi.ts` / `app/composables/useRunStream.ts` —
+nothing here names an agency, a file path, or a CLI command outside this README, so it
+needs no changes as the rest of the toolkit (data/train/serve) is built out in later
+phases.
 
 ## Prerequisites
 
 - Node.js v20+ (developed on v24)
 - npm 10+ (developed on npm 11)
-- The etaval Python backend (FastAPI)
+- The `stoptimes val` API backend (FastAPI), from this same uv workspace
 
 ## Quick start
 
 ### 1. Start the backend
 
-From the repo root (`docs/eta-val/`):
+From the repo root (the `stoptimes` uv workspace):
 
 ```bash
-uv run --extra api etaval-api
+uv sync --group dev            # once, or `uv sync --extra val` from packages/cli
+uv run --no-sync stoptimes val api
 # → listens on http://localhost:8010 by default
-# → set ETAVAL_API_PORT to override
+# → set ETAVAL_API_PORT to override (see packages/val/src/stoptimes/val/api/config.py)
 ```
 
 ### 2. Install frontend dependencies
