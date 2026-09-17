@@ -27,8 +27,9 @@ else closest-approach<=200 m** rule as ``dataset_builder.find_actual_arrival_tim
 so segment targets are position-derived (never schedule-derived -- BUCR's
 offset timetable does not poison labels).
 
-Pure/deterministic: no I/O, no network, no mutation of inputs. Runs under
-``uv run --group bucr``.
+Pure/deterministic: no I/O, no network, no mutation of inputs. No extra
+dependency group is needed -- a plain ``uv sync --group dev`` at the
+workspace root installs everything this module uses.
 """
 
 from __future__ import annotations

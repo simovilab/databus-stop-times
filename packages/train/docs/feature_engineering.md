@@ -21,7 +21,7 @@ VehiclePosition ➜ Trip metadata ➜ Stops in sequence ➜ Distance/target labe
 
 ---
 
-## 2. Dataset Builder (`dataset_builder.py`)
+## 2. Dataset Builder (`stoptimes.train.datasets.dataset_builder`)
 
 **Signature:**  
 `build_vp_training_dataset(route_ids=None, start_date=None, end_date=None, distance_threshold=50.0, max_stops_ahead=5, attach_weather=True, tz_for_temporal="America/Costa_Rica", pg_conn=None) -> pd.DataFrame`
@@ -60,7 +60,7 @@ Each row represents a `(VehiclePosition, downstream stop)` pair with:
 
 ```python
 from datetime import datetime, timezone
-from feature_engineering.dataset_builder import build_vp_training_dataset, save_dataset
+from stoptimes.train.datasets.dataset_builder import build_vp_training_dataset, save_dataset
 
 df = build_vp_training_dataset(
     route_ids=["Green-B"],
@@ -71,11 +71,14 @@ df = build_vp_training_dataset(
 save_dataset(df, "datasets/green_line_oct01.parquet")
 ```
 
-Run inside the Django project context so ORM models resolve and DB settings are loaded.
+Run inside the Django project context (with `sch_pipeline` importable) so ORM
+models resolve and DB settings are loaded; both imports are deferred inside
+`build_vp_training_dataset`, so importing this module elsewhere does not
+require Django.
 
 ---
 
-## 3. Temporal Features (`temporal.py`)
+## 3. Temporal Features (`stoptimes.core.features.temporal`)
 
 `extract_temporal_features(timestamp, tz="America/New_York", region="US_MA") -> Dict[str, object>`
 
@@ -83,11 +86,11 @@ Run inside the Django project context so ORM models resolve and DB settings are 
 - Peak-hour logic (weekdays 07–09 & 16–19) complements coarse bins (`_tod_bin`) defined as morning/midday/afternoon/evening.
 - Holiday detection relies on `holidays` with regional fallbacks; absence of the package silently downgrades to `False`.
 
-Unit tests validate timezone handling, binning, weekend overrides, and holiday stubs (`tests/test_temporal.py`).
+Unit tests validate timezone handling, binning, weekend overrides, and holiday stubs (`packages/core/tests/test_temporal.py`).
 
 ---
 
-## 4. Spatial Utilities (`spatial.py`)
+## 4. Spatial Utilities (`stoptimes.core.spatial.geo`)
 
 - `calculate_distance_features(vehicle_position, stop, next_stop)` returns distances from vehicle to current/next stop, bearing alignment, and a normalized `progress_on_segment` proxy.
 - `get_route_features(route_id, conn=None, stops_in_order=None)` aggregates route length and average stop spacing either via Postgres (`sch_pipeline_routestop`/`sch_pipeline_stop`) or an in-memory stop list.
@@ -97,11 +100,11 @@ Use these helpers when deriving spatial covariates outside the dataset builder.
 
 ---
 
-## 5. Weather Adapter (`weather.py`)
+## 5. Weather Adapter (`stoptimes.train.datasets.weather`)
 
 `fetch_weather(lat, lon, timestamp) -> dict` pulls hourly Open‑Meteo aggregates aligned to the VehiclePosition timestamp.
 
-- Timestamps are normalized to the hour in UTC, forming the cache key `weather:{lat}:{lon}:{iso_hour}` stored in the configured Django cache for 1 hour.
+- Timestamps are normalized to the hour in UTC, forming the cache key `weather:{lat}:{lon}:{iso_hour}` stored in the configured cache for 1 hour — the Django cache when Django is installed, else an in-process fallback so this module works standalone.
 - Only the relevant hour is requested via `start`/`end` query params to minimize payloads; API timeouts default to 8 seconds.
 - Missing API data or coverage gaps yield a dict of `None`s, keeping the dataset builder resilient.
 
@@ -109,9 +112,9 @@ Use these helpers when deriving spatial covariates outside the dataset builder.
 
 ## 6. Dependencies & Environment
 
-- **Python stack:** pandas, numpy, psycopg, requests, django, holidays (optional).
+- **Python stack:** pandas, numpy, requests, holidays (optional). Django, psycopg, and the `sch_pipeline` schedule app are optional extras (`django` extra in `packages/train/pyproject.toml`), needed only for `build_vp_training_dataset`'s legacy ORM path.
 - **Database:** Postgres schemas `rt_pipeline_*` and `sch_pipeline_*` accessed either through the Django ORM or raw psycopg connections. Ensure indexes on `VehiclePosition(ts, route_id)` and `TripUpdate(route_id, stop_sequence, ts)` for performant scans.
-- **Caching:** Uses the configured Django cache backend for weather responses.
+- **Caching:** Uses the configured Django cache backend for weather responses when Django is installed, else an in-process fallback.
 - **Timezone & locale:** Default tz is `America/Costa_Rica` in the dataset builder (override via `tz_for_temporal`), but temporal helpers accept any IANA tz string.
 
 ---
@@ -119,13 +122,13 @@ Use these helpers when deriving spatial covariates outside the dataset builder.
 ## 7. Testing & Validation
 
 Automated tests cover:
-- Temporal calculations (`tests/test_temporal.py`)
-- Spatial distances/progress (`tests/test_spatial.py`)
-- Weather fetching/memoization (`tests/test_weather.py`)
+- Temporal calculations (`packages/core/tests/test_temporal.py`)
+- Spatial distances/progress (`packages/core/tests/test_spatial.py`)
+- Weather fetching/memoization (`packages/train/tests/test_weather.py`)
 
-To perform tests, from the `eta_prediction` directory, run:
+To run this package's tests, from the workspace root, run:
 ```bash
-$ uv run pytest feature_engineering
+$ uv run --no-sync python -m pytest packages/train -q -p no:cacheprovider
 ```
 ---
 
