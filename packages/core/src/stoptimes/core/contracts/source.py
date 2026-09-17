@@ -85,6 +85,15 @@ class GroundTruthDetector(BaseModel):
     shape_threshold_m: float = 30.0
 
 
+class ServingDefaults(BaseModel):
+    """Registry keys `serve` uses for this agency when the caller names no model."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    primary_model: str | None = None
+    fallback_model: str | None = None
+
+
 class Source(BaseModel):
     """A GTFS agency/feed: static schedule, realtime feeds, archive, detector.
 
@@ -97,12 +106,16 @@ class Source(BaseModel):
     id: str = Field(pattern=r"^[a-z0-9][a-z0-9_-]*$")
     name: str
     timezone: str = "UTC"
+    holiday_region: str | None = None
+    """Holiday calendar as ``COUNTRY`` or ``COUNTRY_SUBDIVISION`` (e.g. ``CR``, ``US_MA``); None = no holidays."""
+
     gtfs_static_url: str
     """URL or local filesystem path to the agency's GTFS static .zip."""
 
     realtime_feeds: list[RealtimeFeed] = Field(default_factory=list)
     archive: Archive | None = None
     detector: GroundTruthDetector = Field(default_factory=GroundTruthDetector)
+    serving: ServingDefaults = Field(default_factory=ServingDefaults)
     tags: list[str] = Field(default_factory=list)
 
     @model_validator(mode="after")

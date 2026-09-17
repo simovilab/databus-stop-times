@@ -91,6 +91,7 @@ from stoptimes.core.contracts.source import (
     FeedKind,
     GroundTruthDetector,
     RealtimeFeed,
+    ServingDefaults,
     Source,
     dump_source,
     load_source,
@@ -104,6 +105,7 @@ change needs an orchestrator-approved note (docs/PLAN.md §10)."""
 __all__ = [
     "CONTRACTS_VERSION",
     # source
+    "ServingDefaults",
     "Source",
     "RealtimeFeed",
     "FeedKind",

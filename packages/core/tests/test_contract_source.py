@@ -133,3 +133,23 @@ def test_detector_defaults_match_domain_model():
     assert detector.arrival_radius_m == 40.0
     assert detector.dwell_s == 0.0
     assert detector.shape_threshold_m == 30.0
+
+
+def test_agency_profile_keys_survive_adapter():
+    from stoptimes.core.contracts.adapters import source_from_val_yaml
+
+    data = {
+        "name": "demo",
+        "gtfs_static_url": "feed.zip",
+        "vehicle_positions_url": "vp.json",
+        "trip_updates_url": "tu.json",
+        "poll_interval_s": 10,
+        "timezone": "America/Costa_Rica",
+        "holiday_region": "CR",
+        "serving": {"primary_model": "a", "fallback_model": "b"},
+    }
+    source = source_from_val_yaml(data)
+    assert source.timezone == "America/Costa_Rica"
+    assert source.holiday_region == "CR"
+    assert source.serving.primary_model == "a"
+    assert source.serving.fallback_model == "b"

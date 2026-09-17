@@ -166,3 +166,15 @@ def test_arrival_round_trip_and_schema():
         "arrival_time",
         "method",
     }
+
+
+def test_calendar_tables_are_optional_static_tables():
+    from stoptimes.core.contracts.data import (
+        OPTIONAL_STATIC_TABLES,
+        STATIC_TABLE_SCHEMAS,
+        StaticFeed,
+    )
+
+    assert {"calendar", "calendar_dates"} <= set(OPTIONAL_STATIC_TABLES)
+    assert {"calendar", "calendar_dates"} <= set(STATIC_TABLE_SCHEMAS)
+    assert StaticFeed(source_id="x", tables=["stops", "trips", "stop_times"]).missing_required() == []

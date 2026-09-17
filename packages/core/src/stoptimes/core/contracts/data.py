@@ -172,8 +172,30 @@ ROUTES_SCHEMA = TableSchema(
     ],
 )
 
+CALENDAR_SCHEMA = TableSchema(
+    name="calendar",
+    columns=[
+        ColumnSpec(name="service_id", dtype="string"),
+        *(ColumnSpec(name=day, dtype="int64") for day in (
+            "monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday")),
+        ColumnSpec(name="start_date", dtype="string"),
+        ColumnSpec(name="end_date", dtype="string"),
+    ],
+)
+
+CALENDAR_DATES_SCHEMA = TableSchema(
+    name="calendar_dates",
+    columns=[
+        ColumnSpec(name="service_id", dtype="string"),
+        ColumnSpec(name="date", dtype="string"),
+        ColumnSpec(name="exception_type", dtype="int64"),
+    ],
+)
+
 REQUIRED_STATIC_TABLES: tuple[str, ...] = ("stops", "trips", "stop_times")
-OPTIONAL_STATIC_TABLES: tuple[str, ...] = ("shapes", "routes")
+# calendar/calendar_dates resolve which service day a trip ran on (TripUpdate
+# start_date, arrival derivation). GTFS requires at least one of the two.
+OPTIONAL_STATIC_TABLES: tuple[str, ...] = ("shapes", "routes", "calendar", "calendar_dates")
 
 STATIC_TABLE_SCHEMAS: dict[str, TableSchema] = {
     "stops": STOPS_SCHEMA,
@@ -181,6 +203,8 @@ STATIC_TABLE_SCHEMAS: dict[str, TableSchema] = {
     "stop_times": STOP_TIMES_SCHEMA,
     "shapes": SHAPES_SCHEMA,
     "routes": ROUTES_SCHEMA,
+    "calendar": CALENDAR_SCHEMA,
+    "calendar_dates": CALENDAR_DATES_SCHEMA,
 }
 
 

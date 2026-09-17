@@ -79,7 +79,7 @@ def _from_env() -> Path | None:
     Trusted as-is (not verified against registry.json) -- an explicit
     operator override always wins, even if it points somewhere unexpected.
     """
-    value = os.environ.get("MODEL_REGISTRY_DIR")
+    value = os.environ.get("STOPTIMES_MODEL_REGISTRY_DIR") or os.environ.get("MODEL_REGISTRY_DIR")
     if not value:
         return None
     try:
@@ -309,7 +309,7 @@ class GtfsEtaModelPredictor:
         return predictions
 
 
-if "MODEL_REGISTRY_DIR" not in os.environ:
+if not (os.environ.get("STOPTIMES_MODEL_REGISTRY_DIR") or os.environ.get("MODEL_REGISTRY_DIR")):
     _resolved = GtfsEtaModelPredictor._resolve_model_registry_dir()
     if _resolved is not None:
         os.environ["MODEL_REGISTRY_DIR"] = str(_resolved)

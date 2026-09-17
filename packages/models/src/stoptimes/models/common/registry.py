@@ -43,7 +43,7 @@ class ModelRegistry:
         # stoptimes.core.config._find_project_root(), not the caller's cwd. That matters
         # for out-of-tree consumers (e.g. etaval, which imports this package as
         # an editable dependency and runs from its own directory).
-        resolved_base = base_dir or os.getenv("MODEL_REGISTRY_DIR") or get_config().model_registry_dir
+        resolved_base = base_dir or os.getenv("STOPTIMES_MODEL_REGISTRY_DIR") or os.getenv("MODEL_REGISTRY_DIR") or get_config().model_registry_dir
         self.base_dir = Path(resolved_base).expanduser().resolve()
         self.base_dir.mkdir(parents=True, exist_ok=True)
         

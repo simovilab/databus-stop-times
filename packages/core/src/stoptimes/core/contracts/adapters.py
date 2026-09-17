@@ -33,6 +33,7 @@ from stoptimes.core.contracts.source import (
     FeedKind,
     GroundTruthDetector,
     RealtimeFeed,
+    ServingDefaults,
     Source,
 )
 from stoptimes.core.domain.models import ActualArrival, PredictionSample
@@ -72,6 +73,9 @@ def source_from_val_yaml(data: Mapping[str, Any]) -> Source:
     return Source(
         id=str(data["name"]),
         name=str(data["name"]),
+        timezone=str(data.get("timezone") or "UTC"),
+        holiday_region=data.get("holiday_region"),
+        serving=ServingDefaults(**(data.get("serving") or {})),
         gtfs_static_url=data["gtfs_static_url"],
         realtime_feeds=feeds,
         detector=GroundTruthDetector(
