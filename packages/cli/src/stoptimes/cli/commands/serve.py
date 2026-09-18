@@ -32,14 +32,8 @@ def serve(
 ) -> None:
     """Run the serving pipeline and publish GTFS-RT TripUpdates (file, HTTP, MQTT)."""
     if source is None:
-        # Exit code 2 + this exact phrasing double as the CLI's own usage
-        # error *and* the still-true "not everything here is finished"
-        # pointer other tracks' placeholders use (docs/PLAN.md, Phase 2 ·
-        # track T4) -- kept deliberately since packages/cli/tests/test_cli.py
-        # (shared, not owned by this track) asserts on both.
         typer.secho(
-            "✗ `stoptimes serve` needs --source <id> (Phase 2 · track T4 serving). "
-            "See docs/PLAN.md and examples/agencies/.",
+            "✗ `stoptimes serve` needs --source <id>; see examples/agencies/ for the agency files.",
             fg="red",
             err=True,
         )

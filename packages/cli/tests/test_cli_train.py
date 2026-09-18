@@ -145,14 +145,6 @@ def test_models_card_with_id_renders_card(tmp_path):
     assert "Scores by horizon" in result.output
 
 
-def test_models_card_without_id_is_still_planned():
-    """`test_models_card_is_planned` in the shared test_cli.py covers this
-    exact case; repeated here so this file documents the deliberate design
-    (no positional argument -> still `planned`, matching that test)."""
-    result = runner.invoke(app, ["models", "card"])
-    assert result.exit_code == 2
-    assert "Phase 2" in result.output
-
 
 def test_models_card_unknown_id_errors(tmp_path):
     result = runner.invoke(app, ["models", "card", "nope", "--registry", str(tmp_path)])

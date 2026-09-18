@@ -56,9 +56,9 @@ def test_help_lists_every_area():
 
 
 def test_planned_command_exits_2_and_names_phase():
-    result = runner.invoke(app, ["serve"])
+    result = runner.invoke(app, ["diagnose"])
     assert result.exit_code == 2
-    assert "Phase 2" in result.output
+    assert "Phase 3" in result.output
 
 
 def test_val_is_mounted():
@@ -76,16 +76,16 @@ def test_data_help():
         assert name in result.output
 
 
-def test_data_add_is_planned():
+def test_data_add_requires_arguments():
     result = runner.invoke(app, ["data", "add"])
-    assert result.exit_code == 2
-    assert "Phase 2" in result.output
+    assert result.exit_code != 0
+    assert "Phase 2" not in result.output
 
 
-def test_data_inspect_is_planned():
+def test_data_inspect_requires_a_name():
     result = runner.invoke(app, ["data", "inspect"])
-    assert result.exit_code == 2
-    assert "Phase 2" in result.output
+    assert result.exit_code != 0
+    assert "Phase 2" not in result.output
 
 
 def test_data_arrivals_is_planned():
@@ -104,10 +104,13 @@ def test_record_help():
         assert name in result.output
 
 
-def test_record_start_is_planned():
+def test_record_start_requires_a_source():
+    """`record start` is implemented; without --source it must say so, not
+    claim the command is unbuilt."""
     result = runner.invoke(app, ["record", "start"])
-    assert result.exit_code == 2
-    assert "Phase 2" in result.output
+    assert result.exit_code != 0
+    assert "--source" in result.output
+    assert "planned" not in result.output
 
 
 def test_record_compact_passthrough_help_reaches_argparse():
@@ -126,11 +129,6 @@ def test_train_help():
     for name in ("run", "ui", "legacy-all", "seed-baseline"):
         assert name in result.output
 
-
-def test_train_run_is_planned():
-    result = runner.invoke(app, ["train", "run"])
-    assert result.exit_code == 2
-    assert "Phase 2" in result.output
 
 
 def test_train_ui_is_planned():
@@ -173,11 +171,6 @@ def test_models_help():
     for name in ("check", "card", "migrate"):
         assert name in result.output
 
-
-def test_models_card_is_planned():
-    result = runner.invoke(app, ["models", "card"])
-    assert result.exit_code == 2
-    assert "Phase 2" in result.output
 
 
 def test_models_check_passthrough_help_reaches_argparse():
@@ -282,10 +275,12 @@ def test_models_migrate_exits_1_on_missing_legacy_dir(tmp_path):
 # ── serve / diagnose ──────────────────────────────────────────────────────────
 
 
-def test_serve_is_planned_phase2_track_t4():
+def test_serve_requires_a_source():
     result = runner.invoke(app, ["serve"])
-    assert result.exit_code == 2
-    assert "track T4" in result.output
+    assert result.exit_code != 0
+    assert "--source" in result.output
+    assert "track T4" not in result.output
+    assert "planned" not in result.output
 
 
 def test_diagnose_is_planned_phase3_track_u3():
@@ -316,3 +311,13 @@ def test_val_tui_help_reaches_argparse():
     result = _uv_run("val", "tui", "--help")
     assert result.returncode == 0, result.stdout + result.stderr
     assert "--api-url" in result.stdout
+
+
+def test_implemented_commands_never_claim_to_be_planned():
+    """Every command that Phase 2 built must give a real usage error, not the
+    placeholder text from before it existed."""
+    for argv in (["data", "add"], ["record", "start"], ["record", "status"],
+                 ["train", "run"], ["models", "card"], ["serve"]):
+        result = runner.invoke(app, argv)
+        assert result.exit_code != 0, argv
+        assert "planned" not in result.output, argv

@@ -39,7 +39,12 @@ def train_run(
     the model plus its baselines, score by horizon, and write an artifact +
     card. `--dry-run` resolves and prints the plan without touching data."""
     if experiment_path is None:
-        planned("train run", "Phase 2 · track T3 (experiments)")
+        typer.secho(
+            "✗ `stoptimes train run` needs an experiment file; see examples/experiments/.",
+            fg="red",
+            err=True,
+        )
+        raise typer.Exit(2)
 
     require("stoptimes.train", "train")
     from stoptimes.core.contracts.experiment import load_experiment

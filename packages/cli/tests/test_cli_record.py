@@ -69,17 +69,6 @@ _TU_BODY = json.dumps({"header": {"timestamp": 1000}, "entity": []}).encode()
 # ── stub back-compat (bare invocations stay "planned") ──────────────────────
 
 
-def test_record_start_bare_stays_planned():
-    """No --source -> same planned-stub contract test_cli.py checks for."""
-    result = runner.invoke(app, ["record", "start"])
-    assert result.exit_code == 2
-    assert "Phase 2" in result.output
-
-
-def test_record_status_bare_stays_planned():
-    result = runner.invoke(app, ["record", "status"])
-    assert result.exit_code == 2
-    assert "Phase 2" in result.output
 
 
 def test_record_status_help():

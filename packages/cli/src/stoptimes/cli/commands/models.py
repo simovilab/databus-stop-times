@@ -87,7 +87,12 @@ def models_card(
 ) -> None:
     """Show a model card (data, features, scores by horizon)."""
     if artifact_id is None:
-        planned("models card", "Phase 2 · track T3 (artifacts + cards)")
+        typer.secho(
+            "✗ `stoptimes models card` needs an artifact id; run `stoptimes models list`.",
+            fg="red",
+            err=True,
+        )
+        raise typer.Exit(2)
 
     require("stoptimes.models", "core")
     from stoptimes.core.contracts.artifact import artifact_dir

@@ -91,7 +91,12 @@ def record_start(
         # (packages/cli/tests/test_cli.py::test_record_start_is_planned)
         # invokes it with no args and expects the planned-command contract.
         # See docs/notes/p2-t5.md.
-        planned("record start", "Phase 2 · track T5 (recorder)")
+        typer.secho(
+            "✗ `stoptimes record start` needs --source <id>; see examples/agencies/.",
+            fg="red",
+            err=True,
+        )
+        raise typer.Exit(2)
 
     require("stoptimes.record", "record")
     import asyncio
@@ -163,7 +168,12 @@ def record_status(
     `--spool-dir` / `--status-dir`.
     """
     if source_id is None:
-        planned("record status", "Phase 2 · track T5 (recorder)")
+        typer.secho(
+            "✗ `stoptimes record status` needs --source <id>; see examples/agencies/.",
+            fg="red",
+            err=True,
+        )
+        raise typer.Exit(2)
 
     require("stoptimes.record", "record")
     import json as jsonlib
