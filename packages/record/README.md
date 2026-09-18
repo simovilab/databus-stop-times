@@ -26,13 +26,62 @@ docstring references the code that still supplies configuration at the call
 site (the legacy collector's Celery tasks), it says so explicitly — that code
 has not moved.
 
-## What's planned (Phase 2, track T5)
+## The standalone recorder (Phase 2, track T5)
 
-`recorder.py` is a placeholder for a standalone recorder: poll loop -> spool
--> hourly flush -> nightly compaction, with no Django/Celery dependency
-anywhere in the loop, plus `record start` / `record compact` / `record
-status` CLI commands (`record status` replacing the ops script
-`simovi-status`) and a Dockerfile. See `docs/PLAN.md` §6 (T5).
+`recorder.py` is an async poll loop over a `Source`'s realtime feeds
+(`stoptimes.core.contracts.source.Source`, JSON or protobuf, vehicle
+positions and/or trip updates), with no Django/Celery dependency anywhere in
+the loop:
+
+- one task per configured feed, each on its own jittered interval
+  (`http.py`: conditional GETs via ETag/If-Modified-Since, a body-hash
+  fallback for servers that don't support conditional requests, retry with
+  backoff on 5xx/timeouts);
+- parsed rows (`parsing.py`, `vp_records.py`, `tu_records.py`) are appended to
+  the existing local DuckDB spool (`storage/spool.py`, `storage/tu_spool.py`)
+  — a failed poll never touches the spool, so a transient outage can't lose
+  already-spooled data;
+- a periodic + final flush drains the spool to the existing Parquet staging
+  layout (`storage/spool_base.flush_spool_to_staging`), whose prefix is now
+  parameterized by source id (`storage/schema.staging_prefix`,
+  `storage/tu_schema.staging_prefix`) instead of hardcoded to `mbta` —
+  `staging_prefix("mbta")` still equals the original literal, so existing
+  archives are unaffected;
+- SIGINT/SIGTERM stop the loop cleanly: the current poll finishes, every spool
+  with pending rows gets a final flush, and the process exits non-zero only on
+  a real failure.
+
+### Running the recorder
+
+```bash
+uv run --no-sync stoptimes record start --source mbta --out ./data/archive
+uv run --no-sync stoptimes record start --source mbta --out s3://bucket/prefix --feeds vp
+uv run --no-sync stoptimes record start --source mbta --duration 60 --dry-run
+uv run --no-sync stoptimes record status --source mbta --json
+```
+
+`--source <id>` loads `<sources-dir>/<id>.yaml` (default:
+`$STOPTIMES_SOURCES` or `./examples/agencies`), tried first as the
+`contracts.source` YAML shape and falling back to the flat val-source shape
+(`contracts.adapters.source_from_val_yaml`) — see `docs/CONTRACTS.md` §1.
+`--out` overrides the source's configured archive with a local path or an
+`s3://bucket/prefix` URI. `record status` replaces SIMOVI's ops-only
+`simovi-status` script: spool row counts/sizes, the last status snapshot
+(`status.py`), and archive size for a local archive — no agency hostnames or
+paths are baked in; everything comes from `--source`/`--spool-dir`/
+`--status-dir`.
+
+### Docker
+
+```bash
+docker build -f packages/record/Dockerfile -t stoptimes-record .
+docker run --rm -v "$PWD/examples/agencies:/sources:ro" -v recorder-data:/data \
+  -e STOPTIMES_SOURCES=/sources \
+  stoptimes-record --source mbta --out /data/archive --spool-dir /data/spool
+```
+
+Non-root, uv-based, nothing agency-specific baked in — credentials and the
+chosen source are always passed at `docker run` time.
 
 ## Running compaction
 

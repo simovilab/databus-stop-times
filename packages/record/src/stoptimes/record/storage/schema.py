@@ -25,6 +25,28 @@ BASE_PREFIX = "feeds/mbta/vehicle_positions"
 PARTITION_COLUMNS = ("year", "month", "day", "route_id")
 COMPRESSION = "zstd"  # better ratio than snappy for cold S3 storage
 
+# --- Parameterized layout (Phase 2, T5) ------------------------------------
+# ``BASE_PREFIX`` above is frozen at "feeds/mbta/vehicle_positions" so
+# existing callers/tests that rely on the literal constant keep working
+# unchanged. New, agency-generic code (the recorder) should go through these
+# templates instead, which default to exactly today's MBTA layout.
+CURATED_PREFIX_TEMPLATE = "feeds/{source_id}/vehicle_positions"
+STAGING_PREFIX_TEMPLATE = "feeds/{source_id}/vehicle_positions_staging"
+
+
+def curated_prefix(source_id: str = "mbta", template: str = CURATED_PREFIX_TEMPLATE) -> str:
+    """Curated (post-compaction) VehiclePositions prefix for ``source_id``.
+
+    ``curated_prefix("mbta") == BASE_PREFIX`` -- existing archives keep
+    working unchanged.
+    """
+    return template.format(source_id=source_id)
+
+
+def staging_prefix(source_id: str = "mbta", template: str = STAGING_PREFIX_TEMPLATE) -> str:
+    """Hourly-flush staging prefix for ``source_id`` (the recorder's write target)."""
+    return template.format(source_id=source_id)
+
 # Columns persisted inside each Parquet file (mirrors the flat ingest model).
 # route_id + year/month/day are encoded in the Hive path, not duplicated here.
 DATA_COLUMNS = (
