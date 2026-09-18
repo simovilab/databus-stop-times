@@ -1,0 +1,35 @@
+{
+  "header": {"gtfs_realtime_version": "2.0", "timestamp": 1700000000},
+  "entity": [
+    {
+      "id": "1",
+      "trip_update": {
+        "trip": {"trip_id": "t1", "route_id": "r1", "direction_id": 0, "start_date": "20260101"},
+        "vehicle": {"id": "v1"},
+        "timestamp": 1700000010,
+        "stop_time_update": [
+          {
+            "stop_sequence": 3,
+            "stop_id": "s1",
+            "arrival": {"time": 1700000300, "delay": 45, "uncertainty": 30},
+            "departure": {"time": 1700000330, "delay": 45, "uncertainty": 30},
+            "schedule_relationship": "SCHEDULED"
+          },
+          {
+            "stop_sequence": 4,
+            "stop_id": "s2",
+            "arrival": {"time": 1700000500},
+            "schedule_relationship": "SCHEDULED"
+          }
+        ]
+      }
+    },
+    {
+      "id": "2",
+      "trip_update": {
+        "trip": {"trip_id": "t2", "schedule_relationship": "CANCELED"},
+        "stop_time_update": []
+      }
+    }
+  ]
+}
