@@ -83,8 +83,15 @@ def record_start(
     dry_run: bool = typer.Option(
         False, "--dry-run", help="Poll and parse but never write to the spool or archive."
     ),
+    json_output: bool = typer.Option(
+        False, "--json", help="Print the run summary as JSON instead of text."
+    ),
 ) -> None:
-    """Poll a Source's realtime feeds and spool them to the archive (standalone, no Django/Celery)."""
+    """Poll a Source's realtime feeds and spool them to the archive (standalone, no Django/Celery).
+
+    `--json`: ``{"stopped_reason": str, "stats": {feed_kind: {"polls", "written",
+    "skipped_unchanged", "errors"}}}``.
+    """
     if source_id is None:
         # Bare `record start` stays a stub message (docs/PLAN.md) rather than
         # a bare "missing option" error -- the shared CLI smoke test
@@ -138,6 +145,24 @@ def record_start(
         typer.secho(f"✗ record start failed: {exc}", fg="red", err=True)
         raise typer.Exit(1) from exc
 
+    if json_output:
+        import json as jsonlib
+
+        payload = {
+            "stopped_reason": result.stopped_reason,
+            "stats": {
+                str(kind): {
+                    "polls": stats.polls,
+                    "written": stats.written,
+                    "skipped_unchanged": stats.skipped_unchanged,
+                    "errors": stats.errors,
+                }
+                for kind, stats in result.stats.items()
+            },
+        }
+        typer.echo(jsonlib.dumps(payload))
+        return
+
     typer.echo(f"stopped ({result.stopped_reason})")
     for kind, stats in result.stats.items():
         typer.echo(
@@ -166,6 +191,10 @@ def record_status(
     Generic replacement for SIMOVI's ops-only `simovi-status` script — no
     agency hostnames or paths baked in; everything comes from `--source` /
     `--spool-dir` / `--status-dir`.
+
+    `--json`: ``{"source", "vehicle_positions_spool", "trip_updates_spool",
+    "last_status", "archive_bytes"}``; the two spool keys are each
+    ``{"rows", "oldest_ts", "newest_ts", "bytes"}`` or null if unstarted.
     """
     if source_id is None:
         typer.secho(

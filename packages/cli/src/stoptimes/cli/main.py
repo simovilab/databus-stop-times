@@ -20,6 +20,11 @@ from stoptimes.cli.commands import data, diagnose, models, record, serve, train,
 app = typer.Typer(
     help="stoptimes — train, serve and validate transit arrival-time models on GTFS data.",
     no_args_is_help=True,
+    # Plain click-style help instead of typer's rich-rendered help: rich's
+    # markdown help formatter pulls in `rich.markdown` -> `markdown_it`
+    # (~150-200ms) on every `--help`, which alone blows the <300ms startup
+    # budget (docs/PLAN.md §7 U2). See docs/notes/p3-u2.md.
+    rich_markup_mode=None,
 )
 
 app.add_typer(data.app, name="data")

@@ -12,7 +12,7 @@ import json as _json
 from pathlib import Path
 
 import typer
-from stoptimes.cli._util import planned
+from stoptimes.cli._util import print_table
 
 app = typer.Typer(help="Load and inspect GTFS static + realtime data.", no_args_is_help=True)
 
@@ -68,7 +68,10 @@ def data_add(
     ),
     json_output: bool = typer.Option(False, "--json", help="Print the registered entry as JSON."),
 ) -> None:
-    """Register GTFS static / realtime / AVL sources (protobuf, JSON, parquet, CSV)."""
+    """Register GTFS static / realtime / AVL sources (protobuf, JSON, parquet, CSV).
+
+    `--json`: the registered `DatasetEntry` as a dict (`stoptimes.core.catalog`).
+    """
     from stoptimes.core import readers as readers_module
     from stoptimes.core.catalog import Catalog, DatasetEntry, DatasetExistsError, DatasetKind
     from stoptimes.core.contracts.data import ObservationKind
@@ -179,7 +182,10 @@ def data_add(
 
 @app.command("list")
 def data_list(json_output: bool = typer.Option(False, "--json")) -> None:
-    """List registered datasets."""
+    """List registered datasets.
+
+    `--json`: a list of `DatasetEntry` dicts (`stoptimes.core.catalog`), one per registered dataset.
+    """
     from stoptimes.core.catalog import Catalog
 
     entries = Catalog().list()
@@ -188,23 +194,18 @@ def data_list(json_output: bool = typer.Option(False, "--json")) -> None:
         typer.echo(_json.dumps([e.model_dump(mode="json") for e in entries], indent=2))
         return
 
-    from rich.console import Console
-    from rich.table import Table
-
-    table = Table(title="stoptimes datasets")
-    for column in ("name", "source", "kind", "rows", "date range", "location"):
-        table.add_column(column)
-    for entry in entries:
-        date_range = f"{entry.date_start or '—'} .. {entry.date_end or '—'}"
-        table.add_row(
+    rows = [
+        [
             entry.name,
             entry.source_id or "—",
             entry.kind.value,
             str(entry.row_count) if entry.row_count is not None else "—",
-            date_range,
+            f"{entry.date_start or '—'} .. {entry.date_end or '—'}",
             entry.location,
-        )
-    Console().print(table)
+        ]
+        for entry in entries
+    ]
+    print_table("stoptimes datasets", ["name", "source", "kind", "rows", "date range", "location"], rows)
 
 
 @app.command("inspect")
@@ -218,7 +219,12 @@ def data_inspect(
     ),
     json_output: bool = typer.Option(False, "--json"),
 ) -> None:
-    """Summarize coverage of registered data (trips matched, arrivals present, gaps)."""
+    """Summarize coverage of registered data (trips matched, arrivals present, gaps).
+
+    `--json`: a flat `{"kind": str, ...}` dict; the remaining keys depend on
+    `kind` (`static`/`arrivals`/an observation kind) -- see
+    `stoptimes.core.catalog.inspect.build_coverage_report`.
+    """
     from stoptimes.core import readers as readers_module
     from stoptimes.core.catalog import Catalog
     from stoptimes.core.catalog.inspect import build_coverage_report
@@ -284,15 +290,8 @@ def data_inspect(
         typer.echo(_json.dumps(report, indent=2, default=str))
         return
 
-    from rich.console import Console
-    from rich.table import Table
-
-    table = Table(title=f"coverage: {name}")
-    table.add_column("metric")
-    table.add_column("value")
-    for key, value in report.items():
-        table.add_row(key, str(value))
-    Console().print(table)
+    rows = [[key, str(value)] for key, value in report.items()]
+    print_table(f"coverage: {name}", ["metric", "value"], rows)
 
 
 @app.command("remove")
@@ -300,7 +299,10 @@ def data_remove(
     name: str = typer.Argument(..., help="A dataset name registered with `data add`."),
     json_output: bool = typer.Option(False, "--json"),
 ) -> None:
-    """Remove a dataset from the catalog (does not delete the underlying file)."""
+    """Remove a dataset from the catalog (does not delete the underlying file).
+
+    `--json`: ``{"name": str, "removed": bool}``.
+    """
     from stoptimes.core.catalog import Catalog
 
     removed = Catalog().remove(name)
@@ -339,6 +341,8 @@ def data_arrivals(
 
     The training target and the validation ground truth: observations in,
     one `Arrival` row per (trip, service day, stop) out.
+
+    `--json`: ``{"source", "observations", "arrivals", "by_method", "static_tables", "out", "registered"}``.
     """
     from stoptimes.core.arrivals import derive_arrivals
     from stoptimes.core.catalog import Catalog, DatasetEntry, DatasetExistsError, DatasetKind
@@ -432,6 +436,9 @@ def data_frame(
     """Build the training frame: observations + arrivals + static GTFS -> one
     row per (vehicle position, upcoming stop), ready for `train run`
     (via the feature registry, which adds temporal features on top).
+
+    `--json`: ``{"source", "observations", "arrivals", "rows", "labeled_rows",
+    "static_tables", "out", "registered"}``.
     """
     from stoptimes.core.catalog import Catalog, DatasetEntry, DatasetExistsError, DatasetKind
     from stoptimes.train.frame import FrameParams, build_training_frame

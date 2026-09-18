@@ -34,10 +34,17 @@ def train_run(
     overwrite: bool = typer.Option(
         False, "--overwrite", help="Replace an existing artifact with the same id instead of refusing."
     ),
+    json_output: bool = typer.Option(
+        False, "--json", help="Print the trained artifact's id/family/metrics as JSON."
+    ),
 ) -> None:
     """Train from an experiment.yaml: resolve data, build features, split, fit
     the model plus its baselines, score by horizon, and write an artifact +
-    card. `--dry-run` resolves and prints the plan without touching data."""
+    card. `--dry-run` resolves and prints the plan without touching data.
+
+    `--json` (ignored with `--dry-run`, which always prints the plan as JSON):
+    ``{"artifact_id": str, "family": str, "metrics": {...}}``.
+    """
     if experiment_path is None:
         typer.secho(
             "✗ `stoptimes train run` needs an experiment file; see examples/experiments/.",
@@ -66,6 +73,10 @@ def train_run(
     except ArtifactExistsError as exc:
         typer.secho(f"✗ {exc}", fg="red", err=True)
         raise typer.Exit(1) from exc
+
+    if json_output:
+        typer.echo(json.dumps({"artifact_id": meta.artifact_id, "family": meta.family, "metrics": meta.metrics}))
+        return
 
     mae = meta.metrics.get("test_mae_seconds")
     mae_str = f"{mae:.1f}s" if isinstance(mae, (int, float)) else "n/a"
