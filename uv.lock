@@ -1808,15 +1808,26 @@ dependencies = [
     { name = "pyyaml" },
 ]
 
+[package.optional-dependencies]
+parquet = [
+    { name = "pyarrow" },
+]
+pb = [
+    { name = "gtfs-realtime-bindings" },
+]
+
 [package.metadata]
 requires-dist = [
+    { name = "gtfs-realtime-bindings", marker = "extra == 'pb'", specifier = ">=1.0.0" },
     { name = "holidays", specifier = ">=0.40" },
     { name = "httpx", specifier = ">=0.27" },
     { name = "numpy", specifier = ">=1.26" },
     { name = "pandas", specifier = ">=2.2" },
+    { name = "pyarrow", marker = "extra == 'parquet'", specifier = ">=16.0" },
     { name = "pydantic", specifier = ">=2.7" },
     { name = "pyyaml", specifier = ">=6.0" },
 ]
+provides-extras = ["pb", "parquet"]
 
 [[package]]
 name = "stoptimes-models"
@@ -1873,7 +1884,7 @@ name = "stoptimes-serve"
 version = "0.1.0"
 source = { editable = "packages/serve" }
 dependencies = [
-    { name = "stoptimes-core" },
+    { name = "stoptimes-core", extra = ["pb"] },
     { name = "stoptimes-models" },
 ]
 
@@ -1884,7 +1895,7 @@ xgboost = [
 
 [package.metadata]
 requires-dist = [
-    { name = "stoptimes-core", editable = "packages/core" },
+    { name = "stoptimes-core", extras = ["pb"], editable = "packages/core" },
     { name = "stoptimes-models", editable = "packages/models" },
     { name = "stoptimes-models", extras = ["xgboost"], marker = "extra == 'xgboost'", editable = "packages/models" },
 ]
@@ -1950,7 +1961,7 @@ dependencies = [
     { name = "rich" },
     { name = "scipy", version = "1.17.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.12'" },
     { name = "scipy", version = "1.18.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
-    { name = "stoptimes-core" },
+    { name = "stoptimes-core", extra = ["parquet", "pb"] },
     { name = "textual" },
     { name = "typer" },
     { name = "websockets" },
@@ -1982,7 +1993,7 @@ requires-dist = [
     { name = "rich", specifier = ">=13.7" },
     { name = "s3fs", marker = "extra == 's3'", specifier = ">=2024.6" },
     { name = "scipy", specifier = ">=1.13" },
-    { name = "stoptimes-core", editable = "packages/core" },
+    { name = "stoptimes-core", extras = ["pb", "parquet"], editable = "packages/core" },
     { name = "stoptimes-serve", extras = ["xgboost"], marker = "extra == 'models'", editable = "packages/serve" },
     { name = "textual", specifier = ">=0.85" },
     { name = "typer", specifier = ">=0.12" },

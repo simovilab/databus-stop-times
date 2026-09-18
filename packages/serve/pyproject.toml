@@ -6,7 +6,7 @@ readme = "README.md"
 requires-python = ">=3.11"
 license = { text = "MIT" }
 dependencies = [
-    "stoptimes-core",
+    "stoptimes-core[pb]",
     "stoptimes-models",
 ]
 

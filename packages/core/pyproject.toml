@@ -14,6 +14,12 @@ dependencies = [
     "holidays>=0.40",
 ]
 
+[project.optional-dependencies]
+# GTFS-RT protobuf feeds (JSON feeds need nothing extra).
+pb = ["gtfs-realtime-bindings>=1.0.0"]
+# Reading and writing archive parquet.
+parquet = ["pyarrow>=16.0"]
+
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"

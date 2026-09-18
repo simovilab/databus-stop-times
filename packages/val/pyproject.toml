@@ -6,7 +6,7 @@ readme = "README.md"
 requires-python = ">=3.11"
 license = { text = "MIT" }
 dependencies = [
-    "stoptimes-core",
+    "stoptimes-core[pb,parquet]",
     "httpx>=0.27",
     "pydantic>=2.7",
     "pandas>=2.2",
