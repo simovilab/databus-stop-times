@@ -84,9 +84,32 @@ def train_run(
 
 
 @app.command("ui")
-def train_ui() -> None:
-    """Interactive experiment builder (TUI). Writes experiment.yaml."""
-    planned("train ui", "Phase 3 · track U1 (experiment TUI)")
+def train_ui(
+    experiment_path: Optional[Path] = typer.Argument(
+        None,
+        help="experiment.yaml to open for editing, or where to save a new one. "
+        "Omitted: starts a blank experiment; the save path is entered inside the TUI.",
+    ),
+) -> None:
+    """Interactive experiment builder (TUI): choose target, model family,
+    features, hyperparameters and split, then write (or edit) an
+    experiment.yaml. Never trains anything itself -- run the file it writes
+    with `stoptimes train run <file>`."""
+    require("stoptimes.train", "train")
+
+    import importlib.util
+
+    if importlib.util.find_spec("textual") is None:
+        typer.secho("✗ `stoptimes train ui` needs Textual, which isn't installed.", fg="red", err=True)
+        typer.echo(
+            "  Install it with:  uv sync --extra tui   (or pip install 'stoptimes-train[tui]')",
+            err=True,
+        )
+        raise typer.Exit(1)
+
+    from stoptimes.train.tui.app import run_app
+
+    run_app(experiment_path)
 
 
 @app.command("legacy-all", context_settings=PASSTHROUGH)
