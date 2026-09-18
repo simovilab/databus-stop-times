@@ -9,12 +9,23 @@ installed — same rule `data.py` follows.
 
 A feed with problems is a *successful* run reporting problems: this command
 exits non-zero only on a usage error (a location that can't be read at all,
-an unknown format). `--json` prints the `DiagnosticReport` verbatim so the
-report is data a caller can consume, not just prose this command prints.
+an unknown format). `--json` prints `{"window": ..., **DiagnosticReport}` so
+the report is data a caller can consume, not just prose this command prints.
 
 This module is wired into `stoptimes.cli.main` as a single top-level
 command (`app.command("diagnose")(diagnose.diagnose)`), not a `typer.Typer`
 sub-app — `diagnose` has no sub-commands.
+
+Large-archive note: `--from`/`--to` (same spelling as `val replay`) bound an
+`archive_parquet` read to the files whose Hive partition falls in that
+window — `stoptimes.core.readers.read_archive_parquet` prunes the file
+*list* before opening anything, so a bounded window really does mean fewer
+files read, not just fewer rows kept after the fact. Neither bound narrows
+a live URL feed (there's only ever one snapshot to read) or the *columns*
+read from each matched parquet file — `read_observations`/
+`read_archive_parquet` have no column-projection parameter today (see
+docs/notes/p3-u3.md); an unbounded `--vehicle-positions`/`--trip-updates`
+archive read still loads every matched file's full row set into memory.
 """
 
 from __future__ import annotations
@@ -72,6 +83,8 @@ def _load_observation_frame(
     feed_kind,
     src,
     source_id: str,
+    start_date: str | None,
+    end_date: str | None,
 ):
     """Read one Observation frame for `diagnose_feed`.
 
@@ -80,6 +93,12 @@ def _load_observation_frame(
     matching `RealtimeFeed` URL is used. Returns `None` (not an error) when
     neither is available — `diagnose_feed` reports that as a finding, not a
     crash, per docs/PLAN.md's "run on a feed with missing pieces" requirement.
+
+    `start_date`/`end_date` are forwarded to the reader either way;
+    `read_archive_parquet` is the only reader that acts on them (pruning the
+    file list before opening anything — see the module docstring's
+    large-archive note), so passing them for a live/JSON/CSV read is a
+    harmless no-op there.
     """
     from stoptimes.core import readers as readers_module
     from stoptimes.core.catalog import Catalog
@@ -95,10 +114,26 @@ def _load_observation_frame(
             mapping_obj = None
             if reader_format == "avl_csv" and extra.get("mapping"):
                 mapping_obj = readers_module.ColumnMapping(**extra["mapping"])
+            if reader_format == "archive_parquet" and start_date is None and end_date is None:
+                typer.secho(
+                    f"⚠ reading all of {loc!r} with no --from/--to bound — this loads every "
+                    "matched parquet file's full row set into memory. Pass --from/--to to scan "
+                    "only part of a large archive.",
+                    fg="yellow",
+                    err=True,
+                )
             return readers_module.read_observations(
-                loc, format=reader_format, kind=kind, source_id=source_id, mapping=mapping_obj
+                loc,
+                format=reader_format,
+                kind=kind,
+                source_id=source_id,
+                mapping=mapping_obj,
+                start_date=start_date,
+                end_date=end_date,
             )
-        return readers_module.read_observations_for_source(src, feed_kind)
+        return readers_module.read_observations_for_source(
+            src, feed_kind, start_date=start_date, end_date=end_date
+        )
     except (ValueError, ImportError, OSError) as exc:
         label = location or f"the {source_id!r} agency's feed"
         typer.secho(f"✗ could not read observations from {label!r}: {exc}", fg="red", err=True)
@@ -109,13 +144,17 @@ _SEVERITY_COLOR = {"blocker": "red", "degraded": "yellow", "info": "cyan"}
 _SEVERITY_ORDER = {"blocker": 0, "degraded": 1, "info": 2}
 
 
-def _render(report) -> None:
+def _render(report, window: dict[str, str | None]) -> None:
     from rich.console import Console
     from rich.table import Table
 
     console = Console()
     color = _SEVERITY_COLOR[report.verdict_severity.value]
     console.print(f"[bold {color}]{report.verdict}[/bold {color}]")
+    console.print(
+        f"window: {window['from'] or '(start)'} .. {window['to'] or '(end)'}"
+        " (applies to archive_parquet reads only — see --help)"
+    )
     console.print(
         f"static: {'present (' + ', '.join(report.static_tables) + ')' if report.static_present else 'MISSING'}"
         f"  ·  vehicle positions: {report.vp_rows} row(s)"
@@ -170,6 +209,19 @@ def diagnose(
     ),
     trip_updates_format: str | None = typer.Option(
         None, "--trip-updates-format", help=f"One of {_FORMAT_CHOICES} (auto-detected if omitted)."
+    ),
+    from_: str | None = typer.Option(
+        None,
+        "--from",
+        help="Window start (YYYY-MM-DD or full ISO 8601, day precision) — same spelling as `val "
+        "replay`. Bounds an archive_parquet read to matching partitions before any file is "
+        "opened; a live feed URL always reads its one current snapshot regardless. Recorded in "
+        "the output so it's clear what was and wasn't examined.",
+    ),
+    to: str | None = typer.Option(
+        None,
+        "--to",
+        help="Window end (YYYY-MM-DD or full ISO 8601, day precision). See --from.",
     ),
     source: str | None = typer.Option(
         None,
@@ -228,6 +280,8 @@ def diagnose(
         feed_kind=FeedKind.VEHICLE_POSITIONS,
         src=src,
         source_id=source_id,
+        start_date=from_,
+        end_date=to,
     )
     tu_df = _load_observation_frame(
         location=trip_updates,
@@ -236,6 +290,8 @@ def diagnose(
         feed_kind=FeedKind.TRIP_UPDATES,
         src=src,
         source_id=source_id,
+        start_date=from_,
+        end_date=to,
     )
 
     params = DiagnoseParams(
@@ -248,7 +304,8 @@ def diagnose(
         vp_df=vp_df, tu_df=tu_df, static_loader=static_loader, static_feed=static_feed, params=params
     )
 
+    window = {"from": from_, "to": to}
     if json_output:
-        typer.echo(_json.dumps(report.model_dump(mode="json"), indent=2))
+        typer.echo(_json.dumps({"window": window, **report.model_dump(mode="json")}, indent=2))
         return
-    _render(report)
+    _render(report, window)
