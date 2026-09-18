@@ -1,6 +1,7 @@
 # stoptimes — implementation plan
 
-Status: **Phase 2 complete — gate passed (2026-09-18)** · next: Phase 3 · nothing pushed · branch `feat/stoptimes-scaffold` · last updated 2026-09-16
+Status: **Phase 2 complete — gate passed (2026-09-18)** · next: Phase 3, scope revised 2026-09-18, awaiting the user's go ·
+branch `feat/stoptimes-scaffold`, not pushed (the account has read-only access to the remote) · last updated 2026-09-18
 
 This is the working plan for turning SIMOVI's ETA research code (`gtfs-eta`) and its
 validation tool (`etaval`) into **stoptimes**: a general toolkit that lets anyone with
@@ -22,7 +23,7 @@ checkable definition of done.
 | Record | Archive a live GTFS-RT feed, compacted, local or S3 | `stoptimes-record` |
 | Arrivals | Actual stop arrivals derived from vehicle positions (map-matching) | `stoptimes-core` |
 | Train | Pick target, model, features, hyperparameters (TUI or YAML); get a versioned artifact + model card | `stoptimes-train`, `stoptimes-models` |
-| Serve | Spec-valid TripUpdates from a pretrained, trained-here or bring-your-own model; overridable pipeline stages | `stoptimes-serve` |
+| Serve | A prediction library (load a model, compute its inputs, produce stop time updates) with overridable pipeline stages, plus a standalone publisher that emits spec-valid TripUpdates. Anyone who already owns a feed builder — databus does — calls the library and skips the publisher; see §7.2 | `stoptimes-serve` |
 | Validate | Horizon-based scoring against published-feed ground truth, live or replayed, for any TripUpdates source | `stoptimes-val` |
 | Diagnose | Feed quality report before training | `stoptimes-core` |
 
@@ -75,7 +76,7 @@ Namespace: every member ships `src/stoptimes/<part>`; there is **no** `stoptimes
 | **0 Scaffold** | Whole project skeleton; all existing code in its final home, tests at baseline | 4 parallel fix-up tracks | Test parity table (§4.4) |
 | **1 Contracts** | Freeze the interfaces every later track builds on | 1 main track + 2 small parallel | User signs off `docs/CONTRACTS.md` |
 | **2 Capabilities** | Data, arrivals, train, serve, record, val working through contracts | 6 parallel tracks | End-to-end smoke on MBTA sample |
-| **3 Experience** | TUI, diagnostics, Python API, docs | 5 parallel tracks | Quickstart works from a clean machine |
+| **3 Experience** | TUI, diagnostics, serving on the pipeline, registry lifecycle, Python API, docs | 7 parallel tracks | Quickstart works from a clean machine |
 | **4 Generality + cutover** | bUCR + MBTA with zero special cases; SIMOVI production on stoptimes | Sequential, user-approved steps | databus + VPS on stoptimes; old repos frozen |
 | **5 Ecosystem** | Model zoo, benchmark + leaderboard, PyPI | Parallel, optional | — |
 
@@ -256,25 +257,30 @@ Bugs the gate caught (all fixed with tests): val couldn't open an archive whose 
 recorder looked empty; `get_config()` snapshotted the environment at first use, writing a test's catalog into the
 working directory.
 
-Carried into Phase 3:
+Carried into Phase 3 (the first two are now **U6**, the fifth is now **U7**):
 - `serve.estimator` was left on its pre-Phase-2 code rather than rebuilt on the pipeline (it is what databus calls
-  in production; unifying needs T1's readers + T2's matcher — do it before G2).
+  in production; unifying needs T1's readers + T2's matcher — do it before G2b).
 - The default `match` stage handles trip_update observations only; vehicle-position map-matching in serving should
   call `core.arrivals`/`core.segments` (the gate's pipeline supplies distance features by hand).
 - bUCR trip inference (~1240 lines, ~20 tuned thresholds) is still agency-specific — Phase 4 G1, deserves its own track.
 - `record status` reports local archive size only; the Dockerfile has never been built.
-- `models list --json` shape and `models promote`'s profile write are unspecified in CONTRACTS.md (U2/U5 to document).
+- `models list --json` shape and `models promote`'s profile write are unspecified in CONTRACTS.md (now **U7**).
 - Contract wording: an `Arrival` is keyed by (trip, service day, **stop_sequence**) — a loop route visits a stop twice
   and both visits are real. CONTRACTS.md §2 says "trip+stop+day"; T2 implemented the sequence key, which is correct.
 - s3:// reads need `fsspec`/`s3fs`, not yet a declared extra; the s3 archive path is untested.
 
-**Gate — end-to-end smoke** (`tests/e2e/test_mbta_smoke.py`, orchestrator-owned): committed MBTA sample →
-`data add` → `data arrivals` → `train run` → `serve --sink file` → `val replay` scores the served feed with
-baselines present. Runs in CI in < 5 min.
+**Gate — end-to-end smoke** (shipped as `tests/e2e/test_end_to_end.py`, orchestrator-owned; a synthetic agency built
+in `tmp_path` rather than a committed MBTA sample, so it needs no fixture data and no network): `data add` →
+`data arrivals` → `data frame` → `train run` → `serve --once` through a user pipeline → `val replay`. In CI.
 
 ---
 
-## 7. Phase 3 — Experience (5 parallel tracks)
+## 7. Phase 3 — Experience (7 parallel tracks)
+
+Scope reviewed with the user 2026-09-18 after walking through the user stories (§7.1) and the
+databus integration question (§7.2). U6 and U7 are new; they were "carried into Phase 3" debt
+and are now prerequisites, because G2 step two depends on them and because discovering either
+during the cutover is the worst possible time.
 
 | Track | Delivers |
 |---|---|
@@ -282,9 +288,59 @@ baselines present. Runs in CI in < 5 min.
 | **U2 CLI polish** | Startup < 300 ms for `--help`; consistent tables; `--json` output everywhere; install hints for every optional part |
 | **U3 Diagnose** | `diagnose` report: unmatched trip_ids, missing `shape_dist_traveled`, VP gaps, stale timestamps, schedule/realtime mismatch; reused by `data inspect` |
 | **U4 Python API** | `stoptimes.core.api` (re-exported as `stoptimes`) with the same verbs as the CLI; example notebooks |
-| **U5 Docs** | mkdocs site: quickstart ("I have a GTFS zip and a realtime URL"), concepts, contracts, CLI reference, SIMOVI case study |
+| **U5 Docs** | mkdocs site: quickstart ("I have a GTFS zip and a realtime URL"), concepts, contracts, CLI reference, SIMOVI case study; **serving positioned per §7.2** |
+| **U6 Serving on the pipeline** | Rebuild `serve.estimator` on `serve.pipeline` (it is what databus calls today); real vehicle-position map-matching in the default `match` stage via `core.arrivals`/`core.segments`; the legacy estimator becomes a thin compatibility shim over the pipeline, not a second implementation |
+| **U7 Registry lifecycle** | Refuse (or require an explicit override) to load an artifact whose library versions have drifted — `version_mismatches` exists and nothing acts on it; a tested `models promote` / rollback workflow, documented in CONTRACTS.md along with the `models list --json` shape |
 
 **Gate:** quickstart executed from a clean machine by an agent that has not seen the repo.
+U6 additionally must keep the end-to-end gate green **without** the hand-supplied distance
+features in the test's pipeline — that removal is the proof map-matching actually landed.
+
+### 7.1 User stories (the acceptance list)
+
+Written 2026-09-18 to describe the whole toolkit from outside. Phase 3 is judged by whether a
+stranger can do these without asking us.
+
+**Newcomer** — diagnose whether a feed can support ETA modelling at all before investing weeks
+in it; record a live feed unattended for weeks with self-compaction and an honest answer to "how
+much data do I have"; get from archive to trained model through a guided flow rather than a
+hand-written config; be told plainly when the model is *not* better than the printed schedule.
+
+**Modeler** — describe an experiment in one file and reproduce it later on new data; compare
+families over one dataset with errors broken out by prediction horizon; plug in a custom model
+through a small interface without forking; bring a prepared dataset that never came from GTFS-RT;
+have every artifact carry enough provenance to identify it six months later.
+
+**Operator** — publish spec-valid TripUpdates continuously so existing consumers need no change;
+override one pipeline stage without rewriting the server; get per-route/per-trip model choice
+automatically with a manual pin available; have a stale model refused rather than loaded quietly
+(**U7**); install serving without training dependencies; promote and roll back quickly (**U7**).
+
+**Skeptic** — score *any* TripUpdates feed against what happened without access to how it was
+produced; replay one recorded day across several prediction sources over identical trips; break
+error down by horizon, route and time of day; watch a live feed's accuracy degrade.
+
+**SIMOVI** — bUCR and MBTA as configuration only (Phase 4 G1); databus production moved with the
+old repos frozen and a way back (G2); bUCR's trip-less raw AVL handled by a configurable
+inference step rather than 1,240 hand-tuned lines.
+
+### 7.2 What "serving" means, and how databus uses it
+
+Two different things get called serving, and the plan must not blur them.
+
+The **prediction library** — load a model, compute its inputs, produce stop time updates — is
+load-bearing regardless: databus calls exactly that, and `val` scores through the same seam.
+
+The **standalone publisher** (`stoptimes serve`: poll on a timer, predict, publish a feed) is
+what databus does *not* need, since databus owns its own feed. It stays, because an agency
+without a databus would otherwise be left with a model file and nowhere to put it, and because
+the loop around the prediction code is thin. But the docs must not imply it solves the
+operations problem of running a public realtime feed: it ships as the straightforward path for
+a small agency and the way to watch your own model work end to end, while anyone with real
+infrastructure calls the library from their own publisher. **U5 writes it that way.**
+
+databus is the first proof that seam is in the right place: it takes the prediction and skips
+the loop cleanly. See G2 for the two-step cutover that follows from this.
 
 ---
 
@@ -293,8 +349,21 @@ baselines present. Runs in CI in < 5 min.
 Each step touching production needs the user's explicit go.
 
 - **G1 Generality:** bUCR and MBTA both run end to end with configs only; `grep -ri bucr packages/` is empty (tests/fixtures excepted).
-- **G2 databus:** databus consumes `stoptimes-serve` (pinned) instead of the `backend/gtfs-eta` symlink; PR to `simovilab/databus`
-  (currently imports `gtfs_eta.eta_service.estimator` from `runs/domain/progression/stop_times.py`).
+- **G2 databus (two deploys, not one):** databus keeps building its own feed; only the prediction call moves.
+  - **G2a — drop-in.** `runs/domain/progression/stop_times.py` imports `estimate_stop_times` from `stoptimes.serve`
+    instead of `gtfs_eta.eta_service.estimator` (same signature, including the `shape_distance_to_stop` hook databus
+    relies on); the `backend/gtfs-eta` symlink becomes a pinned `stoptimes` dependency; `ETA_*` env vars become
+    `STOPTIMES_*` (old names still read, deprecated). Nothing else changes — progression, the Redis
+    `stop_time_updates` projection and `schedule_engine`'s `build_trip_updates` are untouched. Deliberately a
+    one-line-import cutover so rollback is a revert.
+  - **G2b — pipeline.** Once G2a is proven live, databus supplies a pipeline overriding `ingest` (its own vehicles,
+    no polling) and `publish` (write the Redis projection), inheriting `match`/`features`/`predict`/`postprocess`.
+    `build_trip_updates` still untouched. This is what kills the duplicated feature computation (today training and
+    serving agree only by inspection), makes bUCR's loop-back-safe shape distance a declared `match` override rather
+    than logic buried in progression, and lets a newly trained route-level model be picked up by the selection policy
+    with no databus deploy. Requires **U6**.
+  - Before either: a thin databus-facing adapter tested against a recorded bUCR day, so the cutover is verified
+    off-VPS first.
 - **G3 Collector:** VPS collector moves to `stoptimes record`. Production still runs from
   `~/git/gtfs-django/eta_prediction/gtfs-rt-pipeline` with uncommitted changes; confirm with
   `docker inspect … working_dir`, back up `.env`, run side by side before switching.
