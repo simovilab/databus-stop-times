@@ -1,5 +1,5 @@
 <script setup lang="ts">
-useHead({ title: 'telemetry – etaval' })
+useHead({ title: 'telemetry – stoptimes val' })
 
 interface PerRunFeed {
   last_poll_age_s: number

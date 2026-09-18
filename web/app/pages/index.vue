@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import type { Source } from '~/types/api'
 
-useHead({ title: 'etaval:// console' })
+useHead({ title: 'stoptimes val:// console' })
 
 const api = useApi()
 const router = useRouter()
@@ -42,7 +42,7 @@ onMounted(async () => {
     if (srcs.length > 0) selectedSource.value = srcs[0]!.name
     selectedPredictors.value = [...preds]
   } catch {
-    loadError.value = 'Could not reach the etaval API. Is the backend running on port 8010?'
+    loadError.value = 'Could not reach the stoptimes val API. Is the backend running on port 8010?'
   }
 })
 

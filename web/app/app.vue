@@ -42,7 +42,7 @@ const healthLabel = computed(() => {
       <header class="sticky top-0 z-10 border-b border-line bg-panel">
         <div class="flex items-center h-10 px-3 gap-4">
           <NuxtLink to="/" class="text-bright font-bold tracking-wide text-[13px] shrink-0">
-            etaval<span class="text-dim">://</span>
+            stoptimes val<span class="text-dim">://</span>
           </NuxtLink>
           <nav class="flex h-full">
             <NuxtLink to="/" class="nav-link" active-class="active" exact> Console </NuxtLink>

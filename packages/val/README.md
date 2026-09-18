@@ -1,4 +1,4 @@
-# stoptimes val (etaval) — ETA Prediction Validation Tool
+# stoptimes val — ETA Prediction Validation Tool
 
 `stoptimes val` (module `stoptimes.val`, formerly the standalone `etaval` tool)
 measures **how good transit arrival predictions are**. For a live trip it collects
@@ -7,9 +7,15 @@ from a built-in baseline model), independently detects when the vehicle actually
 reaches each stop, and scores the predictions against that ground truth — with
 emphasis on **how error evolves with prediction horizon**.
 
-It is a **fully standalone tool**. It reads only **published GTFS-RT JSON feeds**
-plus the GTFS static `.zip`, exactly as any agency serves them. Adding an agency is
-just adding a YAML source config.
+It is a **fully standalone tool** that validates *any* GTFS-RT TripUpdates
+source — a shipped agency profile, an ad hoc third-party feed URL, a trained
+`stoptimes` artifact, or your own serving pipeline (see "Predictors" and
+"Validating any TripUpdates source" below) — against ground truth derived
+from published feeds, live or replayed from an archive. It reads **GTFS-RT
+VehiclePositions/TripUpdates as JSON or protobuf** (auto-detected per feed;
+see "Feed formats") plus the GTFS static `.zip`, exactly as any agency serves
+them. Adding an agency is just adding a YAML source config — nothing here is
+agency-specific code.
 
 ## Status
 
@@ -31,12 +37,23 @@ toolkit; see `docs/MIGRATION_MAP.md`), `stoptimes val` ships:
 
 Three pluggable seams are the design; everything else is plumbing:
 
-- **`Predictor`** — produces arrival predictions (`gtfsrt`, `baseline:constant_speed`,
-  and `gtfs_eta:{historical_mean,polyreg_distance,polyreg_time,xgboost}` — trained
-  models from `stoptimes-models`/`stoptimes-serve`, see below). A predictor opts into receiving
-  vehicle position history by declaring `accepts_position_history = True` (see
-  `ConstantSpeedPredictor`); the engine dispatches on that attribute rather than
-  inspecting the `predict` signature.
+- **`Predictor`** — produces arrival predictions. Built in: `gtfsrt` (replays
+  whatever a feed publishes), `baseline:{constant_speed,schedule}`,
+  `stoptimes:{historical_mean,polyreg_distance,polyreg_time,xgboost}` (trained
+  models from `stoptimes-models`/`stoptimes-serve`, see below). Dynamic:
+  `stoptimes:<artifact_id-or-scope>` (any artifact in a
+  `core.contracts.artifact` registry, by exact id or by scope — e.g.
+  `stoptimes:mbta` picks the best-scoped artifact per trip via
+  `core.contracts.selection`) and `pipeline:<file.py>` (score your own
+  `stoptimes.serve.pipeline` — see "Bring your own pipeline" below).
+  `gtfs_eta:{historical_mean,polyreg_distance,polyreg_time,xgboost}` still
+  work as **deprecated aliases** of the matching `stoptimes:*` id (a
+  `DeprecationWarning` is emitted; existing run data/scripts keep working
+  unchanged — `gtfs_eta:ewma` was retired upstream and was never re-added).
+  A predictor opts into receiving vehicle position history by declaring
+  `accepts_position_history = True` (see `ConstantSpeedPredictor`); the
+  engine dispatches on that attribute rather than inspecting the `predict`
+  signature.
 - **`GroundTruthDetector`** — detects actual arrivals (`shape_distance` default,
   `position_radius`, `stop_status`).
 - **`Storage`** — persists samples / arrivals / results (SQLite, Parquet export).
@@ -88,6 +105,48 @@ ask every `Predictor` for ETAs to upcoming stops → run every `GroundTruthDetec
 (fires `ActualArrival` when a stop is reached) → `Scorer` joins samples to actuals
 and emits `ValidationResult`s → persist all three.
 
+### Feed formats
+
+`vehicle_positions_url`/`trip_updates_url` can each be **GTFS-RT JSON or
+protobuf** — the default (`format: auto`) sniffs which one a response is
+(Content-Type header, falling back to the body) per poll, so most sources
+need no configuration at all. To pin a feed's format explicitly (skips the
+sniff): add `vehicle_positions_format: pb` / `trip_updates_format: pb` (or
+`json`) to the source's YAML, or pass `--vp-format pb --tu-format pb` to
+`stoptimes val run` (CLI flag wins over the YAML hint). Protobuf parsing
+needs the `pb` extra: `pip install 'stoptimes-core[pb]'` (already part of
+this workspace's `uv sync --group dev`).
+
+### Validating any TripUpdates source
+
+A source doesn't need to be one of the shipped agency profiles
+(`examples/agencies/`). Point `trip_updates_url` (and, for ground truth,
+`vehicle_positions_url`) at *any* published GTFS-RT feed — someone else's
+predictions, a feed you don't operate, a one-off test endpoint — and
+`gtfsrt`/the ground-truth detectors work exactly as they do for `mbta`/`bucr`;
+nothing in `val` branches on which agency it is. Either add a YAML file next
+to the shipped ones (`--sources-dir` / `STOPTIMES_SOURCES` to point
+elsewhere), or build a `stoptimes.core.domain.models.SourceConfig` directly
+if you're driving `val` from Python. See
+`packages/val/tests/test_any_tripupdates_source.py` for a worked example
+against a source that was never added to `examples/agencies/`.
+
+### Bring your own pipeline (`pipeline:<file.py>`)
+
+`pipeline:<file.py>` scores a serving pipeline you wrote yourself, loaded via
+`stoptimes.serve.pipeline.load_pipeline(path)` (T4's Phase 2 deliverable —
+see `docs/notes/p2-t6.md` for the current state of that loader). Each
+`predict()` call builds a `core.contracts.pipeline.PipelineContext` (this
+trip, its upcoming stops, and the current vehicle position, in
+`ctx.state`) and runs your pipeline; results come back either as the
+pipeline's own return value or, for a pipeline whose `publish` stage hands
+off to a real sink instead of returning anything, from
+`ctx.state["predictions"]` if your `postprocess`/`publish` hook stashes them
+there. `stoptimes.val.predictors.pipeline_adapter` is a small adapter `val`
+owns, not part of the pipeline contract itself; it never imports
+`stoptimes.serve` until the first prediction is actually requested, so `val`
+stays importable whether or not `stoptimes-serve` is installed.
+
 ## Install
 
 `stoptimes.val` is one member of the `stoptimes` uv workspace (`packages/val`). From
@@ -130,6 +189,34 @@ uv run --no-sync stoptimes val api
 # Terminal ops console (was the etaval-tui console script)
 uv run --no-sync stoptimes val tui
 ```
+
+## Replay from a recorded archive
+
+`stoptimes val replay` scores predictions against an archived window instead
+of a live feed — deterministic (same archive, window, and predictors in,
+same scores out; no wall clock), which is what makes a run reproducible for
+CI or for a paper's numbers:
+
+```bash
+uv run --no-sync stoptimes val replay \
+  --source mbta --archive s3://transit/feeds/mbta/vehicle_positions \
+  --archive-tu s3://transit/feeds/mbta/trip_updates_staging \
+  --from 2026-06-01 --to 2026-06-08 \
+  --gtfs mbta.zip --predictor gtfsrt --predictor baseline:constant_speed \
+  --out r.parquet
+```
+
+`--archive`/`--archive-tu` accept a local dir, a single Parquet file, or an
+`s3://` URI (the `s3` extra), in the exact Hive-partitioned layout
+`stoptimes.record.storage.schema` (VehiclePositions) and `.tu_schema`
+(TripUpdates) write — `val` reads those column names as a documented
+contract, it does not import `stoptimes.record` (nothing depends on
+`record` per `docs/PLAN.md` rule 1). `--archive-tu` is optional: predictors
+that don't need published TripUpdates (`baseline:*`, `stoptimes:*`,
+`pipeline:*`) score from `--archive` alone; only `gtfsrt` (which replays
+published predictions) needs one. This is a friendlier front end over the
+same replay engine `stoptimes val run --replay-vp ...` uses — both build the
+same `ReplayRunDeps` (`stoptimes.val.engine.assembly.build_replay_run`).
 
 ## Walk-forward backtest and the 70/10/20 split
 

@@ -77,7 +77,7 @@ from stoptimes.val.scoring.sensitivity import sensitivity_from_persisted_arrival
 from stoptimes.val.storage.parquet_export import export_results, load_results_parquet
 from stoptimes.val.storage.sqlite import SqliteStorage
 
-app = typer.Typer(help="etaval — ETA Prediction Validation Tool", no_args_is_help=True)
+app = typer.Typer(help="stoptimes val — ETA Prediction Validation Tool", no_args_is_help=True)
 
 # ``parse_duration`` and ``_RouteFilterLiveSource`` are imported from
 # ``stoptimes.val.engine.assembly`` above so the CLI and the future API share one
@@ -147,12 +147,12 @@ async def _run_validation(
 
 @app.callback()
 def _main() -> None:
-    """etaval — ETA Prediction Validation Tool."""
+    """stoptimes val — ETA Prediction Validation Tool."""
 
 
 @app.command()
 def version() -> None:
-    """Print the etaval version."""
+    """Print the stoptimes val version."""
     typer.echo(stoptimes.val.__version__)
 
 
@@ -268,7 +268,7 @@ def run(
         cfg = load_named_source(source)
     except FileNotFoundError:
         typer.echo(
-            f"Error: source {source!r} not found. Run 'etaval sources' to list available.",
+            f"Error: source {source!r} not found. Run 'stoptimes val sources' to list available.",
             err=True,
         )
         raise typer.Exit(code=1) from None
@@ -655,7 +655,7 @@ def report(
         False, "--sensitivity", help="Also render a detector-sensitivity table (requires --db)"
     ),
     db: Path | None = typer.Option(  # noqa: B008
-        None, "--db", help="SQLite db from the original 'etaval run' (required for --sensitivity)"
+        None, "--db", help="SQLite db from the original 'stoptimes val run' (required for --sensitivity)"
     ),
 ) -> None:
     """Render a metrics report from a Parquet results file.
@@ -679,7 +679,7 @@ def report(
         typer.echo(
             "Error: --sensitivity requires --db <sqlite path>. Detector sensitivity "
             "re-scores each ground-truth detector method's arrivals, but only "
-            "'etaval run --db <path>' persists those per-method arrivals (the engine "
+            "'stoptimes val run --db <path>' persists those per-method arrivals (the engine "
             "saves every configured detector's output, not just the primary one used "
             "for scoring). The Parquet results file alone carries neither raw "
             "position history nor per-method arrivals, so true detector "
@@ -858,7 +858,7 @@ def walk_forward_cmd(
         cfg = load_named_source(source)
     except FileNotFoundError:
         typer.echo(
-            f"Error: source {source!r} not found. Run 'etaval sources' to list available.",
+            f"Error: source {source!r} not found. Run 'stoptimes val sources' to list available.",
             err=True,
         )
         raise typer.Exit(code=1) from None
