@@ -1,0 +1,210 @@
+"""Model resolution (`select_artifact` over `artifact.json` files, never a
+pickle) and BYO `ModelRef` loaders (pickle / onnx / callable / http)."""
+
+from __future__ import annotations
+
+import importlib.util
+import pickle
+from datetime import datetime, timezone
+
+import numpy as np
+import pandas as pd
+import pytest
+from stoptimes.core.contracts.artifact import ArtifactMetadata, ModelScope, Provenance, ScopeLevel, write_metadata
+from stoptimes.core.contracts.model import ModelRef, ModelRefKind
+from stoptimes.core.contracts.selection import SelectionPolicy
+from stoptimes.serve.model_loading import (
+    CallableModelLoader,
+    HttpModelLoader,
+    OnnxModelLoader,
+    PickleModelLoader,
+    iter_registry_artifacts,
+    load_artifact_model,
+    load_model_ref,
+    resolve_artifact,
+)
+
+
+class _StubModel:
+    def predict(self, X: pd.DataFrame) -> np.ndarray:
+        return X["x"].to_numpy(dtype=float)
+
+
+def _write_artifact(registry_dir, artifact_id, *, family="fake", metric=50.0, scope=None, fmt=None):
+    from stoptimes.core.contracts.artifact import ModelFormat
+
+    meta = ArtifactMetadata(
+        artifact_id=artifact_id,
+        family=family,
+        format=fmt or ModelFormat.PICKLE,
+        scope=scope or ModelScope(),
+        features=["x"],
+        provenance=Provenance(created_at=datetime.now(timezone.utc)),
+        metrics={"test_mae_seconds": metric},
+    )
+    directory = registry_dir / artifact_id
+    write_metadata(meta, directory)
+    with open(directory / meta.model_filename, "wb") as fh:
+        pickle.dump(_StubModel(), fh)
+    return meta
+
+
+def test_iter_registry_artifacts_skips_dirs_without_metadata(tmp_path):
+    _write_artifact(tmp_path, "a1")
+    (tmp_path / "not-an-artifact").mkdir()
+    metas = iter_registry_artifacts(tmp_path)
+    assert [m.artifact_id for m in metas] == ["a1"]
+
+
+def test_iter_registry_artifacts_empty_when_dir_missing(tmp_path):
+    assert iter_registry_artifacts(tmp_path / "nope") == []
+
+
+def test_resolve_artifact_picks_best_global_by_metric(tmp_path):
+    _write_artifact(tmp_path, "worse", metric=99.0)
+    _write_artifact(tmp_path, "better", metric=10.0)
+    chosen = resolve_artifact(tmp_path, source_id="agency")
+    assert chosen.artifact_id == "better"
+
+
+def test_resolve_artifact_honors_route_scope_over_global(tmp_path):
+    _write_artifact(tmp_path, "global", metric=5.0)
+    _write_artifact(
+        tmp_path,
+        "route22",
+        metric=999.0,
+        scope=ModelScope(level=ScopeLevel.ROUTE, route_ids=["22"]),
+    )
+    chosen = resolve_artifact(tmp_path, source_id="agency", route_id="22")
+    assert chosen.artifact_id == "route22"
+
+
+def test_resolve_artifact_hard_override_by_artifact_id(tmp_path):
+    _write_artifact(tmp_path, "global", metric=5.0)
+    _write_artifact(tmp_path, "pinned", metric=999.0)
+    chosen = resolve_artifact(tmp_path, source_id="agency", artifact_id="pinned")
+    assert chosen.artifact_id == "pinned"
+
+
+def test_resolve_artifact_pin_via_policy(tmp_path):
+    _write_artifact(tmp_path, "global", metric=5.0)
+    _write_artifact(tmp_path, "pinned", metric=999.0)
+    policy = SelectionPolicy(pins={"global": "pinned"})
+    chosen = resolve_artifact(tmp_path, source_id="agency", policy=policy)
+    assert chosen.artifact_id == "pinned"
+
+
+def test_load_artifact_model_duck_types_missing_attrs(tmp_path):
+    meta = _write_artifact(tmp_path, "a1", family="fake")
+    model = load_artifact_model(meta, tmp_path)
+    assert model.family == "fake"
+    assert model.required_features == ["x"]
+    assert model.artifact_id == "a1"
+    preds = model.predict(pd.DataFrame({"x": [1.0, 2.0]}))
+    assert list(preds) == [1.0, 2.0]
+
+
+def test_load_artifact_model_rejects_non_pickle_format(tmp_path):
+    from stoptimes.core.contracts.artifact import ModelFormat
+
+    meta = _write_artifact(tmp_path, "a1", fmt=ModelFormat.ONNX)
+    with pytest.raises(NotImplementedError):
+        load_artifact_model(meta, tmp_path)
+
+
+def test_pickle_model_loader(tmp_path):
+    path = tmp_path / "model.pkl"
+    with open(path, "wb") as fh:
+        pickle.dump(_StubModel(), fh)
+    ref = ModelRef(kind=ModelRefKind.PICKLE, location=str(path), family="byo", required_features=["x"])
+    model = PickleModelLoader().load(ref)
+    assert list(model.predict(pd.DataFrame({"x": [3.0]}))) == [3.0]
+    assert model.family == "byo"
+
+
+def test_callable_model_loader(monkeypatch):
+    import sys
+    import types
+
+    module = types.ModuleType("_fake_callable_model_mod")
+
+    def predict_fn(X: pd.DataFrame) -> np.ndarray:
+        return X["x"].to_numpy(dtype=float) * 2.0
+
+    module.predict_fn = predict_fn
+    sys.modules["_fake_callable_model_mod"] = module
+
+    ref = ModelRef(kind=ModelRefKind.CALLABLE, location="_fake_callable_model_mod:predict_fn", required_features=["x"])
+    model = CallableModelLoader().load(ref)
+    assert list(model.predict(pd.DataFrame({"x": [3.0]}))) == [6.0]
+
+
+def test_http_model_loader_and_predict(monkeypatch):
+    calls = {}
+
+    class FakeResponse:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {"predictions": [1.0, 2.0]}
+
+    def fake_post(url, json=None, headers=None, timeout=None):
+        calls["url"] = url
+        calls["json"] = json
+        calls["headers"] = headers
+        return FakeResponse()
+
+    monkeypatch.setattr("httpx.post", fake_post)
+
+    ref = ModelRef(
+        kind=ModelRefKind.HTTP,
+        location="https://example.test/predict",
+        required_features=["x"],
+        headers={"X-Static": "1"},
+        auth_env={"Authorization": "STOPTIMES_TEST_TOKEN"},
+    )
+    monkeypatch.setenv("STOPTIMES_TEST_TOKEN", "secret-token")
+    model = HttpModelLoader().load(ref)
+    preds = model.predict(pd.DataFrame({"x": [1.0, 2.0]}))
+    assert list(preds) == [1.0, 2.0]
+    assert calls["headers"]["X-Static"] == "1"
+    assert calls["headers"]["Authorization"] == "secret-token"
+
+
+def test_http_model_mismatched_row_count_raises(monkeypatch):
+    class FakeResponse:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {"predictions": [1.0]}
+
+    monkeypatch.setattr("httpx.post", lambda *a, **k: FakeResponse())
+
+    ref = ModelRef(kind=ModelRefKind.HTTP, location="https://example.test/predict", required_features=["x"])
+    model = HttpModelLoader().load(ref)
+    with pytest.raises(RuntimeError):
+        model.predict(pd.DataFrame({"x": [1.0, 2.0]}))
+
+
+@pytest.mark.skipif(importlib.util.find_spec("onnxruntime") is None, reason="onnxruntime not installed")
+def test_onnx_model_loader_smoke():
+    pytest.skip("onnxruntime present but no fixture .onnx model is shipped; loader import path covered elsewhere")
+
+
+def test_onnx_model_loader_missing_dependency_raises_clear_error(monkeypatch):
+    if importlib.util.find_spec("onnxruntime") is not None:
+        pytest.skip("onnxruntime is installed; this test covers the absent-dependency path")
+    ref = ModelRef(kind=ModelRefKind.ONNX, location="/dev/null", required_features=["x"])
+    with pytest.raises(ImportError, match="onnxruntime"):
+        OnnxModelLoader().load(ref)
+
+
+def test_load_model_ref_dispatches_by_kind(tmp_path):
+    path = tmp_path / "model.pkl"
+    with open(path, "wb") as fh:
+        pickle.dump(_StubModel(), fh)
+    ref = ModelRef(kind=ModelRefKind.PICKLE, location=str(path))
+    model = load_model_ref(ref)
+    assert list(model.predict(pd.DataFrame({"x": [5.0]}))) == [5.0]
