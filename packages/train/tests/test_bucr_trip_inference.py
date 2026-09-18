@@ -220,6 +220,26 @@ def test_single_loop_single_trip_instance() -> None:
     assert stats.trips_inferred == 1
 
 
+def test_trip_id_prefix_defaults_to_bucr_but_is_configurable() -> None:
+    """`source_id` is config, not a hardcoded agency name (docs/PLAN.md Phase 4
+    target: `grep -ri bucr packages/` empty outside tests/fixtures) -- the
+    default preserves today's ids exactly, but any source id can be threaded
+    through for a second AVL-without-trip_id agency.
+    """
+    trace = _walk_shape_trace(_CANDIDATE_A, seed=1)
+
+    default_out, _ = infer_bucr_trips(trace, _CANDIDATES)
+    assert default_out["trip_id"].iloc[0].startswith("bucr:")
+
+    custom_out, _ = infer_bucr_trips(trace, _CANDIDATES, source_id="other_agency")
+    assert custom_out["trip_id"].iloc[0].startswith("other_agency:")
+    assert not custom_out["trip_id"].iloc[0].startswith("bucr:")
+    # Everything else about the inference is unaffected by the id prefix.
+    pd.testing.assert_frame_equal(
+        default_out.drop(columns=["trip_id"]), custom_out.drop(columns=["trip_id"])
+    )
+
+
 # ---------------------------------------------------------------------------
 # Trip-instance segmentation: two consecutive loops (progress reset)
 # ---------------------------------------------------------------------------

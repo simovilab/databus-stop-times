@@ -227,11 +227,16 @@ def _empty_stats() -> InferenceStats:
 
 
 def _make_trip_id(
-    vehicle_id: str, route_id: str, direction_id: int, shape_id: str, instance_start_ts: pd.Timestamp
+    vehicle_id: str,
+    route_id: str,
+    direction_id: int,
+    shape_id: str,
+    instance_start_ts: pd.Timestamp,
+    source_id: str = "bucr",
 ) -> str:
     """Stable, deterministic, human-readable trip id.
 
-    Recipe: ``bucr:{vehicle_id}:{route_id}:{direction_id}:{shape_id}:{start_ts}``
+    Recipe: ``{source_id}:{vehicle_id}:{route_id}:{direction_id}:{shape_id}:{start_ts}``
     where ``start_ts`` is the instance's first point's ``ts`` formatted as
     strict UTC ``YYYYMMDDTHHMMSSZ``. Collision-safe because a single vehicle
     cannot be in two places (two candidate shapes) at once, and cannot start
@@ -239,14 +244,21 @@ def _make_trip_id(
     guarantees instance start timestamps for one vehicle are strictly
     increasing) -- so the 5-tuple is unique per real-world trip instance, and
     re-running inference on the same input always reproduces the same id.
+
+    ``source_id`` defaults to ``"bucr"`` for backward compatibility (today's
+    only caller); ``infer_bucr_trips(..., source_id=...)`` threads a
+    `contracts.source.Source.id` through here so a second agency using this
+    same inference path (any AVL feed without its own trip_id) doesn't get a
+    bUCR-branded trip_id (docs/PLAN.md Phase 4: `grep -ri bucr packages/`
+    empty outside tests/fixtures).
     """
     start = instance_start_ts.tz_convert("UTC") if instance_start_ts.tzinfo else instance_start_ts.tz_localize("UTC")
     start_str = start.strftime("%Y%m%dT%H%M%SZ")
-    return f"bucr:{vehicle_id}:{route_id}:{direction_id}:{shape_id}:{start_str}"
+    return f"{source_id}:{vehicle_id}:{route_id}:{direction_id}:{shape_id}:{start_str}"
 
 
 def _process_coarse_segment(
-    seg: pd.DataFrame, candidates: Sequence[RouteDirectionCandidate]
+    seg: pd.DataFrame, candidates: Sequence[RouteDirectionCandidate], source_id: str = "bucr"
 ) -> Tuple[List[pd.DataFrame], int, int, int, int, Dict[Tuple[str, int, str], int]]:
     """Assign a direction+variant to ONE direction-agnostic coarse segment, then finish it.
 
@@ -319,6 +331,7 @@ def _process_coarse_segment(
             direction_id=best.candidate.direction_id,
             shape_id=best.candidate.shape_id,
             instance_start_ts=inst["ts"].iloc[0],
+            source_id=source_id,
         )
 
         out = pd.DataFrame(index=inst.index)
@@ -341,7 +354,7 @@ def _process_coarse_segment(
 
 
 def _process_group(
-    group: pd.DataFrame, candidates: Sequence[RouteDirectionCandidate]
+    group: pd.DataFrame, candidates: Sequence[RouteDirectionCandidate], source_id: str = "bucr"
 ) -> Tuple[List[pd.DataFrame], int, int, int, int, Dict[Tuple[str, int, str], int]]:
     """Process one (vehicle_id, service-day) group.
 
@@ -376,7 +389,7 @@ def _process_group(
     for start, end in coarse_ranges:
         seg = group.iloc[start:end].reset_index(drop=True)
         frames, parked, anomaly, noise_points, noise_instances, seg_trips = _process_coarse_segment(
-            seg, candidates
+            seg, candidates, source_id
         )
         out_frames.extend(frames)
         n_parked += parked
@@ -390,9 +403,16 @@ def _process_group(
 
 
 def infer_bucr_trips(
-    vp_df: pd.DataFrame, candidates: Sequence[RouteDirectionCandidate]
+    vp_df: pd.DataFrame,
+    candidates: Sequence[RouteDirectionCandidate],
+    source_id: str = "bucr",
 ) -> Tuple[pd.DataFrame, InferenceStats]:
-    """Infer route/direction/shape-variant, trip instances, and stops for a BUCR VP trace.
+    """Infer route/direction/shape-variant, trip instances, and stops for an
+    AVL trace whose vehicle positions carry no trip_id (today's bUCR path;
+    the scoring/segmentation algorithm itself is GTFS-generic -- see
+    ``bucr_trip_scoring.py``'s module docstring -- it only needs
+    ``RouteDirectionCandidate``s built from a static feed via
+    ``bucr_gtfs.route_direction_candidates``, not anything bUCR-specific).
 
     Args:
         vp_df: Canonical VP frame (the output of
@@ -409,6 +429,10 @@ def infer_bucr_trips(
             (route_id, direction_id) pair from
             ``bucr_gtfs.route_direction_candidates``, across the feed's one
             or more routes).
+        source_id: Prefix for synthesized trip ids (``contracts.source.Source.id``
+            in production). Defaults to ``"bucr"`` for backward compatibility
+            with today's only caller; a second AVL-without-trip_id source
+            passes its own id here instead of getting a bUCR-branded trip_id.
 
     Returns:
         ``(out_df, stats)``. ``out_df`` has columns ``OUTPUT_COLUMNS``
@@ -476,7 +500,9 @@ def infer_bucr_trips(
 
     for _, group in df.groupby("_group_key", sort=True):
         group = group.drop(columns="_group_key")
-        frames, parked, anomaly, noise_points, noise_instances, trips_delta = _process_group(group, candidates)
+        frames, parked, anomaly, noise_points, noise_instances, trips_delta = _process_group(
+            group, candidates, source_id
+        )
         out_frames.extend(frames)
         n_parked += parked
         n_anomaly += anomaly
