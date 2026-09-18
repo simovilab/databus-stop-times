@@ -1,0 +1,29 @@
+{
+  "header": {"gtfs_realtime_version": "2.0", "timestamp": 1700000000},
+  "entity": [
+    {
+      "id": "1",
+      "vehicle": {
+        "trip": {"trip_id": "t1", "route_id": "r1", "direction_id": 0, "start_date": "20260101"},
+        "vehicle": {"id": "v1"},
+        "position": {"latitude": 9.93, "longitude": -84.08, "bearing": 45.0, "speed": 5.5},
+        "current_stop_sequence": 3,
+        "current_status": "IN_TRANSIT_TO",
+        "timestamp": 1700000010
+      }
+    },
+    {
+      "id": "2",
+      "vehicle": {
+        "trip": {"trip_id": "t2", "route_id": "r2"},
+        "vehicle": {"id": "v2"},
+        "position": {"latitude": 9.94, "longitude": -84.09},
+        "timestamp": 1700000020
+      }
+    },
+    {
+      "id": "3",
+      "alert": {"cause": "OTHER_CAUSE"}
+    }
+  ]
+}

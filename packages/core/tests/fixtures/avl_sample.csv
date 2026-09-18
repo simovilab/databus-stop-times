@@ -1,0 +1,5 @@
+plate_number,cr_datetime,latitude,longitude,speed_kmh,estado
+SJB-001,2026-01-01 08:00:00,9.930000,-84.080000,12.5,movimiento
+SJB-001,2026-01-01 08:01:00,9.931000,-84.081000,0.0,detenido
+SJB-002,2026-01-01 08:00:30,,,,movimiento
+SJB-002,not-a-timestamp,9.940000,-84.090000,8.0,movimiento
