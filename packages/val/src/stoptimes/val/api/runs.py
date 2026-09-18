@@ -69,12 +69,14 @@ class RunManager:
         data_dir: Path,
         deps_builder: Callable[..., LiveRunDeps] = build_live_run,
         telemetry: TelemetryCollector | None = None,
+        sources_dir: str | Path | None = None,
     ) -> None:
         self._data_dir = Path(data_dir)
         self._runs_dir = self._data_dir / "runs"
         self._runs_dir.mkdir(parents=True, exist_ok=True)
         self._index_path = self._runs_dir / "index.json"
         self._deps_builder = deps_builder
+        self._sources_dir = sources_dir
         self.telemetry = telemetry if telemetry is not None else TelemetryCollector()
 
         # In-memory run states (merged with persisted on init).
@@ -257,7 +259,7 @@ class RunManager:
         Returns the new run_id immediately; the run executes in a background
         asyncio task.
         """
-        cfg = load_named_source(source)
+        cfg = load_named_source(source, config_dir=self._sources_dir)
         run_id = str(uuid.uuid4())
         db_path = str(self._runs_dir / f"{run_id}.sqlite")
 

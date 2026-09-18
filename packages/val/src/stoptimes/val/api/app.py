@@ -60,21 +60,32 @@ def _state_to_info(state: RunState) -> RunInfo:
 # ── Application factory ────────────────────────────────────────────────────────
 
 
-def create_app(run_manager: RunManager | None = None) -> FastAPI:
+def create_app(
+    run_manager: RunManager | None = None,
+    sources_dir: str | Path | None = None,
+) -> FastAPI:
     """Create and configure the FastAPI application.
 
     Args:
         run_manager: Optional pre-constructed RunManager.  When None the
             manager is built from the current settings data_dir.  Inject
             a replay-backed manager for offline tests.
+        sources_dir: Directory of agency source-config YAMLs, searched
+            exclusively (passed through to ``list_sources``/``load_named_source``
+            as ``config_dir``). Defaults to ``get_settings().sources_dir``
+            (``ETAVAL_SOURCES_DIR``), which itself defaults to ``None`` — i.e.
+            the normal ``sources_search_path()`` order. Pass this explicitly
+            (rather than relying on the process's current working directory)
+            in tests and in any deployment that doesn't run from the repo root.
 
     Returns:
         A configured FastAPI instance ready to serve requests.
     """
     settings = get_settings()
+    resolved_sources_dir = sources_dir if sources_dir is not None else settings.sources_dir
 
     app = FastAPI(
-        title="etaval REST API",
+        title="stoptimes val REST API",
         description="ETA Prediction Validation — Phase A REST layer",
         version="0.1.0",
     )
@@ -88,7 +99,7 @@ def create_app(run_manager: RunManager | None = None) -> FastAPI:
     )
 
     if run_manager is None:
-        run_manager = RunManager(data_dir=Path(settings.data_dir))
+        run_manager = RunManager(data_dir=Path(settings.data_dir), sources_dir=resolved_sources_dir)
 
     # Expose on app.state so middleware / lifespan hooks can reach it.
     app.state.run_manager = run_manager
@@ -107,9 +118,9 @@ def create_app(run_manager: RunManager | None = None) -> FastAPI:
     async def sources() -> list[dict]:
         """List all configured GTFS-RT sources."""
         result = []
-        for name in list_sources():
+        for name in list_sources(config_dir=resolved_sources_dir):
             try:
-                cfg = load_named_source(name)
+                cfg = load_named_source(name, config_dir=resolved_sources_dir)
             except Exception:  # noqa: BLE001
                 continue
             result.append(
@@ -131,7 +142,7 @@ def create_app(run_manager: RunManager | None = None) -> FastAPI:
     @app.post("/api/runs")
     async def create_run(body: RunRequest) -> dict:
         """Start a new validation run.  Returns ``{run_id}`` immediately."""
-        known_sources = list_sources()
+        known_sources = list_sources(config_dir=resolved_sources_dir)
         if body.source not in known_sources:
             raise HTTPException(
                 status_code=400,

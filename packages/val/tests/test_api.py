@@ -30,6 +30,9 @@ from tests.test_engine_replay import _build_snapshots
 
 _FIXTURES = Path(__file__).parent / "fixtures"
 _MINI_GTFS = _FIXTURES / "mini_gtfs.zip"
+# Explicit, cwd-independent sources dir (was implicitly "./examples/agencies"
+# relative to the pytest invocation's cwd -- see docs/notes/p2-t6.md).
+_SOURCES_DIR = Path(__file__).resolve().parents[3] / "examples" / "agencies"
 
 
 # ── Replay deps builder (no HTTP) ─────────────────────────────────────────────
@@ -73,12 +76,14 @@ def tmp_data_dir(tmp_path: Path) -> Path:
 
 @pytest.fixture
 def run_manager(tmp_data_dir: Path) -> RunManager:
-    return RunManager(data_dir=tmp_data_dir, deps_builder=_replay_deps_builder)
+    return RunManager(
+        data_dir=tmp_data_dir, deps_builder=_replay_deps_builder, sources_dir=_SOURCES_DIR
+    )
 
 
 @pytest.fixture
 async def client(run_manager: RunManager):
-    app = create_app(run_manager=run_manager)
+    app = create_app(run_manager=run_manager, sources_dir=_SOURCES_DIR)
     async with httpx.AsyncClient(
         transport=httpx.ASGITransport(app=app),
         base_url="http://test",

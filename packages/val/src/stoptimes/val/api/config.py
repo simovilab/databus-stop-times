@@ -11,6 +11,14 @@ ETAVAL_DATA_DIR
     Per-run SQLite databases are stored under ``<DATA_DIR>/runs/``.
 ETAVAL_CORS_ORIGINS
     Comma-separated allowed CORS origins (default ``"http://localhost:3000"``).
+ETAVAL_SOURCES_DIR
+    Explicit directory of agency source-config YAML files, passed as the
+    ``explicit`` entry to ``stoptimes.core.config.sources_search_path``.
+    ``None`` (unset) falls back to that resolver's normal search order
+    (``STOPTIMES_SOURCES``, then ``./examples/agencies`` relative to the
+    process's current working directory). ``create_app(sources_dir=...)``
+    injects a directory directly instead of via the environment — prefer
+    that in tests, which should not depend on the working directory.
 """
 
 from __future__ import annotations
@@ -27,6 +35,7 @@ class Settings:
     port: int
     data_dir: str
     cors_origins: list[str]
+    sources_dir: str | None = None
 
 
 def get_settings() -> Settings:
@@ -42,4 +51,5 @@ def get_settings() -> Settings:
         port=int(os.environ.get("ETAVAL_API_PORT", "8010")),
         data_dir=os.environ.get("ETAVAL_DATA_DIR", "./.etaval_data"),
         cors_origins=origins,
+        sources_dir=os.environ.get("ETAVAL_SOURCES_DIR"),
     )
