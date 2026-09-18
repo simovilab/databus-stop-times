@@ -176,6 +176,16 @@ Returns human-readable problems: missing required columns, wrong dtype
 
 ---
 
+### Does training require GTFS?
+
+No — training consumes an `Arrival` table plus features, so
+`data.datasets` can point at a prepared dataset from any source (an AVL CSV,
+an existing arrivals export) with no GTFS zip present. GTFS static is required
+for the parts that genuinely need a schedule: deriving arrivals by
+map-matching (stop locations, shapes, stop sequences), schedule-based features
+and baselines, and emitting GTFS-RT TripUpdates, which are addressed by
+`trip_id`/`stop_id` and so cannot exist without a feed the consumer also has.
+
 ## 3. `experiment` — experiment.yaml
 
 **File:** `contracts/experiment.py`. **Consumers:** T3 (`train run
@@ -366,7 +376,8 @@ the full shape (`ArtifactMetadata`, `ModelFormat`, `DataWindow`,
 <registry>/<artifact_id>/
   artifact.json   ArtifactMetadata — schema_version, artifact_id, family, target,
                   format, features, params, data (DataWindow), provenance,
-                  metrics, scores_by_horizon, tags, legacy (C3 migration only)
+                  scope (ModelScope — see §7b), metrics, scores_by_horizon,
+                  tags, legacy (C3 migration only)
   model.<ext>     the fitted model (ext from ModelFormat)
   card.md         human-readable model card (optional)
 ```
@@ -374,6 +385,49 @@ the full shape (`ArtifactMetadata`, `ModelFormat`, `DataWindow`,
 C1 added no fields — every field a Phase 2 track needs was already present.
 
 ---
+
+## 7b. `selection` — which artifact serves a trip
+
+**File:** `contracts/selection.py`. **Consumers:** T4 (serving picks a model per
+trip), T3 (reports say which artifact would be chosen), T6 (validation scores
+the same choice serving would make).
+
+A registry holds many artifacts for one agency: a global model, per-route
+models, sometimes per-trip ones. `ArtifactMetadata.scope` says what an artifact
+may serve, and `select_artifact` picks one:
+
+```
+ModelScope
+  level: global | route | direction | trip
+  source_id: str | None          # None = serves any agency
+  route_ids: list[str]; direction_id: int | None; trip_ids: list[str]
+  .matches(source_id=, route_id=, direction_id=, trip_id=) -> bool
+
+SelectionPolicy                   # on Source.serving, overridable per call
+  metric: str = "test_mae_seconds"    # key in ArtifactMetadata.metrics
+  lower_is_better: bool = True
+  scope_order: [trip, direction, route, global]
+  families: list[str]                 # restrict to model families; empty = any
+  pins: dict[str, str]                # "global" | "route:22" | "route:22/1" | "trip:t1" -> artifact_id
+
+select_artifact(candidates, policy, *, source_id, route_id=, direction_id=, trip_id=) -> ArtifactMetadata | None
+```
+
+**Rule:** explicit pins first (a pin naming a missing artifact is ignored, so a
+deleted model degrades to ranking rather than to no predictions); then the most
+specific scope in `scope_order` that has a candidate; within that level, the
+best `metric`, ties broken by `artifact_id` so the choice is deterministic.
+Artifacts lacking the metric are never selected, and `None` is a real answer —
+the caller decides between skipping the trip and falling back to a baseline.
+
+Ranking reads `artifact.json` only; no model file is opened to choose.
+This replaces `registry.get_best_model`'s metric-only ranking (which had no
+agency awareness — the reason bUCR needed a hard pin) and the route/global
+if-else chain in `serve.estimator`. `ServingDefaults.primary_model` /
+`fallback_model` stay as shorthand pins for the existing deployments.
+
+`stoptimes models migrate` maps a legacy `route_id` onto a route scope, so
+migrated per-route models keep serving only their route.
 
 ## 8. `adapters` — bridging existing code to these contracts
 

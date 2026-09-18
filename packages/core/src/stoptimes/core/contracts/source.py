@@ -19,6 +19,7 @@ from enum import Enum
 from pathlib import Path
 
 import yaml
+from stoptimes.core.contracts.selection import SelectionPolicy
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
@@ -91,7 +92,11 @@ class ServingDefaults(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     primary_model: str | None = None
+    """Deprecated shorthand for ``selection.pins["global"]``; still honored."""
     fallback_model: str | None = None
+    """Artifact tried when the selected one can't be loaded."""
+    selection: SelectionPolicy = Field(default_factory=SelectionPolicy)
+    """How serving picks among global / per-route / per-trip artifacts."""
 
 
 class Source(BaseModel):

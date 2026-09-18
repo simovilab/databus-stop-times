@@ -26,7 +26,7 @@ from enum import Enum
 from pathlib import Path
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 ARTIFACT_SCHEMA_VERSION = 1
 METADATA_FILENAME = "artifact.json"
@@ -49,6 +49,68 @@ class ModelFormat(str, Enum):
             ModelFormat.ONNX: "model.onnx",
             ModelFormat.TORCHSCRIPT: "model.pt",
         }[self]
+
+
+class ScopeLevel(str, Enum):
+    """What a model is specialized to. Selection prefers the most specific match."""
+
+    GLOBAL = "global"
+    ROUTE = "route"
+    DIRECTION = "direction"
+    TRIP = "trip"
+
+
+class ModelScope(BaseModel):
+    """Which trips an artifact is allowed to serve.
+
+    A registry normally holds one global model plus route- (or trip-) specific
+    ones; `stoptimes.core.contracts.selection` ranks them with this.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    level: ScopeLevel = ScopeLevel.GLOBAL
+    source_id: str | None = None
+    """Agency the model was trained for. None = source-agnostic (serves any)."""
+
+    route_ids: list[str] = Field(default_factory=list)
+    direction_id: int | None = None
+    trip_ids: list[str] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def _keys_match_level(self) -> "ModelScope":
+        if self.level in (ScopeLevel.ROUTE, ScopeLevel.DIRECTION) and not self.route_ids:
+            raise ValueError(f"scope level {self.level.value} needs route_ids")
+        if self.level is ScopeLevel.DIRECTION and self.direction_id is None:
+            raise ValueError("scope level direction needs direction_id")
+        if self.level is ScopeLevel.TRIP and not self.trip_ids:
+            raise ValueError("scope level trip needs trip_ids")
+        return self
+
+    @property
+    def specificity(self) -> int:
+        return list(ScopeLevel).index(self.level)
+
+    def matches(
+        self,
+        *,
+        source_id: str | None = None,
+        route_id: str | None = None,
+        direction_id: int | None = None,
+        trip_id: str | None = None,
+    ) -> bool:
+        """True if this artifact may serve the given trip."""
+        if self.source_id is not None and source_id is not None and self.source_id != source_id:
+            return False
+        if self.level is ScopeLevel.GLOBAL:
+            return True
+        if self.level is ScopeLevel.TRIP:
+            return trip_id in self.trip_ids
+        if route_id not in self.route_ids:
+            return False
+        if self.level is ScopeLevel.DIRECTION:
+            return direction_id == self.direction_id
+        return True
 
 
 class DataWindow(BaseModel):
@@ -102,6 +164,7 @@ class ArtifactMetadata(BaseModel):
     family: str
     target: str = "arrival_delay_s"
     format: ModelFormat = ModelFormat.PICKLE
+    scope: ModelScope = Field(default_factory=ModelScope)
     features: list[str] = Field(default_factory=list)
     params: dict[str, Any] = Field(default_factory=dict)
     data: DataWindow = Field(default_factory=DataWindow)

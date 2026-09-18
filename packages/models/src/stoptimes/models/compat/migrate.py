@@ -35,6 +35,8 @@ from pathlib import Path
 from typing import Any
 
 from stoptimes.core.contracts.artifact import (
+    ModelScope,
+    ScopeLevel,
     ArtifactMetadata,
     DataWindow,
     ModelFormat,
@@ -316,9 +318,19 @@ def _build_metadata(artifact_id: str, legacy_meta: dict[str, Any], warnings: lis
         n_test=legacy_meta.get("test_samples"),
     )
 
+    # Legacy metadata carried the route as a bare `route_id` (None/"global" =
+    # a model for every route); the contract expresses that as a ModelScope.
+    legacy_route = legacy_meta.get("route_id")
+    scope = (
+        ModelScope(level=ScopeLevel.ROUTE, route_ids=[str(legacy_route)])
+        if legacy_route not in (None, "", "global")
+        else ModelScope()
+    )
+
     return ArtifactMetadata(
         artifact_id=artifact_id,
         family=family,
+        scope=scope,
         features=features,
         params=params,
         data=data,

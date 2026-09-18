@@ -313,3 +313,20 @@ def test_unpicklable_model_is_skipped_not_crashed(tmp_path):
     assert len(broken) == 1
     assert "unpickle" in broken[0].reason
     assert [i.key for i in report.migrated] == ["healthy_key"]
+
+
+def test_legacy_route_id_becomes_a_route_scope(tmp_path):
+    """A per-route legacy model must stay per-route after migration."""
+    from stoptimes.core.contracts.artifact import ScopeLevel
+
+    legacy = tmp_path / "legacy"
+    registry = tmp_path / "registry"
+    _write_legacy_artifact(legacy, "route_model", meta={"route_id": "22"})
+    _write_legacy_artifact(legacy, "global_model", meta={"route_id": None})
+
+    migrate(legacy, registry)
+
+    route = read_metadata(registry / "route_model")
+    assert route.scope.level is ScopeLevel.ROUTE
+    assert route.scope.route_ids == ["22"]
+    assert read_metadata(registry / "global_model").scope.level is ScopeLevel.GLOBAL

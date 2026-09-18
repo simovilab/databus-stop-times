@@ -31,6 +31,8 @@ from stoptimes.core.contracts.artifact import (
     DataWindow,
     HorizonScore,
     ModelFormat,
+    ModelScope,
+    ScopeLevel,
     Provenance,
     artifact_dir,
     read_metadata,
@@ -84,6 +86,7 @@ from stoptimes.core.contracts.prediction import (
     TripScheduleRelationship,
     TripUpdatePrediction,
 )
+from stoptimes.core.contracts.selection import SelectionPolicy, select_artifact
 from stoptimes.core.contracts.source import (
     Archive,
     ArchiveKind,
@@ -165,6 +168,10 @@ __all__ = [
     # artifact
     "ArtifactMetadata",
     "ModelFormat",
+    "ModelScope",
+    "ScopeLevel",
+    "SelectionPolicy",
+    "select_artifact",
     "DataWindow",
     "Provenance",
     "HorizonScore",
