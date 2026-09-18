@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Optional
 
 import typer
-from stoptimes.cli._util import PASSTHROUGH, planned, require, run_module
+from stoptimes.cli._util import PASSTHROUGH, planned, print_table, require, run_module
 
 app = typer.Typer(help="List, inspect and promote trained models.", no_args_is_help=True)
 
@@ -33,7 +33,10 @@ def models_list(
     json_output: bool = typer.Option(False, "--json", help="Print as JSON instead of a table."),
 ) -> None:
     """List artifacts in a registry directory (contracts.artifact layout):
-    scope, headline metric, and creation time."""
+    scope, headline metric, and creation time.
+
+    `--json`: a list of ``{"artifact_id", "family", "scope", "routes", "metric", "created"}``.
+    """
     require("stoptimes.models", "core")
     from stoptimes.core.contracts.artifact import ArtifactMetadata, METADATA_FILENAME, read_metadata
 
@@ -68,24 +71,34 @@ def models_list(
         typer.echo(json.dumps(rows, indent=2))
         return
 
-    if not rows:
-        typer.echo(f"(no artifacts found under {registry})")
-        return
-
-    typer.echo(f"{'ARTIFACT ID':<40} {'FAMILY':<16} {'SCOPE':<10} {'MAE_S':>8}  CREATED")
+    table_rows = []
     for row in rows:
         mae = row["metric"]
         mae_str = f"{mae:.1f}" if isinstance(mae, (int, float)) else "n/a"
         scope = row["scope"] if not row["routes"] else f"{row['scope']}:{','.join(row['routes'])}"
-        typer.echo(f"{row['artifact_id']:<40.40} {row['family']:<16.16} {scope:<10.10} {mae_str:>8}  {row['created']}")
+        table_rows.append([row["artifact_id"], row["family"], scope, mae_str, row["created"]])
+
+    print_table(
+        f"models: {registry}",
+        ["artifact id", "family", "scope", "mae_s", "created"],
+        table_rows,
+        empty_message=f"(no artifacts found under {registry})",
+    )
 
 
 @app.command("card")
 def models_card(
     artifact_id: Optional[str] = typer.Argument(None, help="Artifact id (registry subdirectory name)."),
     registry: Path = typer.Option(_DEFAULT_REGISTRY, "--registry", help="Artifact registry directory."),
+    json_output: bool = typer.Option(
+        False, "--json", help="Print {'artifact_id', 'card_path', 'card'} as JSON instead of raw markdown."
+    ),
 ) -> None:
-    """Show a model card (data, features, scores by horizon)."""
+    """Show a model card (data, features, scores by horizon).
+
+    `--json`: ``{"artifact_id": str, "card_path": str, "card": str}`` (the
+    card's raw markdown text, unparsed).
+    """
     if artifact_id is None:
         typer.secho(
             "✗ `stoptimes models card` needs an artifact id; run `stoptimes models list`.",
@@ -101,7 +114,11 @@ def models_card(
     if not card_path.exists():
         typer.secho(f"✗ no card.md for artifact {artifact_id!r} at {card_path}", fg="red", err=True)
         raise typer.Exit(1)
-    typer.echo(card_path.read_text(encoding="utf-8"))
+    text = card_path.read_text(encoding="utf-8")
+    if json_output:
+        typer.echo(json.dumps({"artifact_id": artifact_id, "card_path": str(card_path), "card": text}))
+        return
+    typer.echo(text)
 
 
 @app.command("promote")
@@ -118,10 +135,14 @@ def models_promote(
     sources_dir: Optional[Path] = typer.Option(
         None, "--sources-dir", help="Agency profile directory. Defaults to STOPTIMES_SOURCES or ./examples/agencies."
     ),
+    json_output: bool = typer.Option(False, "--json", help="Print the pin as JSON."),
 ) -> None:
     """Pin `artifact_id` into `source`'s agency profile (`serving.selection.pins[as_pin]`),
     per the `stoptimes.core.contracts.selection` contract. Refuses if the
-    artifact doesn't exist in `registry`."""
+    artifact doesn't exist in `registry`.
+
+    `--json`: ``{"artifact_id": str, "pin": str, "source": str, "profile_path": str}``.
+    """
     require("stoptimes.models", "core")
     import yaml
     from stoptimes.core.contracts.artifact import METADATA_FILENAME, artifact_dir, read_metadata
@@ -145,6 +166,13 @@ def models_promote(
     pins[as_pin] = artifact_id
     profile_path.write_text(yaml.safe_dump(data, sort_keys=False), encoding="utf-8")
 
+    if json_output:
+        typer.echo(
+            json.dumps(
+                {"artifact_id": artifact_id, "pin": as_pin, "source": source, "profile_path": str(profile_path)}
+            )
+        )
+        return
     typer.echo(f"promoted {artifact_id!r} -> {profile_path} serving.selection.pins[{as_pin!r}]")
 
 
