@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import type { RunInfo } from '~/types/api'
 
-useHead({ title: 'leaderboard – etaval' })
+useHead({ title: 'leaderboard – stoptimes val' })
 
 const api = useApi()
 const router = useRouter()

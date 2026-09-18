@@ -8,7 +8,7 @@ import type {
 } from '~/types/api'
 
 /**
- * Typed $fetch wrappers for the etaval backend REST API.
+ * Typed $fetch wrappers for the stoptimes val backend REST API.
  * All paths are relative to NUXT_PUBLIC_API_BASE (default http://localhost:8010).
  * Errors propagate as FetchError – callers should try/catch.
  */

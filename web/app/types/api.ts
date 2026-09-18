@@ -1,5 +1,5 @@
 // ─── Backend contract types ───────────────────────────────────────────────────
-// Keep in sync with etaval FastAPI backend
+// Keep in sync with the stoptimes val FastAPI backend
 
 export interface Source {
   name: string
@@ -26,8 +26,10 @@ export interface RunSummary {
 export type RunStatus = 'pending' | 'running' | 'done' | 'error'
 
 // ─── Provenance ────────────────────────────────────────────────────────────────
-// Mirrors etaval.provenance.RunProvenance.to_dict() – optional/best-effort;
-// every field may be null/absent when it could not be determined.
+// Mirrors stoptimes.val.provenance.RunProvenance.to_dict() – optional/best-effort;
+// every field may be null/absent when it could not be determined. Field names
+// (etaval_git_sha, etaval_dirty, ...) are kept as-is: they're the JSON keys the
+// backend actually serializes, not a display label -- see RunProvenance for why.
 
 export interface RunProvenance {
   etaval_git_sha?: string | null

@@ -1,6 +1,6 @@
 # stoptimes val web UI
 
-Nuxt 4 frontend for the `stoptimes val` (etaval) ETA validation platform. It talks to
+Nuxt 4 frontend for the `stoptimes val` (formerly `etaval`) ETA validation platform. It talks to
 the `stoptimes.val.api` FastAPI backend only through the REST + WebSocket contract in
 `app/types/api.ts` / `app/composables/useApi.ts` / `app/composables/useRunStream.ts` —
 nothing here names an agency, a file path, or a CLI command outside this README, so it

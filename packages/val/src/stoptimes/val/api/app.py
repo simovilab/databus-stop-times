@@ -28,7 +28,12 @@ from stoptimes.val.api.config import get_settings
 from stoptimes.val.api.runs import RunManager, RunState
 from stoptimes.val.api.schemas import MetricsResponse, ResultRow, RunInfo, RunRequest
 from stoptimes.val.api.ws import router as ws_router
-from stoptimes.val.engine.assembly import DEFAULT_PREDICTOR_IDS, PREDICTOR_REGISTRY, parse_duration
+from stoptimes.val.engine.assembly import (
+    DEFAULT_PREDICTOR_IDS,
+    PREDICTOR_REGISTRY,
+    is_known_predictor_id,
+    parse_duration,
+)
 from stoptimes.val.feeds.source_config import list_sources, load_named_source
 from stoptimes.val.scoring.metrics import compute_metrics
 from stoptimes.val.storage.sqlite import SqliteStorage
@@ -60,21 +65,32 @@ def _state_to_info(state: RunState) -> RunInfo:
 # ── Application factory ────────────────────────────────────────────────────────
 
 
-def create_app(run_manager: RunManager | None = None) -> FastAPI:
+def create_app(
+    run_manager: RunManager | None = None,
+    sources_dir: str | Path | None = None,
+) -> FastAPI:
     """Create and configure the FastAPI application.
 
     Args:
         run_manager: Optional pre-constructed RunManager.  When None the
             manager is built from the current settings data_dir.  Inject
             a replay-backed manager for offline tests.
+        sources_dir: Directory of agency source-config YAMLs, searched
+            exclusively (passed through to ``list_sources``/``load_named_source``
+            as ``config_dir``). Defaults to ``get_settings().sources_dir``
+            (``ETAVAL_SOURCES_DIR``), which itself defaults to ``None`` — i.e.
+            the normal ``sources_search_path()`` order. Pass this explicitly
+            (rather than relying on the process's current working directory)
+            in tests and in any deployment that doesn't run from the repo root.
 
     Returns:
         A configured FastAPI instance ready to serve requests.
     """
     settings = get_settings()
+    resolved_sources_dir = sources_dir if sources_dir is not None else settings.sources_dir
 
     app = FastAPI(
-        title="etaval REST API",
+        title="stoptimes val REST API",
         description="ETA Prediction Validation — Phase A REST layer",
         version="0.1.0",
     )
@@ -88,7 +104,7 @@ def create_app(run_manager: RunManager | None = None) -> FastAPI:
     )
 
     if run_manager is None:
-        run_manager = RunManager(data_dir=Path(settings.data_dir))
+        run_manager = RunManager(data_dir=Path(settings.data_dir), sources_dir=resolved_sources_dir)
 
     # Expose on app.state so middleware / lifespan hooks can reach it.
     app.state.run_manager = run_manager
@@ -107,9 +123,9 @@ def create_app(run_manager: RunManager | None = None) -> FastAPI:
     async def sources() -> list[dict]:
         """List all configured GTFS-RT sources."""
         result = []
-        for name in list_sources():
+        for name in list_sources(config_dir=resolved_sources_dir):
             try:
-                cfg = load_named_source(name)
+                cfg = load_named_source(name, config_dir=resolved_sources_dir)
             except Exception:  # noqa: BLE001
                 continue
             result.append(
@@ -131,14 +147,14 @@ def create_app(run_manager: RunManager | None = None) -> FastAPI:
     @app.post("/api/runs")
     async def create_run(body: RunRequest) -> dict:
         """Start a new validation run.  Returns ``{run_id}`` immediately."""
-        known_sources = list_sources()
+        known_sources = list_sources(config_dir=resolved_sources_dir)
         if body.source not in known_sources:
             raise HTTPException(
                 status_code=400,
                 detail=f"Unknown source {body.source!r}. Known: {known_sources}",
             )
 
-        bad_pids = [p for p in body.predictors if p not in PREDICTOR_REGISTRY]
+        bad_pids = [p for p in body.predictors if not is_known_predictor_id(p)]
         if bad_pids:
             raise HTTPException(
                 status_code=400,

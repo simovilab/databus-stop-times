@@ -17,12 +17,34 @@ shared file don't need special handling here.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from pathlib import Path
+from typing import Literal
 
 import yaml
 
 from stoptimes.core.config import sources_search_path
 from stoptimes.core.domain.models import SourceConfig
+
+FeedFormat = Literal["json", "pb", "auto"]
+
+
+@dataclass(frozen=True)
+class FeedFormats:
+    """Per-feed wire format, read from the same source YAML as ``SourceConfig``.
+
+    ``SourceConfig`` (pydantic) ignores unknown top-level keys, so an agency
+    YAML can carry ``vehicle_positions_format`` / ``trip_updates_format``
+    (``"json"`` | ``"pb"`` | ``"auto"``, default ``"auto"``) without a
+    ``core`` contract change -- ``load_feed_formats`` reads the same file a
+    second time for just these two keys. ``"auto"`` sniffs the format per
+    response from Content-Type / body (see ``stoptimes.val.feeds.pb.sniff_format``),
+    which is also what an agency YAML with neither key set gets by default --
+    so existing JSON-only configs behave exactly as before.
+    """
+
+    vehicle_positions: FeedFormat = "auto"
+    trip_updates: FeedFormat = "auto"
 
 
 def load_source_config(path: str | Path) -> SourceConfig:
@@ -35,6 +57,20 @@ def load_source_config(path: str | Path) -> SourceConfig:
     with path.open() as fh:
         data = yaml.safe_load(fh)
     return SourceConfig(**data)
+
+
+def load_feed_formats(path: str | Path) -> FeedFormats:
+    """Read the optional ``{vehicle_positions,trip_updates}_format`` keys from *path*.
+
+    Raises FileNotFoundError if the file does not exist.
+    """
+    path = Path(path)
+    with path.open() as fh:
+        data = yaml.safe_load(fh) or {}
+    return FeedFormats(
+        vehicle_positions=data.get("vehicle_positions_format", "auto"),
+        trip_updates=data.get("trip_updates_format", "auto"),
+    )
 
 
 def list_sources(config_dir: Path | None = None) -> list[str]:
@@ -70,3 +106,19 @@ def load_named_source(name: str, config_dir: Path | None = None) -> SourceConfig
         "Set STOPTIMES_SOURCES (or pass --sources-dir) to point at your "
         "agency profile directory -- see examples/agencies/README.md."
     )
+
+
+def load_named_feed_formats(name: str, config_dir: Path | None = None) -> FeedFormats:
+    """Load ``FeedFormats`` for a named source, searching the same path as ``load_named_source``.
+
+    Returns the all-``"auto"`` default (never raises) if the named source
+    isn't found -- callers that need the missing-source error should call
+    ``load_named_source``/``list_sources`` themselves; this helper is meant
+    to be layered on top of an already-resolved source.
+    """
+    dirs = sources_search_path(explicit=config_dir)
+    for directory in dirs:
+        candidate = Path(directory) / f"{name}.yaml"
+        if candidate.is_file():
+            return load_feed_formats(candidate)
+    return FeedFormats()

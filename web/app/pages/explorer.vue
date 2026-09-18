@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import type { RunInfo } from '~/types/api'
 
-useHead({ title: 'explorer – etaval' })
+useHead({ title: 'explorer – stoptimes val' })
 
 const api = useApi()
 

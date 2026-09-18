@@ -4,7 +4,7 @@ import type { RunInfo, RunMetrics, ResultRow, PerPredictorMetric } from '~/types
 const route = useRoute()
 const id = route.params.id as string
 
-useHead({ title: `run ${id} – etaval` })
+useHead({ title: `run ${id} – stoptimes val` })
 
 const api = useApi()
 const router = useRouter()
@@ -338,8 +338,8 @@ const isError = computed(() => displayStatus.value === 'error')
       <div v-if="provenance" class="panel">
         <div class="panel-header"><span class="micro-label">Provenance</span></div>
         <div class="px-3 py-2 grid grid-cols-2 sm:grid-cols-3 gap-x-6">
-          <div class="kv-row"><span class="k">etaval SHA</span><span class="v font-mono">{{ fmtSha(provenance.etaval_git_sha, provenance.etaval_dirty) }}</span></div>
-          <div class="kv-row"><span class="k">gtfs-eta SHA</span><span class="v font-mono">{{ fmtSha(provenance.gtfs_eta_git_sha, provenance.gtfs_eta_dirty) }}</span></div>
+          <div class="kv-row"><span class="k">stoptimes val SHA</span><span class="v font-mono">{{ fmtSha(provenance.etaval_git_sha, provenance.etaval_dirty) }}</span></div>
+          <div class="kv-row"><span class="k">stoptimes SHA</span><span class="v font-mono">{{ fmtSha(provenance.gtfs_eta_git_sha, provenance.gtfs_eta_dirty) }}</span></div>
           <div class="kv-row"><span class="k">Snapshot</span><span class="v">{{ provenance.gtfs_snapshot ?? '—' }}</span></div>
           <div class="kv-row"><span class="k">Seed</span><span class="v">{{ provenance.seed ?? '—' }}</span></div>
           <div class="kv-row"><span class="k">Config hash</span><span class="v font-mono">{{ provenance.source_config_sha256 ? provenance.source_config_sha256.slice(0, 10) : '—' }}</span></div>
