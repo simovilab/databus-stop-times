@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+import json
+from pathlib import Path
+from typing import Optional
+
 import typer
 from stoptimes.cli._util import PASSTHROUGH, planned, require, run_module
 
@@ -9,9 +13,58 @@ app = typer.Typer(help="Build datasets and train models.", no_args_is_help=True)
 
 
 @app.command("run")
-def train_run() -> None:
-    """Train from an experiment.yaml (model, features, hyperparameters, split)."""
-    planned("train run", "Phase 2 · track T3 (experiments)")
+def train_run(
+    experiment_path: Optional[Path] = typer.Argument(
+        None,
+        exists=True,
+        dir_okay=False,
+        help="experiment.yaml (stoptimes.core.contracts.experiment.Experiment).",
+    ),
+    registry: Optional[Path] = typer.Option(
+        None, "--registry", help="Artifact registry directory. Defaults to the experiment's outputs.registry_dir."
+    ),
+    dataset_dir: Optional[Path] = typer.Option(
+        None,
+        "--dataset-dir",
+        help="Directory holding named datasets (overrides STOPTIMES_DATASET_DIR / ./datasets).",
+    ),
+    dry_run: bool = typer.Option(
+        False, "--dry-run", help="Print the resolved plan (data, features, split, model, outputs) and exit."
+    ),
+    overwrite: bool = typer.Option(
+        False, "--overwrite", help="Replace an existing artifact with the same id instead of refusing."
+    ),
+) -> None:
+    """Train from an experiment.yaml: resolve data, build features, split, fit
+    the model plus its baselines, score by horizon, and write an artifact +
+    card. `--dry-run` resolves and prints the plan without touching data."""
+    if experiment_path is None:
+        planned("train run", "Phase 2 · track T3 (experiments)")
+
+    require("stoptimes.train", "train")
+    from stoptimes.core.contracts.experiment import load_experiment
+    from stoptimes.train.experiment import ArtifactExistsError, plan_experiment, run_experiment
+
+    experiment = load_experiment(experiment_path)
+
+    if dry_run:
+        typer.echo(json.dumps(plan_experiment(experiment), indent=2))
+        return
+
+    try:
+        meta = run_experiment(
+            experiment,
+            registry_dir=registry,
+            dataset_dir=dataset_dir,
+            overwrite=overwrite,
+        )
+    except ArtifactExistsError as exc:
+        typer.secho(f"✗ {exc}", fg="red", err=True)
+        raise typer.Exit(1) from exc
+
+    mae = meta.metrics.get("test_mae_seconds")
+    mae_str = f"{mae:.1f}s" if isinstance(mae, (int, float)) else "n/a"
+    typer.echo(f"trained {meta.artifact_id} ({meta.family}), test_mae_seconds={mae_str}")
 
 
 @app.command("ui")

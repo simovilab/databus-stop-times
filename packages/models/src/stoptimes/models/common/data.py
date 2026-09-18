@@ -3,6 +3,7 @@ Data loading and preprocessing utilities for ETA prediction models.
 Handles dataset splitting, feature engineering, and train/test preparation.
 """
 
+import os
 import pandas as pd
 import numpy as np
 from pathlib import Path
@@ -247,24 +248,26 @@ def _default_dataset_search_paths(dataset_name: str) -> List[Path]:
     Candidate locations checked, in order, when load_dataset() gets no
     explicit `dataset_dir`.
 
-    1. `./datasets/{name}.parquet` relative to the current working
+    1. `STOPTIMES_DATASET_DIR` (or `--dataset-dir` passed through as
+       `dataset_dir`) -- the explicit, production-safe way to point at a
+       dataset directory. This is the *only* candidate production code
+       should rely on; it never bakes in a path to another package's test
+       fixtures (a Phase 1 defect: this used to silently fall back to
+       `packages/serve/tests/fixtures/`, so a caller that forgot
+       `dataset_dir` in production could load test data without error).
+    2. `./datasets/{name}.parquet` relative to the current working
        directory -- the layout a real deployment (or a script run from a
        project root) is expected to use.
-    2. The shared `sample.parquet` test fixture at
-       `packages/serve/tests/fixtures/` -- the only dataset that ships in
-       this repo since the pre-migration top-level `datasets/` directory
-       was retired (see docs/MIGRATION_MAP.md). Found by walking up from
-       this file to the workspace's `packages/` directory; bounded by
-       filesystem root, so this is a no-op outside this workspace.
+
+    Tests that need a real dataset must pass `dataset_dir` explicitly
+    (e.g. this package's own `tests/fixtures/`) rather than relying on any
+    fallback here.
     """
-    candidates = [Path.cwd() / "datasets" / f"{dataset_name}.parquet"]
-
-    here = Path(__file__).resolve()
-    for parent in here.parents:
-        if parent.name == "packages":
-            candidates.append(parent / "serve" / "tests" / "fixtures" / f"{dataset_name}.parquet")
-            break
-
+    candidates = []
+    env_dir = os.environ.get("STOPTIMES_DATASET_DIR")
+    if env_dir:
+        candidates.append(Path(env_dir) / f"{dataset_name}.parquet")
+    candidates.append(Path.cwd() / "datasets" / f"{dataset_name}.parquet")
     return candidates
 
 
