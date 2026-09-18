@@ -109,8 +109,39 @@ def _read_table(path: str | Path) -> pd.DataFrame:
     if p.is_file():
         dataset = ds.dataset(str(p), format="parquet")
     else:
-        dataset = ds.dataset(str(p), format="parquet", partitioning="hive")
+        dataset = _hive_dataset(p)
     return dataset.to_table().to_pandas()
+
+
+def _hive_dataset(root: Path):
+    """Open a Hive-partitioned dataset, tolerating a partition key that is
+    also a column.
+
+    pandas >= 3 writes text columns as Arrow `large_string`, while the values
+    parsed out of `route_id=…` directory names are inferred as `string`, and
+    merging the two raises `ArrowTypeError`. When that happens, give the
+    partitioning the file's own types instead of the inferred ones.
+    """
+    import pyarrow as pa
+    import pyarrow.dataset as ds
+
+    try:
+        return ds.dataset(str(root), format="parquet", partitioning="hive")
+    except pa.ArrowTypeError:
+        sample = next(iter(sorted(root.rglob("*.parquet"))), None)
+        if sample is None:
+            raise
+        file_schema = ds.dataset(str(sample), format="parquet").schema
+        fields = []
+        for part in sample.relative_to(root).parts[:-1]:
+            name, _, value = part.partition("=")
+            if name in file_schema.names:
+                field_type = file_schema.field(name).type
+            else:
+                field_type = pa.int32() if value.isdigit() else pa.string()
+            fields.append((name, field_type))
+        partitioning = ds.partitioning(pa.schema(fields), flavor="hive")
+        return ds.dataset(str(root), format="parquet", partitioning=partitioning)
 
 
 def _read_table_s3(uri: str) -> pd.DataFrame:
@@ -176,7 +207,7 @@ def read_vp_groups(
     if df.empty:
         return df
     df = df.copy()
-    df["ts"] = pd.to_numeric(df["ts"], errors="coerce")
+    df["ts"] = _col_to_epoch_seconds(df["ts"])
     df = _apply_window(df, "ts", start, end)
     df = _apply_route_filter(df, route_ids)
     return df.sort_values("ts", kind="stable").reset_index(drop=True)
@@ -247,7 +278,7 @@ def read_tu_groups(
     if df.empty:
         return []
     df = df.copy()
-    df["ts"] = pd.to_numeric(df["ts"], errors="coerce")
+    df["ts"] = _col_to_epoch_seconds(df["ts"])
     df = _apply_window(df, "ts", start, end)
     df = _apply_route_filter(df, route_ids)
     if df.empty:
