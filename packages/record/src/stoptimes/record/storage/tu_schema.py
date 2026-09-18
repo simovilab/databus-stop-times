@@ -34,6 +34,21 @@ BUCKET = "transit"
 BASE_PREFIX = "feeds/mbta/trip_updates_staging"
 PARTITION_COLUMNS = ("year", "month", "day")
 
+# --- Parameterized layout (Phase 2, T5) ------------------------------------
+# See ``schema.py``'s equivalent note: ``BASE_PREFIX`` stays a frozen literal
+# for back-compat; new agency-generic code uses this template, which defaults
+# to exactly today's MBTA layout.
+STAGING_PREFIX_TEMPLATE = "feeds/{source_id}/trip_updates_staging"
+
+
+def staging_prefix(source_id: str = "mbta", template: str = STAGING_PREFIX_TEMPLATE) -> str:
+    """TripUpdates staging prefix for ``source_id``.
+
+    ``staging_prefix("mbta") == BASE_PREFIX`` -- existing archives keep
+    working unchanged.
+    """
+    return template.format(source_id=source_id)
+
 # Columns persisted inside each Parquet file. Deliberately narrow: no
 # scheduled-time echoes, no occupancy, no stop_time_properties -- every column
 # here is either part of the natural key, part of the prediction, or needed to
