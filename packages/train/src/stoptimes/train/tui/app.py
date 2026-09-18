@@ -15,6 +15,7 @@ libraries directly (docs/PLAN.md rule 2).
 
 from __future__ import annotations
 
+from datetime import date
 from pathlib import Path
 
 from textual.app import App, ComposeResult
@@ -96,6 +97,19 @@ class ExperimentBuilderApp(App):
 
             yield Label("Routes (comma-separated route ids, blank = all routes)")
             yield Input(value=",".join(self.draft.routes or []), id="routes")
+
+            yield Label("Start date (YYYY-MM-DD, blank = no lower bound)")
+            yield Input(
+                value=self.draft.start_date.isoformat() if self.draft.start_date else "",
+                placeholder="2026-06-01",
+                id="start-date",
+            )
+            yield Label("End date (YYYY-MM-DD, blank = no upper bound)")
+            yield Input(
+                value=self.draft.end_date.isoformat() if self.draft.end_date else "",
+                placeholder="2026-08-31",
+                id="end-date",
+            )
 
             yield Static("Target", classes="section-title")
             options = [(f"{t.name} -- {t.description}", t.name) for t in self._targets]
@@ -206,7 +220,11 @@ class ExperimentBuilderApp(App):
         if event.button.id == "save-button":
             self.action_save()
 
-    def _sync_draft_from_widgets(self) -> None:
+    def _sync_draft_from_widgets(self) -> list[str]:
+        """Write every widget's value back onto `self.draft`. Returns any
+        problems found while parsing a widget's value (currently just the
+        two date fields) -- these are surfaced to the user like any other
+        validation problem, never dropped silently and never raised."""
         draft = self.draft
         draft.name = self.query_one("#name", Input).value.strip()
         draft.sources = _split_csv(self.query_one("#sources", Input).value)
@@ -236,11 +254,33 @@ class ExperimentBuilderApp(App):
         seed_value = _parse_optional_int(self.query_one("#seed", Input).value)
         draft.seed = seed_value if seed_value is not None else 42
 
+        problems: list[str] = []
+        start_value, start_problem = _parse_optional_date(
+            self.query_one("#start-date", Input).value, "start_date"
+        )
+        if start_problem is not None:
+            problems.append(start_problem)
+        else:
+            draft.start_date = start_value
+        end_value, end_problem = _parse_optional_date(self.query_one("#end-date", Input).value, "end_date")
+        if end_problem is not None:
+            problems.append(end_problem)
+        else:
+            draft.end_date = end_value
+        return problems
+
     def action_save(self) -> None:
-        self._sync_draft_from_widgets()
+        # Widget-parse problems (e.g. an unparseable date) are collected up
+        # front and block the save exactly like a validate_draft problem --
+        # never silently dropped and never an uncaught exception.
+        parse_problems = self._sync_draft_from_widgets()
         path = self.query_one("#save-path", Input).value.strip() or self.save_path
         problems_widget = self.query_one("#problems", Static)
         status_widget = self.query_one("#status", Static)
+        if parse_problems:
+            problems_widget.update("\n".join(f"- {p}" for p in parse_problems))
+            status_widget.update("")
+            return
         try:
             write_draft(self.draft, path)
         except ExperimentDraftError as exc:
@@ -267,6 +307,21 @@ def _parse_optional_int(value: str) -> int | None:
     if not value:
         return None
     return int(value)
+
+
+def _parse_optional_date(value: str, field_name: str) -> tuple[date | None, str | None]:
+    """Parse an ISO (YYYY-MM-DD) date field. Returns `(None, None)` for a
+    blank input, `(parsed_date, None)` on success, or `(None, problem)` on
+    a bad value -- the caller keeps the draft's previous value rather than
+    silently clearing it, and surfaces `problem` the same way any other
+    validation failure is shown."""
+    value = value.strip()
+    if not value:
+        return None, None
+    try:
+        return date.fromisoformat(value), None
+    except ValueError:
+        return None, f"{field_name}: {value!r} is not a valid date (expected YYYY-MM-DD)"
 
 
 def _parse_params(value: str) -> dict[str, object]:
