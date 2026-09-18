@@ -1,6 +1,6 @@
 # stoptimes — implementation plan
 
-Status: **Phase 1 merged — awaiting sign-off on docs/CONTRACTS.md** · nothing pushed · branch `feat/stoptimes-scaffold` · last updated 2026-09-16
+Status: **Phase 1 signed off (2026-09-17)** · next: Phase 2 · nothing pushed · branch `feat/stoptimes-scaffold` · last updated 2026-09-16
 
 This is the working plan for turning SIMOVI's ETA research code (`gtfs-eta`) and its
 validation tool (`etaval`) into **stoptimes**: a general toolkit that lets anyone with
@@ -226,7 +226,8 @@ Carried into Phase 2: val API `/api/sources` tests assume cwd = repo root (T6); 
 keeps production bUCR pins without a profile file, delete in G1; migrated `params` include some non-hyperparameter
 fields (T3 may curate per family); `models/common/data.py` test-fixture fallback (T1). Notes: `docs/notes/p1-{c1,c2,c3}.md`.
 
-**Gate:** user reviews `docs/CONTRACTS.md`. After sign-off, contract changes need an orchestrator-approved note.
+**Gate (passed):** user signed off `docs/CONTRACTS.md` with the six recommendations, plus the added
+`selection` contract (per-route/per-trip model choice) answering their serving question. After sign-off, contract changes need an orchestrator-approved note.
 
 ---
 
