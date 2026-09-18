@@ -12,11 +12,13 @@ dependencies = [
 
 [project.optional-dependencies]
 core = ["stoptimes-core"]
+models = ["stoptimes-models"]
 record = ["stoptimes-record"]
 train = ["stoptimes-train"]
+tui = ["stoptimes-train[tui]"]
 serve = ["stoptimes-serve[xgboost]"]
 val = ["stoptimes-val[api,models]"]
-all = ["stoptimes[core,record,train,serve,val]"]
+all = ["stoptimes[core,models,record,train,tui,serve,val]"]
 
 [project.scripts]
 stoptimes = "stoptimes.cli.main:app"

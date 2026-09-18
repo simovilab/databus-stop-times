@@ -1760,13 +1760,17 @@ dependencies = [
 [package.optional-dependencies]
 all = [
     { name = "stoptimes-core" },
+    { name = "stoptimes-models" },
     { name = "stoptimes-record" },
     { name = "stoptimes-serve", extra = ["xgboost"] },
-    { name = "stoptimes-train" },
+    { name = "stoptimes-train", extra = ["tui"] },
     { name = "stoptimes-val", extra = ["api", "models"] },
 ]
 core = [
     { name = "stoptimes-core" },
+]
+models = [
+    { name = "stoptimes-models" },
 ]
 record = [
     { name = "stoptimes-record" },
@@ -1777,6 +1781,9 @@ serve = [
 train = [
     { name = "stoptimes-train" },
 ]
+tui = [
+    { name = "stoptimes-train", extra = ["tui"] },
+]
 val = [
     { name = "stoptimes-val", extra = ["api", "models"] },
 ]
@@ -1784,15 +1791,17 @@ val = [
 [package.metadata]
 requires-dist = [
     { name = "rich", specifier = ">=13.7" },
-    { name = "stoptimes", extras = ["core", "record", "train", "serve", "val"], marker = "extra == 'all'", editable = "packages/cli" },
+    { name = "stoptimes", extras = ["core", "models", "record", "train", "tui", "serve", "val"], marker = "extra == 'all'", editable = "packages/cli" },
     { name = "stoptimes-core", marker = "extra == 'core'", editable = "packages/core" },
+    { name = "stoptimes-models", marker = "extra == 'models'", editable = "packages/models" },
     { name = "stoptimes-record", marker = "extra == 'record'", editable = "packages/record" },
     { name = "stoptimes-serve", extras = ["xgboost"], marker = "extra == 'serve'", editable = "packages/serve" },
     { name = "stoptimes-train", marker = "extra == 'train'", editable = "packages/train" },
+    { name = "stoptimes-train", extras = ["tui"], marker = "extra == 'tui'", editable = "packages/train" },
     { name = "stoptimes-val", extras = ["api", "models"], marker = "extra == 'val'", editable = "packages/val" },
     { name = "typer", specifier = ">=0.12" },
 ]
-provides-extras = ["core", "record", "train", "serve", "val", "all"]
+provides-extras = ["core", "models", "record", "train", "tui", "serve", "val", "all"]
 
 [[package]]
 name = "stoptimes-core"
@@ -1926,6 +1935,9 @@ django = [
 torch = [
     { name = "stoptimes-models", extra = ["torch"] },
 ]
+tui = [
+    { name = "textual" },
+]
 viz = [
     { name = "matplotlib" },
 ]
@@ -1944,8 +1956,9 @@ requires-dist = [
     { name = "stoptimes-models", extras = ["xgboost"], editable = "packages/models" },
     { name = "stoptimes-record", editable = "packages/record" },
     { name = "stoptimes-serve", editable = "packages/serve" },
+    { name = "textual", marker = "extra == 'tui'", specifier = ">=0.85" },
 ]
-provides-extras = ["django", "torch", "viz"]
+provides-extras = ["django", "torch", "tui", "viz"]
 
 [[package]]
 name = "stoptimes-val"

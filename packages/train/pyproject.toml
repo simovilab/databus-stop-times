@@ -19,6 +19,8 @@ dependencies = [
 # Legacy Postgres dataset builder (datasets/dataset_builder.py, weather cache).
 django = ["Django>=5.0", "django-environ>=0.11", "psycopg[binary,pool]>=3.2.11"]
 torch = ["stoptimes-models[torch]"]
+# Experiment builder TUI (`stoptimes train ui`).
+tui = ["textual>=0.85"]
 viz = ["matplotlib>=3.9"]
 
 [build-system]

@@ -55,10 +55,13 @@ def test_help_lists_every_area():
         assert name in result.output
 
 
-def test_planned_command_exits_2_and_names_phase():
-    result = runner.invoke(app, ["diagnose"])
-    assert result.exit_code == 2
-    assert "Phase 3" in result.output
+def test_planned_commands_are_all_gone():
+    """Phase 3 built the last two placeholders (`diagnose`, `train ui`). Nothing
+    in the command tree may still answer with the `planned()` stub."""
+    for argv in (["diagnose", "--help"], ["train", "ui", "--help"]):
+        result = runner.invoke(app, argv)
+        assert result.exit_code == 0, argv
+        assert "planned" not in result.output.lower(), argv
 
 
 def test_val_is_mounted():
@@ -129,10 +132,11 @@ def test_train_help():
 
 
 
-def test_train_ui_is_planned():
-    result = runner.invoke(app, ["train", "ui"])
-    assert result.exit_code == 2
-    assert "Phase 3" in result.output
+def test_train_ui_is_wired_to_the_builder():
+    """`train ui --help` is real help now, and names the file it writes."""
+    result = runner.invoke(app, ["train", "ui", "--help"])
+    assert result.exit_code == 0
+    assert "planned" not in result.output.lower()
 
 
 def test_train_legacy_all_passthrough_reaches_train_all_models():
@@ -281,11 +285,13 @@ def test_serve_requires_a_source():
     assert "planned" not in result.output
 
 
-def test_diagnose_is_planned_phase3_track_u3():
-    result = runner.invoke(app, ["diagnose"])
-    assert result.exit_code == 2
-    assert "Phase 3" in result.output
-    assert "track U3" in result.output
+def test_diagnose_runs_and_reports_rather_than_failing():
+    """A feed with nothing in it is a successful run reporting blockers, not a
+    crash and not a non-zero exit -- that distinction is the whole point of the
+    command for a newcomer."""
+    result = runner.invoke(app, ["diagnose", "--json"])
+    assert result.exit_code == 0, result.output
+    assert "planned" not in result.output.lower()
 
 
 # ── val (mounted etaval CLI + api/tui launchers) ─────────────────────────────
@@ -314,8 +320,15 @@ def test_val_tui_help_reaches_argparse():
 def test_implemented_commands_never_claim_to_be_planned():
     """Every command that Phase 2 built must give a real usage error, not the
     placeholder text from before it existed."""
+    # invoked with required arguments missing: must be a real usage error
     for argv in (["data", "add"], ["data", "arrivals"], ["record", "start"], ["record", "status"],
                  ["train", "run"], ["models", "card"], ["serve"]):
         result = runner.invoke(app, argv)
         assert result.exit_code != 0, argv
-        assert "planned" not in result.output, argv
+        assert "planned" not in result.output.lower(), argv
+
+    # the two Phase 3 commands take no required arguments, so --help is the check
+    for argv in (["train", "ui", "--help"], ["diagnose", "--help"]):
+        result = runner.invoke(app, argv)
+        assert result.exit_code == 0, argv
+        assert "planned" not in result.output.lower(), argv

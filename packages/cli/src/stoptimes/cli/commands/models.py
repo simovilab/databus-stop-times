@@ -18,7 +18,7 @@ _DEFAULT_REGISTRY = Path("artifacts/models")
 @app.command("check", context_settings=PASSTHROUGH)
 def models_check(ctx: typer.Context) -> None:
     """Check the model registry (migrated gtfs-eta check_registry)."""
-    require("stoptimes.models", "core")
+    require("stoptimes.models", "models")
     run_module("stoptimes.models.check_registry", "stoptimes models check", ctx.args)
 
 
@@ -37,7 +37,7 @@ def models_list(
 
     `--json`: a list of ``{"artifact_id", "family", "scope", "routes", "metric", "created"}``.
     """
-    require("stoptimes.models", "core")
+    require("stoptimes.models", "models")
     from stoptimes.core.contracts.artifact import ArtifactMetadata, METADATA_FILENAME, read_metadata
 
     rows: list[dict] = []
@@ -107,7 +107,7 @@ def models_card(
         )
         raise typer.Exit(2)
 
-    require("stoptimes.models", "core")
+    require("stoptimes.models", "models")
     from stoptimes.core.contracts.artifact import artifact_dir
 
     card_path = artifact_dir(registry, artifact_id) / "card.md"
@@ -143,7 +143,7 @@ def models_promote(
 
     `--json`: ``{"artifact_id": str, "pin": str, "source": str, "profile_path": str}``.
     """
-    require("stoptimes.models", "core")
+    require("stoptimes.models", "models")
     import yaml
     from stoptimes.core.contracts.artifact import METADATA_FILENAME, artifact_dir, read_metadata
 
@@ -208,7 +208,7 @@ def models_migrate(
     artifact is reported skipped and the rest of the run continues. Exits 1
     if any artifact failed outright.
     """
-    require("stoptimes.models", "core")
+    require("stoptimes.models", "models")
     from stoptimes.models.compat.migrate import MigrationItem, migrate
 
     report = migrate(legacy_dir, registry_dir, dry_run=dry_run, overwrite=overwrite)
