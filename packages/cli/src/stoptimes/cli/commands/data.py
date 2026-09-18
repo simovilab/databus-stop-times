@@ -403,6 +403,127 @@ def data_arrivals(
         typer.echo(f"  {method}: {count}")
 
 
+@app.command("frame")
+def data_frame(
+    observations: str = typer.Option(
+        ..., "--observations", help="Observations to build from: a catalog dataset name, or a path/URI."
+    ),
+    arrivals: str = typer.Option(
+        ..., "--arrivals", help="The Arrival table (target): a catalog dataset name, or a path/URI to a parquet file."
+    ),
+    static: str = typer.Option(..., "--static", help="GTFS static .zip (path or URL)."),
+    source: str = typer.Option(..., "--source", help="Source id (agency) these observations/arrivals came from."),
+    out: str = typer.Option(..., "--out", help="Where to write the training frame parquet."),
+    max_stops_ahead: int = typer.Option(
+        5, "--max-stops-ahead", help="Upcoming stops emitted per vehicle-position row."
+    ),
+    keep_unlabeled: bool = typer.Option(
+        False, "--keep-unlabeled", help="Keep rows with no matching arrival (target left NaN) instead of dropping them."
+    ),
+    sources_dir: str | None = typer.Option(
+        None, "--sources-dir", help="Directory of agency YAMLs (default: STOPTIMES_SOURCES -> ./examples/agencies)."
+    ),
+    register: str | None = typer.Option(
+        None, "--register", help="Also register the result in the catalog under this name."
+    ),
+    overwrite: bool = typer.Option(False, "--overwrite", help="Replace an existing catalog entry / output file."),
+    json_output: bool = typer.Option(False, "--json", help="Print a machine-readable summary."),
+) -> None:
+    """Build the training frame: observations + arrivals + static GTFS -> one
+    row per (vehicle position, upcoming stop), ready for `train run`
+    (via the feature registry, which adds temporal features on top).
+    """
+    from stoptimes.core.catalog import Catalog, DatasetEntry, DatasetExistsError, DatasetKind
+    from stoptimes.train.frame import FrameParams, build_training_frame
+
+    src = _resolve_source(source, sources_dir)
+    obs_frame = _load_observations(observations, source)
+    arrivals_frame = _load_arrivals(arrivals)
+    loader, static_feed = _read_static_or_exit(static, source)
+
+    out_path = Path(out)
+    if out_path.exists() and not overwrite:
+        typer.secho(f"✗ {out} already exists (pass --overwrite to replace it)", fg="red", err=True)
+        raise typer.Exit(1)
+
+    params = FrameParams(max_stops_ahead=max_stops_ahead, keep_unlabeled=keep_unlabeled)
+    result = build_training_frame(obs_frame, arrivals_frame, loader, source=src, params=params)
+
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    result.to_parquet(out_path, index=False)
+
+    date_start = date_end = None
+    if not result.empty:
+        date_start = str(result["vp_ts"].min())
+        date_end = str(result["vp_ts"].max())
+
+    if register:
+        entry = DatasetEntry(
+            name=register,
+            source_id=source,
+            # `DatasetKind` has no dedicated "prepared frame" kind yet (see
+            # docs/notes/p2-t7.md) -- `arrivals` is the closest fit: this is
+            # data derived downstream of the Arrival table, not raw
+            # observations. `extra.stage` disambiguates from a raw Arrival
+            # table registered by `data arrivals`.
+            kind=DatasetKind.ARRIVALS,
+            location=str(out_path),
+            date_start=date_start,
+            date_end=date_end,
+            row_count=int(len(result)),
+            added_at=_now_utc(),
+            extra={
+                "stage": "training_frame",
+                "derived_from_observations": observations,
+                "derived_from_arrivals": arrivals,
+                "static": static,
+                "max_stops_ahead": max_stops_ahead,
+            },
+        )
+        try:
+            Catalog().add(entry, overwrite=overwrite)
+        except DatasetExistsError as exc:
+            typer.secho(f"✗ {exc} (pass --overwrite to replace it)", fg="red", err=True)
+            raise typer.Exit(1) from None
+
+    n_labeled = int(result["time_to_arrival_seconds"].notna().sum()) if not result.empty else 0
+    summary = {
+        "source": source,
+        "observations": int(len(obs_frame)),
+        "arrivals": int(len(arrivals_frame)),
+        "rows": int(len(result)),
+        "labeled_rows": n_labeled,
+        "static_tables": static_feed.tables,
+        "out": str(out_path),
+        "registered": register,
+    }
+
+    if json_output:
+        typer.echo(_json.dumps(summary, indent=2))
+        return
+
+    typer.secho(
+        f"✓ {summary['rows']} row(s) ({summary['labeled_rows']} labeled) from "
+        f"{summary['observations']} observation(s) + {summary['arrivals']} arrival(s) → {out_path}",
+        fg="green",
+    )
+
+
+def _load_arrivals(reference: str):
+    """`reference` is a catalog dataset name if one is registered, else a parquet path/URI."""
+    import pandas as pd
+
+    from stoptimes.core.catalog import Catalog
+
+    entry = Catalog().get(reference)
+    location = entry.location if entry is not None else reference
+    try:
+        return pd.read_parquet(location)
+    except (OSError, ValueError) as exc:
+        typer.secho(f"✗ could not read arrivals {location!r}: {exc}", fg="red", err=True)
+        raise typer.Exit(1) from None
+
+
 def _resolve_source(source_id: str, sources_dir: str | None):
     """Load an agency file the same way `serve` and `record` do."""
     import os

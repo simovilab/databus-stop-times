@@ -52,6 +52,77 @@ def test_resolve_dataset_raises_clear_error_for_sources():
         resolve_dataset(DataSelection(sources=["mbta"]))
 
 
+@pytest.fixture()
+def _isolated_catalog(tmp_path, monkeypatch):
+    from stoptimes.core.config import reset_config
+
+    monkeypatch.setenv("STOPTIMES_HOME", str(tmp_path / "home"))
+    reset_config()
+    yield tmp_path
+    reset_config()
+
+
+def _register_catalog_entry(name: str, *, kind, location) -> None:
+    from datetime import datetime, timezone
+
+    from stoptimes.core.catalog import Catalog, DatasetEntry
+
+    Catalog().add(
+        DatasetEntry(
+            name=name,
+            kind=kind,
+            location=str(location),
+            added_at=datetime.now(timezone.utc),
+        )
+    )
+
+
+def test_resolve_dataset_via_catalog_for_a_named_dataset(_isolated_catalog):
+    import shutil
+
+    from stoptimes.core.catalog import DatasetKind
+
+    frame_path = _isolated_catalog / "frame.parquet"
+    shutil.copy(_FIXTURES_DIR / "sample.parquet", frame_path)
+    _register_catalog_entry("prepared-frame", kind=DatasetKind.ARRIVALS, location=frame_path)
+
+    dataset = resolve_dataset(DataSelection(datasets=["prepared-frame"]))
+    assert len(dataset.df) > 0
+    assert "time_to_arrival_seconds" in dataset.df.columns
+
+
+def test_resolve_dataset_via_catalog_for_a_source(_isolated_catalog):
+    import shutil
+
+    from stoptimes.core.catalog import DatasetKind
+
+    frame_path = _isolated_catalog / "frame.parquet"
+    shutil.copy(_FIXTURES_DIR / "sample.parquet", frame_path)
+    _register_catalog_entry("mbta", kind=DatasetKind.ARRIVALS, location=frame_path)
+
+    dataset = resolve_dataset(DataSelection(sources=["mbta"]))
+    assert len(dataset.df) > 0
+
+
+def test_resolve_dataset_rejects_a_static_catalog_entry(_isolated_catalog):
+    from stoptimes.core.catalog import DatasetKind
+
+    _register_catalog_entry("static-feed", kind=DatasetKind.STATIC, location="unused.zip")
+
+    with pytest.raises(ValueError, match="static"):
+        resolve_dataset(DataSelection(datasets=["static-feed"]))
+
+
+def test_resolve_dataset_names_the_missing_source_when_uncataloged(_isolated_catalog):
+    with pytest.raises(NotImplementedError, match="data catalog"):
+        resolve_dataset(DataSelection(sources=["nope"]))
+
+
+def test_resolve_dataset_still_falls_back_to_load_dataset_when_uncataloged(_isolated_catalog):
+    dataset = resolve_dataset(DataSelection(datasets=["sample"]), dataset_dir=_FIXTURES_DIR)
+    assert len(dataset.df) > 0
+
+
 def test_plan_experiment_is_pure_and_matches_experiment():
     experiment = _experiment()
     plan = plan_experiment(experiment)
