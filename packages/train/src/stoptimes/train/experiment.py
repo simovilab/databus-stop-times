@@ -55,18 +55,60 @@ def _sanitize_artifact_id(name: str) -> str:
     return sanitized
 
 
+def _load_dataset_from_catalog(name: str):
+    """Load `name` from T1's local data catalog (`core.catalog.Catalog`) as
+    an `ETADataset`, if it's registered there.
+
+    Returns `None` when `name` isn't in the catalog (the caller falls back
+    to `stoptimes.models.common.data.load_dataset` for `datasets`, or raises
+    for `sources`). Raises `ValueError` when `name` *is* registered but
+    can't serve as a training frame -- a `kind=static` entry (raw GTFS, no
+    `vp_ts`/target at all), or any entry whose parquet is missing the
+    columns `ETADataset` needs (most likely a raw `Arrival` table registered
+    under `kind=arrivals` without ever being run through
+    `stoptimes.train.frame.build_training_frame` first --
+    `core.catalog.models.DatasetKind` has no dedicated "prepared frame" kind
+    yet, see docs/notes/p2-t7.md).
+    """
+    from stoptimes.core.catalog import Catalog, DatasetKind
+
+    entry = Catalog().get(name)
+    if entry is None:
+        return None
+    if entry.kind is DatasetKind.STATIC:
+        raise ValueError(
+            f"catalog dataset {name!r} is a static GTFS feed (kind=static) -- resolve_dataset "
+            "needs a prepared training frame (built by `stoptimes data frame`, or a dataset "
+            "with vp_ts + a target column), not raw GTFS static tables"
+        )
+
+    from stoptimes.models.common.data import ETADataset
+
+    try:
+        return ETADataset(entry.location)
+    except Exception as exc:
+        raise ValueError(
+            f"catalog dataset {name!r} (kind={entry.kind.value}) at {entry.location!r} could not "
+            f"be loaded as a training frame ({exc}); register a prepared frame built by "
+            "`stoptimes data frame --register <name>` instead"
+        ) from exc
+
+
 def resolve_dataset(selection: DataSelection, *, dataset_dir: str | Path | None = None):
     """Turn an `Experiment.data` selection into a loaded `ETADataset`.
 
-    **Seam**: T1's local data catalog (`core/catalog/**`) doesn't exist yet.
-    `selection.datasets` (named, already-prepared parquet datasets) is
-    resolved today via `stoptimes.models.common.data.load_dataset` — the
-    same lookup every model family's own `train_*` function uses.
-    `selection.sources` (raw agency/feed ids, meant to route through the
-    catalog once T1 builds it) has no resolver yet: this raises
-    `NotImplementedError` naming exactly what's missing, rather than
-    guessing at a dataset, so T1 has one function to extend
-    (`docs/notes/p2-t3.md` has the details).
+    `selection.datasets` (named datasets) and `selection.sources` (raw
+    agency/feed ids) are both resolved the same way first: through T1's
+    local data catalog (`stoptimes.core.catalog.Catalog`) -- a registered
+    dataset of kind `observations`/`arrivals`/a prepared training frame
+    (anything `ETADataset` can load: a `vp_ts` column plus a target). For
+    `datasets` only, an unregistered name then falls back to
+    `stoptimes.models.common.data.load_dataset`'s bare-parquet-name lookup
+    (the same one every model family's own `train_*` function already
+    uses). `sources` has no such fallback -- a raw source id was never a
+    parquet filename -- so an unregistered source raises
+    `NotImplementedError` naming exactly what's missing rather than
+    guessing at a path.
     """
     from stoptimes.models.common.data import load_dataset
 
@@ -75,13 +117,30 @@ def resolve_dataset(selection: DataSelection, *, dataset_dir: str | Path | None 
             raise NotImplementedError(
                 f"resolve_dataset: only one dataset name is supported today, got {selection.datasets!r}"
             )
-        return load_dataset(selection.datasets[0], dataset_dir=dataset_dir)
+        name = selection.datasets[0]
+        dataset = _load_dataset_from_catalog(name)
+        if dataset is not None:
+            return dataset
+        return load_dataset(name, dataset_dir=dataset_dir)
 
-    raise NotImplementedError(
-        f"resolve_dataset: DataSelection.sources={selection.sources!r} has no resolver yet "
-        "-- T1's data catalog isn't built. Pass `data.datasets: [<name>]` naming a prepared "
-        "parquet dataset instead (see stoptimes.models.common.data.load_dataset), or extend "
-        "resolve_dataset() once catalog lookup exists."
+    if selection.sources:
+        if len(selection.sources) > 1:
+            raise NotImplementedError(
+                f"resolve_dataset: only one source is supported today, got {selection.sources!r}"
+            )
+        source_id = selection.sources[0]
+        dataset = _load_dataset_from_catalog(source_id)
+        if dataset is not None:
+            return dataset
+        raise NotImplementedError(
+            f"resolve_dataset: DataSelection.sources={selection.sources!r} has no matching "
+            "registered dataset in the local data catalog -- register a prepared training "
+            f"frame under that name (e.g. `stoptimes data frame --register {source_id}`), "
+            "or pass `data.datasets: [<name>]` naming one instead."
+        )
+
+    raise NotImplementedError(  # pragma: no cover - DataSelection's validator already forbids this
+        f"resolve_dataset: DataSelection has neither sources nor datasets: {selection!r}"
     )
 
 
