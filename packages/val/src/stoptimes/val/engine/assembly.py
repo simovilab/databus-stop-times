@@ -30,11 +30,9 @@ import httpx
 
 from stoptimes.core.domain.models import SourceConfig
 from stoptimes.val.engine.runtime import FeedSnapshot, LiveFeedSource
-from stoptimes.core.realtime.gtfsrt_json import (
-    TripUpdatesPoller,
-    VehiclePositionRecord,
-    VehiclePositionsPoller,
-)
+from stoptimes.core.realtime.gtfsrt_json import VehiclePositionRecord
+from stoptimes.val.feeds.pb import AutoTripUpdatesPoller, AutoVehiclePositionsPoller
+from stoptimes.val.feeds.source_config import FeedFormats
 from stoptimes.core.gtfs.static import GtfsStaticLoader
 from stoptimes.val.groundtruth.position_radius import PositionRadiusDetector
 from stoptimes.val.groundtruth.shape_distance import ShapeDistanceDetector
@@ -251,12 +249,13 @@ def build_live_run(
     cfg: SourceConfig,
     predictor_ids: list[str] | None = None,
     routes: list[str] | None = None,
+    formats: FeedFormats | None = None,
 ) -> LiveRunDeps:
     """Download GTFS and assemble all live-run dependencies.
 
     Downloads the GTFS static zip, loads it into a GtfsStaticLoader, builds
-    VehiclePositionsPoller + TripUpdatesPoller + LiveFeedSource (optionally
-    wrapped with a route filter), instantiates predictors and detectors.
+    the VP/TU pollers + LiveFeedSource (optionally wrapped with a route
+    filter), instantiates predictors and detectors.
 
     The caller MUST delete ``deps.gtfs_path`` after the run (see LiveRunDeps).
 
@@ -266,6 +265,12 @@ def build_live_run(
                        DEFAULT_PREDICTOR_IDS.
         routes:        Optional list of route IDs to filter to.  ``None`` or
                        empty means all routes.
+        formats:       Per-feed wire format (``FeedFormats``, see
+                       ``stoptimes.val.feeds.source_config``). ``None`` uses
+                       ``FeedFormats()`` — both feeds default to ``"auto"``,
+                       which sniffs JSON vs protobuf per response
+                       (``stoptimes.val.feeds.pb.sniff_format``) and is a
+                       no-op for existing JSON-only sources.
 
     Returns:
         LiveRunDeps instance.  The temporary GTFS zip at ``gtfs_path`` is
@@ -278,9 +283,14 @@ def build_live_run(
     gtfs_path = download_gtfs(cfg)
     static_loader = GtfsStaticLoader(gtfs_path)
 
+    formats = formats or FeedFormats()
     headers: dict[str, str] = dict(cfg.headers)
-    vp_poller = VehiclePositionsPoller(cfg.vehicle_positions_url, headers=headers)
-    tu_poller = TripUpdatesPoller(cfg.trip_updates_url, headers=headers)
+    vp_poller = AutoVehiclePositionsPoller(
+        cfg.vehicle_positions_url, headers=headers, format=formats.vehicle_positions
+    )
+    tu_poller = AutoTripUpdatesPoller(
+        cfg.trip_updates_url, headers=headers, format=formats.trip_updates
+    )
     live_source = LiveFeedSource(vp_poller, tu_poller)
 
     feed_source: LiveFeedSource

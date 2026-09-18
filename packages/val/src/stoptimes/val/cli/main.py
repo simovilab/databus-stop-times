@@ -61,11 +61,12 @@ from stoptimes.val.engine.runtime import (
     RunSummary,
     run_engine,
 )
-from stoptimes.core.realtime.gtfsrt_json import (
-    TripUpdatesPoller,
-    VehiclePositionsPoller,
+from stoptimes.val.feeds.pb import AutoTripUpdatesPoller, AutoVehiclePositionsPoller
+from stoptimes.val.feeds.source_config import (
+    list_sources,
+    load_named_feed_formats,
+    load_named_source,
 )
-from stoptimes.val.feeds.source_config import list_sources, load_named_source
 from stoptimes.core.gtfs.static import GtfsStaticLoader
 from stoptimes.val.figures import render_all_figures
 from stoptimes.val.provenance import RunProvenance, build_run_provenance, write_provenance_sidecar
@@ -230,6 +231,18 @@ def run(
     seed: int | None = typer.Option(
         None, "--seed", help="Run seed, recorded in provenance (no RNG in the tick loop today)"
     ),
+    vp_format: str = typer.Option(
+        "auto",
+        "--vp-format",
+        help="VehiclePositions wire format: json | pb | auto (default; sniffed per response). "
+        "Live mode only -- overrides the source YAML's vehicle_positions_format, if set.",
+    ),
+    tu_format: str = typer.Option(
+        "auto",
+        "--tu-format",
+        help="TripUpdates wire format: json | pb | auto (default; sniffed per response). "
+        "Live mode only -- overrides the source YAML's trip_updates_format, if set.",
+    ),
 ) -> None:
     """Run headless ETA validation against a live GTFS-RT source, or replay an archive.
 
@@ -357,9 +370,20 @@ def run(
     _attach_static_loader(predictors, static_loader)
 
     # ── Build pollers + live feed source ──────────────────────────────────────
+    # A CLI --vp-format/--tu-format flag other than the "auto" default wins;
+    # otherwise fall back to the source YAML's own format hint (also "auto"
+    # if unset) -- see stoptimes.val.feeds.source_config.FeedFormats.
+    yaml_formats = load_named_feed_formats(source)
+    effective_vp_format = vp_format if vp_format != "auto" else yaml_formats.vehicle_positions
+    effective_tu_format = tu_format if tu_format != "auto" else yaml_formats.trip_updates
+
     headers: dict[str, str] = dict(cfg.headers)
-    vp_poller = VehiclePositionsPoller(cfg.vehicle_positions_url, headers=headers)
-    tu_poller = TripUpdatesPoller(cfg.trip_updates_url, headers=headers)
+    vp_poller = AutoVehiclePositionsPoller(
+        cfg.vehicle_positions_url, headers=headers, format=effective_vp_format
+    )
+    tu_poller = AutoTripUpdatesPoller(
+        cfg.trip_updates_url, headers=headers, format=effective_tu_format
+    )
     live_source = LiveFeedSource(vp_poller, tu_poller)
 
     # Route filter wraps the live source; run_engine still sees a LiveFeedSource
