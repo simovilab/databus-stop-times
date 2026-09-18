@@ -154,7 +154,9 @@ OBSERVATION_TU_PARTITION: year={year}/month={month}/day={day}
 
 ### `Arrival`
 
-One actual (derived or reported) stop arrival:
+One actual (derived or reported) stop arrival. Keyed by (trip, service day,
+`stop_sequence`) — **not** by `stop_id`: a loop route visits the same stop
+twice in one trip and both visits are real, independent evidence.
 
 ```
 Arrival

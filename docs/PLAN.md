@@ -1,6 +1,6 @@
 # stoptimes — implementation plan
 
-Status: **Phase 1 signed off (2026-09-17)** · next: Phase 2 · nothing pushed · branch `feat/stoptimes-scaffold` · last updated 2026-09-16
+Status: **Phase 2 complete — gate passed (2026-09-18)** · next: Phase 3 · nothing pushed · branch `feat/stoptimes-scaffold` · last updated 2026-09-16
 
 This is the working plan for turning SIMOVI's ETA research code (`gtfs-eta`) and its
 validation tool (`etaval`) into **stoptimes**: a general toolkit that lets anyone with
@@ -245,6 +245,28 @@ Tracks interact only through `stoptimes.core.contracts`. Each owns its modules a
 | **T6 Val** | `val/**`, `cli/commands/val.py`, `web/**` | Protobuf feeds; replay from T5 archive; `stoptimes:<artifact>` and `pipeline:<file.py>` predictors (keep `gtfs_eta:*` aliases); score any TripUpdates feed; drop `ewma` from predictor registry; rename etaval branding | C1, T4 for pipeline predictor |
 
 Soft dependencies are handled by coding against the contract with a fake, not by waiting.
+
+**Result (2026-09-18):** all six tracks merged, plus **T7 · Training frame** (added by the orchestrator: nothing
+turned observations + arrivals + static into the frame the families train on — the only builder was Django/Postgres/MBTA-shaped)
+and the orchestrator's wiring of `data arrivals`. Suite: core 289, models 125+2s, serve 57+2s, record 130, train 239+15s,
+val 468+1s, cli 70, e2e 1 — **1379 passed, 20 skipped, 0 failed**. Gate test: `tests/e2e/test_end_to_end.py`, in CI.
+
+Bugs the gate caught (all fixed with tests): val couldn't open an archive whose partition key is also a column
+(pandas 3 `large_string` vs hive `string`); val replay coerced `ts` with `to_numeric`, so archives written by the new
+recorder looked empty; `get_config()` snapshotted the environment at first use, writing a test's catalog into the
+working directory.
+
+Carried into Phase 3:
+- `serve.estimator` was left on its pre-Phase-2 code rather than rebuilt on the pipeline (it is what databus calls
+  in production; unifying needs T1's readers + T2's matcher — do it before G2).
+- The default `match` stage handles trip_update observations only; vehicle-position map-matching in serving should
+  call `core.arrivals`/`core.segments` (the gate's pipeline supplies distance features by hand).
+- bUCR trip inference (~1240 lines, ~20 tuned thresholds) is still agency-specific — Phase 4 G1, deserves its own track.
+- `record status` reports local archive size only; the Dockerfile has never been built.
+- `models list --json` shape and `models promote`'s profile write are unspecified in CONTRACTS.md (U2/U5 to document).
+- Contract wording: an `Arrival` is keyed by (trip, service day, **stop_sequence**) — a loop route visits a stop twice
+  and both visits are real. CONTRACTS.md §2 says "trip+stop+day"; T2 implemented the sequence key, which is correct.
+- s3:// reads need `fsspec`/`s3fs`, not yet a declared extra; the s3 archive path is untested.
 
 **Gate — end-to-end smoke** (`tests/e2e/test_mbta_smoke.py`, orchestrator-owned): committed MBTA sample →
 `data add` → `data arrivals` → `train run` → `serve --sink file` → `val replay` scores the served feed with
