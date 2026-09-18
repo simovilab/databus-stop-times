@@ -3,12 +3,16 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
+from typing import Optional
 
 import typer
 from stoptimes.cli._util import PASSTHROUGH, planned, require, run_module
 
 app = typer.Typer(help="List, inspect and promote trained models.", no_args_is_help=True)
+
+_DEFAULT_REGISTRY = Path("artifacts/models")
 
 
 @app.command("check", context_settings=PASSTHROUGH)
@@ -18,10 +22,125 @@ def models_check(ctx: typer.Context) -> None:
     run_module("stoptimes.models.check_registry", "stoptimes models check", ctx.args)
 
 
+@app.command("list")
+def models_list(
+    registry: Path = typer.Option(_DEFAULT_REGISTRY, "--registry", help="Artifact registry directory."),
+    source: Optional[str] = typer.Option(
+        None, "--source", help="Filter to this Source.id (contracts.artifact.ModelScope.source_id)."
+    ),
+    route: Optional[str] = typer.Option(None, "--route", help="Filter to artifacts scoped to this route."),
+    family: Optional[str] = typer.Option(None, "--family", help="Filter to this model family."),
+    json_output: bool = typer.Option(False, "--json", help="Print as JSON instead of a table."),
+) -> None:
+    """List artifacts in a registry directory (contracts.artifact layout):
+    scope, headline metric, and creation time."""
+    require("stoptimes.models", "core")
+    from stoptimes.core.contracts.artifact import ArtifactMetadata, METADATA_FILENAME, read_metadata
+
+    rows: list[dict] = []
+    if registry.exists():
+        for entry in sorted(registry.iterdir()):
+            if not (entry / METADATA_FILENAME).exists():
+                continue
+            try:
+                meta: ArtifactMetadata = read_metadata(entry)
+            except Exception as exc:  # noqa: BLE001 - one bad artifact shouldn't kill the listing
+                typer.secho(f"  skip {entry.name}: could not read artifact.json ({exc!r})", fg="yellow", err=True)
+                continue
+            if family and meta.family != family:
+                continue
+            if source and meta.scope.source_id not in (None, source):
+                continue
+            if route and route not in meta.scope.route_ids:
+                continue
+            rows.append(
+                {
+                    "artifact_id": meta.artifact_id,
+                    "family": meta.family,
+                    "scope": meta.scope.level.value,
+                    "routes": meta.scope.route_ids,
+                    "metric": meta.metrics.get("test_mae_seconds"),
+                    "created": meta.provenance.created_at.isoformat(),
+                }
+            )
+
+    if json_output:
+        typer.echo(json.dumps(rows, indent=2))
+        return
+
+    if not rows:
+        typer.echo(f"(no artifacts found under {registry})")
+        return
+
+    typer.echo(f"{'ARTIFACT ID':<40} {'FAMILY':<16} {'SCOPE':<10} {'MAE_S':>8}  CREATED")
+    for row in rows:
+        mae = row["metric"]
+        mae_str = f"{mae:.1f}" if isinstance(mae, (int, float)) else "n/a"
+        scope = row["scope"] if not row["routes"] else f"{row['scope']}:{','.join(row['routes'])}"
+        typer.echo(f"{row['artifact_id']:<40.40} {row['family']:<16.16} {scope:<10.10} {mae_str:>8}  {row['created']}")
+
+
 @app.command("card")
-def models_card() -> None:
+def models_card(
+    artifact_id: Optional[str] = typer.Argument(None, help="Artifact id (registry subdirectory name)."),
+    registry: Path = typer.Option(_DEFAULT_REGISTRY, "--registry", help="Artifact registry directory."),
+) -> None:
     """Show a model card (data, features, scores by horizon)."""
-    planned("models card", "Phase 2 · track T3 (artifacts + cards)")
+    if artifact_id is None:
+        planned("models card", "Phase 2 · track T3 (artifacts + cards)")
+
+    require("stoptimes.models", "core")
+    from stoptimes.core.contracts.artifact import artifact_dir
+
+    card_path = artifact_dir(registry, artifact_id) / "card.md"
+    if not card_path.exists():
+        typer.secho(f"✗ no card.md for artifact {artifact_id!r} at {card_path}", fg="red", err=True)
+        raise typer.Exit(1)
+    typer.echo(card_path.read_text(encoding="utf-8"))
+
+
+@app.command("promote")
+def models_promote(
+    artifact_id: str = typer.Argument(..., help="Artifact id to promote."),
+    as_pin: str = typer.Option(
+        ...,
+        "--as",
+        help='Pin key (contracts.selection.SelectionPolicy.pins): "global", "route:<id>", '
+        '"route:<id>/<direction>", or "trip:<id>".',
+    ),
+    source: str = typer.Option(..., "--source", help="Agency id whose profile file to update."),
+    registry: Path = typer.Option(_DEFAULT_REGISTRY, "--registry", help="Artifact registry directory."),
+    sources_dir: Optional[Path] = typer.Option(
+        None, "--sources-dir", help="Agency profile directory. Defaults to STOPTIMES_SOURCES or ./examples/agencies."
+    ),
+) -> None:
+    """Pin `artifact_id` into `source`'s agency profile (`serving.selection.pins[as_pin]`),
+    per the `stoptimes.core.contracts.selection` contract. Refuses if the
+    artifact doesn't exist in `registry`."""
+    require("stoptimes.models", "core")
+    import yaml
+    from stoptimes.core.contracts.artifact import METADATA_FILENAME, artifact_dir, read_metadata
+
+    target_dir = artifact_dir(registry, artifact_id)
+    if not (target_dir / METADATA_FILENAME).exists():
+        typer.secho(f"✗ artifact {artifact_id!r} not found at {target_dir}", fg="red", err=True)
+        raise typer.Exit(1)
+    read_metadata(target_dir)  # fail loudly if artifact.json is corrupt, before touching the profile
+
+    profile_dir = sources_dir or Path(os.environ.get("STOPTIMES_SOURCES", "examples/agencies"))
+    profile_path = profile_dir / f"{source}.yaml"
+    if not profile_path.exists():
+        typer.secho(f"✗ agency profile not found: {profile_path}", fg="red", err=True)
+        raise typer.Exit(1)
+
+    data = yaml.safe_load(profile_path.read_text(encoding="utf-8")) or {}
+    serving = data.setdefault("serving", {})
+    selection = serving.setdefault("selection", {})
+    pins = selection.setdefault("pins", {})
+    pins[as_pin] = artifact_id
+    profile_path.write_text(yaml.safe_dump(data, sort_keys=False), encoding="utf-8")
+
+    typer.echo(f"promoted {artifact_id!r} -> {profile_path} serving.selection.pins[{as_pin!r}]")
 
 
 @app.command("migrate")
