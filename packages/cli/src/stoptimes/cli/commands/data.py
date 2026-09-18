@@ -461,19 +461,13 @@ def data_frame(
         entry = DatasetEntry(
             name=register,
             source_id=source,
-            # `DatasetKind` has no dedicated "prepared frame" kind yet (see
-            # docs/notes/p2-t7.md) -- `arrivals` is the closest fit: this is
-            # data derived downstream of the Arrival table, not raw
-            # observations. `extra.stage` disambiguates from a raw Arrival
-            # table registered by `data arrivals`.
-            kind=DatasetKind.ARRIVALS,
+            kind=DatasetKind.FRAME,
             location=str(out_path),
             date_start=date_start,
             date_end=date_end,
             row_count=int(len(result)),
             added_at=_now_utc(),
             extra={
-                "stage": "training_frame",
                 "derived_from_observations": observations,
                 "derived_from_arrivals": arrivals,
                 "static": static,

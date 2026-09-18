@@ -168,7 +168,7 @@ def test_frame_registers_in_the_catalog(tmp_path):
     listed = runner.invoke(app, ["data", "list", "--json"])
     entries = json.loads(listed.output)
     assert [e["name"] for e in entries] == ["demo-frame"]
-    assert entries[0]["kind"] == "arrivals"
+    assert entries[0]["kind"] == "frame"
 
 
 def test_frame_max_stops_ahead_option(tmp_path):

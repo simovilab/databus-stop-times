@@ -94,17 +94,21 @@ def seeded_registry(tmp_path, monkeypatch):
 @pytest.fixture
 def bucr_agency(monkeypatch):
     """Point estimator._config at the bucr agency (pinned served model)."""
-    monkeypatch.setattr(estimator_module._config, "_agency_override", "bucr")
-    monkeypatch.setattr(estimator_module._config, "_served_model_key_override", None)
-    monkeypatch.setattr(estimator_module._config, "_served_model_fallback_override", None)
+    monkeypatch.setenv("STOPTIMES_AGENCY", "bucr")
+    monkeypatch.delenv("STOPTIMES_MODEL_KEY", raising=False)
+    monkeypatch.delenv("ETA_MODEL_KEY", raising=False)
+    monkeypatch.delenv("STOPTIMES_MODEL_FALLBACK_KEY", raising=False)
+    monkeypatch.delenv("ETA_MODEL_FALLBACK_KEY", raising=False)
 
 
 @pytest.fixture
 def mbta_agency(monkeypatch):
     """Point estimator._config at the mbta agency (no pin configured)."""
-    monkeypatch.setattr(estimator_module._config, "_agency_override", "mbta")
-    monkeypatch.setattr(estimator_module._config, "_served_model_key_override", None)
-    monkeypatch.setattr(estimator_module._config, "_served_model_fallback_override", None)
+    monkeypatch.setenv("STOPTIMES_AGENCY", "mbta")
+    monkeypatch.delenv("STOPTIMES_MODEL_KEY", raising=False)
+    monkeypatch.delenv("ETA_MODEL_KEY", raising=False)
+    monkeypatch.delenv("STOPTIMES_MODEL_FALLBACK_KEY", raising=False)
+    monkeypatch.delenv("ETA_MODEL_FALLBACK_KEY", raising=False)
 
 
 def test_bucr_pin_falls_back_to_corpus_polyreg_when_primary_missing(seeded_registry, bucr_agency, monkeypatch):
@@ -116,7 +120,7 @@ def test_bucr_pin_falls_back_to_corpus_polyreg_when_primary_missing(seeded_regis
     # (from examples/agencies/bucr.yaml's `serving` block); override the
     # fallback to this test's throwaway key since the real one isn't seeded
     # into tmp_path either.
-    monkeypatch.setattr(estimator_module._config, "_served_model_fallback_override", FALLBACK_KEY)
+    monkeypatch.setenv("STOPTIMES_MODEL_FALLBACK_KEY", FALLBACK_KEY)
 
     result = estimate_stop_times(_vehicle_position(), _stops(), max_stops=3)
 
@@ -139,8 +143,8 @@ def test_bucr_pin_prefers_primary_over_fallback_and_mbta(seeded_registry, bucr_a
             "metrics": {"test_mae_seconds": 33.4},
         },
     )
-    monkeypatch.setattr(estimator_module._config, "_served_model_key_override", PRIMARY_KEY)
-    monkeypatch.setattr(estimator_module._config, "_served_model_fallback_override", FALLBACK_KEY)
+    monkeypatch.setenv("STOPTIMES_MODEL_KEY", PRIMARY_KEY)
+    monkeypatch.setenv("STOPTIMES_MODEL_FALLBACK_KEY", FALLBACK_KEY)
 
     result = estimate_stop_times(_vehicle_position(), _stops(), max_stops=3)
 

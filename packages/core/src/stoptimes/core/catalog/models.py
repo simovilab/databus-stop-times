@@ -22,6 +22,8 @@ class DatasetKind(str, Enum):
     OBSERVATIONS = "observations"
     ARRIVALS = "arrivals"
     STATIC = "static"
+    FRAME = "frame"
+    """A prepared training frame: observations x upcoming stops, features + target."""
 
 
 class DatasetEntry(BaseModel):

@@ -728,3 +728,44 @@ class TestAgencyProfileFiles:
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
+
+
+class TestConfigReadsEnvLive:
+    """The config singleton must not freeze environment variables at first use.
+
+    It used to read them once in __post_init__, so a test (or a CLI that set
+    STOPTIMES_HOME after something else had touched the config) silently got
+    the old value — that leaked catalog writes into the real working
+    directory during Phase 2.
+    """
+
+    def test_home_change_is_visible_without_reset(self, tmp_path, monkeypatch):
+        from stoptimes.core.config import get_config, reset_config
+
+        reset_config()
+        monkeypatch.setenv("STOPTIMES_HOME", str(tmp_path / "first"))
+        config = get_config()
+        assert config.stoptimes_home == (tmp_path / "first")
+
+        monkeypatch.setenv("STOPTIMES_HOME", str(tmp_path / "second"))
+        assert config.stoptimes_home == (tmp_path / "second")
+        assert config.model_registry_dir == (tmp_path / "second" / "models")
+
+    def test_agency_change_is_visible_without_reset(self, monkeypatch):
+        from stoptimes.core.config import get_config, reset_config
+
+        reset_config()
+        monkeypatch.setenv("STOPTIMES_AGENCY", "mbta")
+        config = get_config()
+        assert config.agency == "mbta"
+        monkeypatch.setenv("STOPTIMES_AGENCY", "bucr")
+        assert config.agency == "bucr"
+
+    def test_explicit_registry_override_still_wins_over_env(self, tmp_path, monkeypatch):
+        from stoptimes.core.config import get_config, reset_config
+
+        reset_config()
+        monkeypatch.setenv("STOPTIMES_MODEL_REGISTRY_DIR", str(tmp_path / "from-env"))
+        config = get_config()
+        config.set_model_registry_dir(str(tmp_path / "explicit"))
+        assert config.model_registry_dir == (tmp_path / "explicit")

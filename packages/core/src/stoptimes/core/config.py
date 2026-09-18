@@ -248,26 +248,43 @@ class ProjectConfig:
         print(config.model_registry_dir)
     """
 
-    # Environment overrides (populated from env vars)
-    _model_registry_override: Optional[str] = field(default=None, repr=False)
-    _stoptimes_home_override: Optional[str] = field(default=None, repr=False)
-    _agency_override: Optional[str] = field(default=None, repr=False)
-    _timezone_override: Optional[str] = field(default=None, repr=False)
-    _region_override: Optional[str] = field(default=None, repr=False)
-    _served_model_key_override: Optional[str] = field(default=None, repr=False)
-    _served_model_fallback_override: Optional[str] = field(default=None, repr=False)
+    # Set only by `set_model_registry_dir`; an explicit call beats the
+    # environment. Everything else is read from the environment on access
+    # (see below) rather than frozen when this object is first created --
+    # `get_config()` is a process-global singleton, and a config that
+    # snapshots os.environ makes any later change (a test's monkeypatch, a
+    # CLI setting STOPTIMES_HOME before doing its work) silently ineffective.
+    _model_registry_explicit: Optional[str] = field(default=None, repr=False)
 
-    def __post_init__(self):
-        """Load environment variable overrides."""
-        self._model_registry_override = _read_env("STOPTIMES_MODEL_REGISTRY_DIR", "MODEL_REGISTRY_DIR")
-        self._stoptimes_home_override = os.environ.get("STOPTIMES_HOME")
-        self._agency_override = _read_env("STOPTIMES_AGENCY", "ETA_AGENCY")
-        self._timezone_override = _read_env("STOPTIMES_TIMEZONE", "ETA_TIMEZONE")
-        self._region_override = _read_env("STOPTIMES_HOLIDAY_REGION", "ETA_HOLIDAY_REGION")
-        self._served_model_key_override = _read_env("STOPTIMES_MODEL_KEY", "ETA_MODEL_KEY")
-        self._served_model_fallback_override = _read_env(
-            "STOPTIMES_MODEL_FALLBACK_KEY", "ETA_MODEL_FALLBACK_KEY"
+    @property
+    def _model_registry_override(self) -> Optional[str]:
+        return self._model_registry_explicit or _read_env(
+            "STOPTIMES_MODEL_REGISTRY_DIR", "MODEL_REGISTRY_DIR"
         )
+
+    @property
+    def _stoptimes_home_override(self) -> Optional[str]:
+        return os.environ.get("STOPTIMES_HOME")
+
+    @property
+    def _agency_override(self) -> Optional[str]:
+        return _read_env("STOPTIMES_AGENCY", "ETA_AGENCY")
+
+    @property
+    def _timezone_override(self) -> Optional[str]:
+        return _read_env("STOPTIMES_TIMEZONE", "ETA_TIMEZONE")
+
+    @property
+    def _region_override(self) -> Optional[str]:
+        return _read_env("STOPTIMES_HOLIDAY_REGION", "ETA_HOLIDAY_REGION")
+
+    @property
+    def _served_model_key_override(self) -> Optional[str]:
+        return _read_env("STOPTIMES_MODEL_KEY", "ETA_MODEL_KEY")
+
+    @property
+    def _served_model_fallback_override(self) -> Optional[str]:
+        return _read_env("STOPTIMES_MODEL_FALLBACK_KEY", "ETA_MODEL_FALLBACK_KEY")
 
     # =========================================================================
     # Directory Paths
@@ -390,7 +407,7 @@ class ProjectConfig:
         codebase (e.g. `stoptimes.models.common.registry`).
         """
         resolved = str(Path(path).expanduser().resolve())
-        self._model_registry_override = resolved
+        self._model_registry_explicit = resolved
         os.environ["STOPTIMES_MODEL_REGISTRY_DIR"] = resolved
         os.environ["MODEL_REGISTRY_DIR"] = resolved
 
