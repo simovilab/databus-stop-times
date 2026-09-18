@@ -88,14 +88,12 @@ def test_data_inspect_requires_a_name():
     assert "Phase 2" not in result.output
 
 
-def test_data_arrivals_is_planned():
+def test_data_arrivals_requires_arguments():
+    """Implemented by T2 + the orchestrator's wiring; missing options must be
+    a usage error, not a "planned" placeholder."""
     result = runner.invoke(app, ["data", "arrivals"])
-    assert result.exit_code == 2
-    assert "Phase 2" in result.output
-
-
-# ── record ────────────────────────────────────────────────────────────────────
-
+    assert result.exit_code != 0
+    assert "planned" not in result.output
 
 def test_record_help():
     result = runner.invoke(app, ["record", "--help"])
@@ -316,7 +314,7 @@ def test_val_tui_help_reaches_argparse():
 def test_implemented_commands_never_claim_to_be_planned():
     """Every command that Phase 2 built must give a real usage error, not the
     placeholder text from before it existed."""
-    for argv in (["data", "add"], ["record", "start"], ["record", "status"],
+    for argv in (["data", "add"], ["data", "arrivals"], ["record", "start"], ["record", "status"],
                  ["train", "run"], ["models", "card"], ["serve"]):
         result = runner.invoke(app, argv)
         assert result.exit_code != 0, argv

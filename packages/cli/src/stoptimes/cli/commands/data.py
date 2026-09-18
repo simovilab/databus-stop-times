@@ -319,6 +319,147 @@ def data_remove(
 
 
 @app.command("arrivals")
-def data_arrivals() -> None:
-    """Derive actual stop arrivals from vehicle positions (map-matching)."""
-    planned("data arrivals", "Phase 2 · track T2 (arrival derivation)")
+def data_arrivals(
+    observations: str = typer.Option(
+        ..., "--observations", help="Observations to derive from: a catalog dataset name, or a path/URI."
+    ),
+    static: str = typer.Option(..., "--static", help="GTFS static .zip (path or URL)."),
+    source: str = typer.Option(..., "--source", help="Source id (agency) these observations came from."),
+    out: str = typer.Option(..., "--out", help="Where to write the Arrival parquet."),
+    sources_dir: str | None = typer.Option(
+        None, "--sources-dir", help="Directory of agency YAMLs (default: STOPTIMES_SOURCES -> ./examples/agencies)."
+    ),
+    register: str | None = typer.Option(
+        None, "--register", help="Also register the result in the catalog under this name."
+    ),
+    overwrite: bool = typer.Option(False, "--overwrite", help="Replace an existing catalog entry / output file."),
+    json_output: bool = typer.Option(False, "--json", help="Print a machine-readable summary."),
+) -> None:
+    """Derive actual stop arrivals from vehicle positions (map-matching).
+
+    The training target and the validation ground truth: observations in,
+    one `Arrival` row per (trip, service day, stop) out.
+    """
+    from stoptimes.core.arrivals import derive_arrivals
+    from stoptimes.core.catalog import Catalog, DatasetEntry, DatasetExistsError, DatasetKind
+
+    src = _resolve_source(source, sources_dir)
+    frame = _load_observations(observations, source)
+    loader, static_feed = _read_static_or_exit(static, source)
+
+    out_path = Path(out)
+    if out_path.exists() and not overwrite:
+        typer.secho(f"✗ {out} already exists (pass --overwrite to replace it)", fg="red", err=True)
+        raise typer.Exit(1)
+
+    arrivals = derive_arrivals(frame, loader, source=src)
+
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    arrivals.to_parquet(out_path, index=False)
+
+    date_start = date_end = None
+    if not arrivals.empty:
+        date_start = str(arrivals["arrival_time"].min())
+        date_end = str(arrivals["arrival_time"].max())
+
+    if register:
+        entry = DatasetEntry(
+            name=register,
+            source_id=source,
+            kind=DatasetKind.ARRIVALS,
+            location=str(out_path),
+            date_start=date_start,
+            date_end=date_end,
+            row_count=int(len(arrivals)),
+            added_at=_now_utc(),
+            extra={"derived_from": observations, "static": static},
+        )
+        try:
+            Catalog().add(entry, overwrite=overwrite)
+        except DatasetExistsError as exc:
+            typer.secho(f"✗ {exc} (pass --overwrite to replace it)", fg="red", err=True)
+            raise typer.Exit(1) from None
+
+    by_method = {str(k): int(v) for k, v in arrivals["method"].value_counts().items()} if not arrivals.empty else {}
+    summary = {
+        "source": source,
+        "observations": int(len(frame)),
+        "arrivals": int(len(arrivals)),
+        "by_method": by_method,
+        "static_tables": static_feed.tables,
+        "out": str(out_path),
+        "registered": register,
+    }
+
+    if json_output:
+        typer.echo(_json.dumps(summary, indent=2))
+        return
+
+    typer.secho(
+        f"✓ {summary['arrivals']} arrival(s) from {summary['observations']} observation(s) → {out_path}",
+        fg="green",
+    )
+    for method, count in by_method.items():
+        typer.echo(f"  {method}: {count}")
+
+
+def _resolve_source(source_id: str, sources_dir: str | None):
+    """Load an agency file the same way `serve` and `record` do."""
+    import os
+
+    import yaml
+    from stoptimes.core.config import sources_search_path
+    from stoptimes.core.contracts.adapters import source_from_val_yaml
+
+    candidates = (
+        [Path(sources_dir)] if sources_dir else sources_search_path(os.environ.get("STOPTIMES_SOURCES"))
+    )
+    for directory in candidates:
+        path = Path(directory) / f"{source_id}.yaml"
+        if path.is_file():
+            return source_from_val_yaml(yaml.safe_load(path.read_text(encoding="utf-8")))
+    searched = ", ".join(str(c) for c in candidates)
+    typer.secho(f"✗ no agency file for --source {source_id!r} (searched: {searched})", fg="red", err=True)
+    raise typer.Exit(1)
+
+
+def _load_observations(reference: str, source_id: str):
+    """`reference` is a catalog dataset name if one is registered, else a path/URI."""
+    from stoptimes.core import readers as readers_module
+    from stoptimes.core.catalog import Catalog
+    from stoptimes.core.contracts.data import ObservationKind
+
+    entry = Catalog().get(reference)
+    location = entry.location if entry is not None else reference
+    extra = entry.extra if entry is not None else {}
+    reader_format = extra.get("format") or _guess_format(location, None)
+    kind = ObservationKind(extra.get("observation_kind", ObservationKind.VEHICLE_POSITION.value))
+    mapping = None
+    if reader_format == "avl_csv" and extra.get("mapping"):
+        mapping = readers_module.ColumnMapping(**extra["mapping"])
+
+    try:
+        return readers_module.read_observations(
+            location, format=reader_format, kind=kind, source_id=source_id, mapping=mapping
+        )
+    except (ValueError, ImportError, OSError) as exc:
+        typer.secho(f"✗ could not read {location!r}: {exc}", fg="red", err=True)
+        raise typer.Exit(1) from None
+
+
+def _read_static_or_exit(location: str, source_id: str):
+    from stoptimes.core import readers as readers_module
+
+    try:
+        loader, feed = readers_module.read_static(location, source_id)
+    except (OSError, ValueError) as exc:
+        typer.secho(f"✗ could not read static feed {location!r}: {exc}", fg="red", err=True)
+        raise typer.Exit(1) from None
+    if loader is None:
+        typer.secho(
+            f"✗ {location!r} is missing required static table(s): {feed.missing_required()}",
+            fg="red",
+            err=True,
+        )
+        raise typer.Exit(1)
+    return loader, feed

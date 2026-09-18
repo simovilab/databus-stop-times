@@ -149,11 +149,6 @@ def test_data_add_static_dataset(stoptimes_home, tmp_path):
     assert "stops" in payload["extra"]["tables"]
 
 
-def test_data_arrivals_still_planned(stoptimes_home):
-    result = runner.invoke(app, ["data", "arrivals"])
-    assert result.exit_code == 2
-    assert "Phase 2" in result.output
-
 
 def test_data_help_still_lists_everything(stoptimes_home):
     result = runner.invoke(app, ["data", "--help"])
