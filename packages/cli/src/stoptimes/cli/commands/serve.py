@@ -30,7 +30,11 @@ def serve(
     interval: float = typer.Option(None, "--interval", help="Seconds between runs; loops until interrupted."),
     json_output: bool = typer.Option(False, "--json", help="Print a machine-readable run summary."),
 ) -> None:
-    """Run the serving pipeline and publish GTFS-RT TripUpdates (file, HTTP, MQTT)."""
+    """Run the serving pipeline and publish GTFS-RT TripUpdates (file, HTTP, MQTT).
+
+    `--json`: one line per run (repeated if `--interval` loops):
+    ``{"source", "artifact_id", "generated_at", "trip_update_count", "errors", "published"}``.
+    """
     if source is None:
         typer.secho(
             "✗ `stoptimes serve` needs --source <id>; see examples/agencies/ for the agency files.",
