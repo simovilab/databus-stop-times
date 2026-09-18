@@ -1,43 +1,34 @@
-"""GtfsEtaModelPredictor — wraps gtfs-eta's trained ETA models for live validation.
+"""GtfsEtaModelPredictor — wraps stoptimes' trained ETA models for live validation.
 
-Bridges etaval's ``Predictor`` protocol to ``stoptimes.serve.estimator.estimate_stop_times``
-from the sibling ``gtfs-eta`` repo, so any model trained there (historical_mean, ewma,
-polyreg_distance, polyreg_time, xgboost) can be scored against real arrivals the same
-way ``gtfsrt`` and ``baseline:constant_speed`` are.
+Bridges val's ``Predictor`` protocol to ``stoptimes.serve.estimator.estimate_stop_times``
+(``packages/serve``, a sibling workspace member of this package, not a separate
+repo) so any model trained with ``stoptimes-train``/``stoptimes-models``
+(historical_mean, polyreg_distance, polyreg_time, xgboost — ``ewma`` was
+retired and is not in ``PREDICTOR_REGISTRY``) can be scored against real
+arrivals the same way ``gtfsrt`` and ``baseline:constant_speed`` are.
 
-Requires ``gtfs-eta`` importable (see ``[tool.uv.sources]`` in pyproject.toml — it's
-wired as a sibling path dependency, same pattern as gtfs-rt-pipeline -> gtfs-django).
+New code should prefer the ``stoptimes:{model_type}`` predictor id (an alias
+of this same class, registered in ``engine.assembly.PREDICTOR_REGISTRY``);
+``gtfs_eta:{model_type}`` is kept only for backward compatibility with
+existing run data and scripts and emits a ``DeprecationWarning`` when used
+through the registry (constructing this class directly, as below, does not
+warn — only the registry factory does).
 
-Two environment quirks, both worked around below rather than assumed fixed upstream:
-
-1. On at least one dev machine (Python 3.14 + uv-managed venv), the editable
-   install's ``.pth``-based import hook silently never fires at interpreter
-   startup — confirmed independent of ``uv`` by invoking the venv's python
-   binary directly with a stripped env. This module falls back to an explicit
-   ``sys.path`` append for ``this-file-is-still-in-the-source-tree`` cases
-   (e.g. editable install, or pytest's own rootdir-based import), the same
-   pattern this sibling repo's own scripts already use for its internal
-   cross-package imports (see e.g. ``models/train_all_models.py``,
-   ``models/*/predict.py``).
-2. ``etaval``'s own console-script entrypoint needs a *non-editable* install to
-   work around (1) — which means this file itself gets physically copied into
-   etaval's venv (e.g. ``.venv/lib/python3.14/site-packages/etaval/predictors/``).
-   At that point ``Path(__file__)`` says nothing about where the *source* tree
-   lives, so any fixed ``parents[N]`` guess is next to useless (a first attempt
-   at exactly that silently computed ``.venv/lib/python3.14/gtfs-eta`` — plausible
-   looking, structurally wrong, and *not caught by any test* since it never
-   raises, just returns an empty registry). ``stoptimes.core.config._find_project_root()``
-   has the identical problem for the same reason: walking up from the
-   *installed* copy of ``core/config.py`` finds *etaval's* pyproject.toml first,
-   not gtfs-eta's, so it can't be trusted here either.
-
-   The only sound anchor in a non-editable install is ``MODEL_REGISTRY_DIR``
-   set directly in the environment — not derived from any file's location.
-   ``_resolve_model_registry_dir`` below tries the one in-repo guess that's
-   valid *only* while running from source, but verifies it against a real
-   ``registry.json`` before trusting it, and otherwise leaves the decision to
-   an externally-set ``MODEL_REGISTRY_DIR`` (see README) rather than silently
-   defaulting to a wrong path.
+Locating the trained-model registry (``_resolve_model_registry_dir``) predates
+this codebase's merge into one ``stoptimes`` monorepo, back when ``etaval``
+and ``gtfs-eta`` were separate repos linked by a ``uv`` path dependency and a
+model registry directory had to be found across that boundary (a sibling
+source checkout, an installed dist-info's ``direct_url.json``, or an
+installed ``models`` package — see the resolver functions below). Those
+fallbacks are harmless no-ops in this workspace (everything lives under
+``packages/`` now, found the ordinary way via
+``stoptimes.core.config.get_config().model_registry_dir``) and are kept only
+because they still correctly resolve a real registry in the one case they
+were built for: this file installed as a standalone package (e.g.
+``pip install stoptimes-val[models]``) against a separately-installed
+``stoptimes-models`` distribution, where ``__file__``-relative guesses are
+meaningless and an explicit ``MODEL_REGISTRY_DIR`` may not be set. See the
+README for the current recommended setup.
 
 ``predictor_id`` is ``f"gtfs_eta:{model_type}"`` (e.g. ``"gtfs_eta:xgboost"``,
 ``"gtfs_eta:polyreg_time"``) so runs can distinguish which trained model produced
@@ -185,11 +176,12 @@ def _from_installed_models_package() -> Path | None:
 
 
 class GtfsEtaModelPredictor:
-    """Serves predictions from a gtfs-eta trained model registry entry.
+    """Serves predictions from a trained ``stoptimes-models`` registry entry.
 
     Args:
-        model_type: One of ``historical_mean``, ``ewma``, ``polyreg_distance``,
-            ``polyreg_time``, ``xgboost``. Selects which trained model family
+        model_type: One of ``historical_mean``, ``polyreg_distance``,
+            ``polyreg_time``, ``xgboost`` (``ewma`` was retired upstream and
+            is not a valid value here). Selects which trained model family
             ``estimate_stop_times`` looks up in the registry.
         model_key: Optional exact registry key. When ``None`` (the default),
             ``estimate_stop_times`` picks the best model for ``model_type`` —

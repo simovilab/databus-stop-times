@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import datetime as dt
 import tempfile
+import warnings
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -37,26 +38,109 @@ from stoptimes.core.gtfs.static import GtfsStaticLoader
 from stoptimes.val.groundtruth.position_radius import PositionRadiusDetector
 from stoptimes.val.groundtruth.shape_distance import ShapeDistanceDetector
 from stoptimes.val.groundtruth.stop_status import StopStatusDetector
+from stoptimes.val.predictors.artifact import StoptimesArtifactPredictor
 from stoptimes.val.predictors.constant_speed import ConstantSpeedPredictor
 from stoptimes.val.predictors.gtfs_eta_models import GtfsEtaModelPredictor
 from stoptimes.val.predictors.gtfsrt_tripupdates import GtfsRtTripUpdatesPredictor
+from stoptimes.val.predictors.pipeline_adapter import PipelineTripUpdatesPredictor
 from stoptimes.val.predictors.schedule_baseline import ScheduleBaselinePredictor
 
 # ── Predictor registry ────────────────────────────────────────────────────────
 #
-# Values are zero-arg factories rather than bare types so the gtfs_eta:* entries
-# can close over which trained model_type to request (see GtfsEtaModelPredictor).
+# Values are zero-arg factories rather than bare types so entries can close
+# over which trained model_type (or file/artifact ref) to request.
+#
+# "stoptimes:{historical_mean,polyreg_distance,polyreg_time,xgboost}" are the
+# canonical names for the four trained-model families gtfs-eta shipped
+# (`GtfsEtaModelPredictor` unchanged underneath -- only the advertised
+# predictor_id differs, via `_stoptimes_alias`). "gtfs_eta:*" is kept
+# working as a *deprecated* alias of the matching "stoptimes:*" entry (same
+# predictor, same predictor_id as before -- existing run data and scripts
+# that filter/group by `gtfs_eta:xgboost` etc. keep working), emitting a
+# `DeprecationWarning` on construction. "gtfs_eta:ewma" was retired upstream
+# and was never re-added here.
+#
+# Two more predictor families resolve *dynamically* rather than through this
+# fixed dict -- see `resolve_predictor_factory` below:
+#   stoptimes:<artifact_id-or-scope>   -> StoptimesArtifactPredictor
+#   pipeline:<file.py>                 -> PipelineTripUpdatesPredictor
+
+
+def _stoptimes_alias(model_type: str) -> GtfsEtaModelPredictor:
+    """A GtfsEtaModelPredictor advertised under its new canonical `stoptimes:*` id."""
+    predictor = GtfsEtaModelPredictor(model_type)
+    predictor.predictor_id = f"stoptimes:{model_type}"
+    return predictor
+
+
+def _gtfs_eta_deprecated_alias(model_type: str) -> GtfsEtaModelPredictor:
+    """A GtfsEtaModelPredictor built via its deprecated `gtfs_eta:*` id.
+
+    `predictor_id` is left as `f"gtfs_eta:{model_type}"` (unchanged) so runs
+    started this way stay grouped/filterable exactly as before; only a
+    DeprecationWarning is new.
+    """
+    warnings.warn(
+        f"Predictor id 'gtfs_eta:{model_type}' is deprecated; use "
+        f"'stoptimes:{model_type}' instead. 'gtfs_eta:*' is kept only as an "
+        "alias for backward compatibility with existing run data/scripts.",
+        DeprecationWarning,
+        stacklevel=2,
+    )
+    return GtfsEtaModelPredictor(model_type)
+
+
+_TRAINED_MODEL_TYPES: tuple[str, ...] = (
+    "historical_mean",
+    "polyreg_distance",
+    "polyreg_time",
+    "xgboost",
+)
 
 PREDICTOR_REGISTRY: dict[str, Any] = {
     "gtfsrt": GtfsRtTripUpdatesPredictor,
     "baseline:constant_speed": ConstantSpeedPredictor,
     "baseline:schedule": ScheduleBaselinePredictor,
-    "gtfs_eta:historical_mean": lambda: GtfsEtaModelPredictor("historical_mean"),
-    "gtfs_eta:polyreg_distance": lambda: GtfsEtaModelPredictor("polyreg_distance"),
-    "gtfs_eta:polyreg_time": lambda: GtfsEtaModelPredictor("polyreg_time"),
-    "gtfs_eta:xgboost": lambda: GtfsEtaModelPredictor("xgboost"),
+    **{f"stoptimes:{mt}": (lambda mt=mt: _stoptimes_alias(mt)) for mt in _TRAINED_MODEL_TYPES},
+    **{f"gtfs_eta:{mt}": (lambda mt=mt: _gtfs_eta_deprecated_alias(mt)) for mt in _TRAINED_MODEL_TYPES},
 }
 DEFAULT_PREDICTOR_IDS: list[str] = ["gtfsrt", "baseline:constant_speed"]
+
+# Prefixes resolved dynamically (arbitrary suffix), rather than as fixed
+# PREDICTOR_REGISTRY entries -- see `resolve_predictor_factory`.
+_DYNAMIC_PREDICTOR_PREFIXES: tuple[str, ...] = ("stoptimes:", "pipeline:")
+
+
+def is_known_predictor_id(pid: str) -> bool:
+    """True if *pid* resolves via `PREDICTOR_REGISTRY` or a dynamic prefix.
+
+    Use this (not ``pid in PREDICTOR_REGISTRY``) to validate predictor IDs
+    from a CLI flag or API request body, so ``stoptimes:<any-artifact-id>``
+    and ``pipeline:<any-file.py>`` are accepted without needing to be
+    enumerated in the fixed dict.
+    """
+    if pid in PREDICTOR_REGISTRY:
+        return True
+    return any(pid.startswith(prefix) and len(pid) > len(prefix) for prefix in _DYNAMIC_PREDICTOR_PREFIXES)
+
+
+def resolve_predictor_factory(pid: str) -> Any:
+    """Return a zero-arg factory for *pid* -- a fixed `PREDICTOR_REGISTRY`
+    entry, or one built dynamically for a `stoptimes:`/`pipeline:` prefix
+    whose suffix isn't one of the four known trained-model families.
+
+    Raises:
+        KeyError: *pid* doesn't match a fixed entry or a known dynamic prefix.
+    """
+    if pid in PREDICTOR_REGISTRY:
+        return PREDICTOR_REGISTRY[pid]
+    if pid.startswith("stoptimes:") and len(pid) > len("stoptimes:"):
+        ref = pid[len("stoptimes:") :]
+        return lambda: StoptimesArtifactPredictor(ref)
+    if pid.startswith("pipeline:") and len(pid) > len("pipeline:"):
+        path = pid[len("pipeline:") :]
+        return lambda: PipelineTripUpdatesPredictor(path)
+    raise KeyError(pid)
 
 
 # ── Duration parser ───────────────────────────────────────────────────────────
@@ -185,10 +269,11 @@ def build_predictors(predictor_ids: list[str] | None = None) -> list[Any]:
         List of predictor instances.
 
     Raises:
-        KeyError: if any ID is not in PREDICTOR_REGISTRY.
+        KeyError: if any ID resolves through neither PREDICTOR_REGISTRY nor
+            a dynamic `stoptimes:`/`pipeline:` prefix (see `resolve_predictor_factory`).
     """
     ids = predictor_ids if predictor_ids is not None else DEFAULT_PREDICTOR_IDS
-    return [PREDICTOR_REGISTRY[pid]() for pid in ids]
+    return [resolve_predictor_factory(pid)() for pid in ids]
 
 
 def _attach_static_loader(predictors: list[Any], static_loader: GtfsStaticLoader) -> None:

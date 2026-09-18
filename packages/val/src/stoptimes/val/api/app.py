@@ -28,7 +28,12 @@ from stoptimes.val.api.config import get_settings
 from stoptimes.val.api.runs import RunManager, RunState
 from stoptimes.val.api.schemas import MetricsResponse, ResultRow, RunInfo, RunRequest
 from stoptimes.val.api.ws import router as ws_router
-from stoptimes.val.engine.assembly import DEFAULT_PREDICTOR_IDS, PREDICTOR_REGISTRY, parse_duration
+from stoptimes.val.engine.assembly import (
+    DEFAULT_PREDICTOR_IDS,
+    PREDICTOR_REGISTRY,
+    is_known_predictor_id,
+    parse_duration,
+)
 from stoptimes.val.feeds.source_config import list_sources, load_named_source
 from stoptimes.val.scoring.metrics import compute_metrics
 from stoptimes.val.storage.sqlite import SqliteStorage
@@ -149,7 +154,7 @@ def create_app(
                 detail=f"Unknown source {body.source!r}. Known: {known_sources}",
             )
 
-        bad_pids = [p for p in body.predictors if p not in PREDICTOR_REGISTRY]
+        bad_pids = [p for p in body.predictors if not is_known_predictor_id(p)]
         if bad_pids:
             raise HTTPException(
                 status_code=400,

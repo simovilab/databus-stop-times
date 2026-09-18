@@ -53,7 +53,9 @@ from stoptimes.val.engine.assembly import (
     build_detectors,
     build_replay_run,
     download_gtfs,
+    is_known_predictor_id,
     parse_duration,
+    resolve_predictor_factory,
 )
 from stoptimes.val.engine.runtime import (
     LiveFeedSource,
@@ -273,12 +275,16 @@ def run(
 
     # ── Resolve predictor list ────────────────────────────────────────────────
     predictor_ids: list[str] = list(predictor) if predictor else DEFAULT_PREDICTOR_IDS
-    unknown = [pid for pid in predictor_ids if pid not in PREDICTOR_REGISTRY]
+    unknown = [pid for pid in predictor_ids if not is_known_predictor_id(pid)]
     if unknown:
         typer.echo(f"Error: unknown predictor IDs: {unknown!r}", err=True)
-        typer.echo(f"Known predictor IDs: {sorted(PREDICTOR_REGISTRY)}", err=True)
+        typer.echo(
+            f"Known predictor IDs: {sorted(PREDICTOR_REGISTRY)} "
+            "(plus any 'stoptimes:<artifact-id>' or 'pipeline:<file.py>')",
+            err=True,
+        )
         raise typer.Exit(code=1)
-    predictors: list[Any] = [PREDICTOR_REGISTRY[pid]() for pid in predictor_ids]
+    predictors: list[Any] = [resolve_predictor_factory(pid)() for pid in predictor_ids]
 
     db_path: str = str(db) if db is not None else ":memory:"
 
@@ -430,6 +436,144 @@ def run(
             )
         )
 
+        _report_run(summary)
+        _export_if_requested(storage, out)
+        _write_sidecars_if_requested(summary, out)
+
+
+@app.command()
+def replay(
+    source: str = typer.Option(..., "--source", help="Named source (e.g. mbta, bucr)"),
+    archive: str = typer.Option(
+        ...,
+        "--archive",
+        help="Archived VehiclePositions parquet path: a local dir/file or s3://... "
+        "-- the Hive-partitioned layout stoptimes.record.storage.schema writes "
+        "(year=/month=/day=/route_id=, columns per DATA_COLUMNS).",
+    ),
+    archive_tu: str | None = typer.Option(
+        None,
+        "--archive-tu",
+        help="Archived TripUpdates parquet path (dir/file/s3://), columns per "
+        "stoptimes.record.storage.tu_schema.DATA_COLUMNS. Optional -- predictors "
+        "that don't need published TripUpdates (baseline:*, stoptimes:*, pipeline:*) "
+        "work without it; the `gtfsrt` predictor needs it to have anything to score.",
+    ),
+    from_: str | None = typer.Option(
+        None, "--from", help="Replay window start (YYYY-MM-DD or full ISO 8601)"
+    ),
+    to: str | None = typer.Option(
+        None, "--to", help="Replay window end (YYYY-MM-DD or full ISO 8601)"
+    ),
+    route: list[str] | None = typer.Option(  # noqa: B008
+        None, "--route", help="Filter to route ID(s); repeat for multiple"
+    ),
+    predictor: list[str] | None = typer.Option(  # noqa: B008
+        None, "--predictor", help="Predictor ID(s); repeat for multiple (default: both)"
+    ),
+    gtfs: Path | None = typer.Option(None, "--gtfs", help="Static GTFS zip to use for replay"),  # noqa: B008
+    gtfs_dir: Path | None = typer.Option(  # noqa: B008
+        None,
+        "--gtfs-dir",
+        help="Directory of dated GTFS zips (YYYY-MM-DD.zip); newest <= first replay tick is used",
+    ),
+    out: Path | None = typer.Option(None, "--out", help="Parquet output path"),  # noqa: B008
+    db: Path | None = typer.Option(None, "--db", help="SQLite path (default: in-memory)"),  # noqa: B008
+    sources_dir: Path | None = typer.Option(  # noqa: B008
+        None, "--sources-dir", help="Directory of agency profile YAMLs to search exclusively"
+    ),
+    seed: int | None = typer.Option(
+        None, "--seed", help="Run seed, recorded in provenance (no RNG in the tick loop today)"
+    ),
+) -> None:
+    """Score predictions from a recorded archive instead of a live feed.
+
+    Deterministic: the same archive, window, and predictor list always
+    produce the same scores -- no wall-clock dependency, no live network --
+    which is what makes a validation run reproducible (for CI, or for a
+    paper's numbers). This is a thin, friendlier front end over the same
+    replay engine `run --replay-vp` uses (`stoptimes.val.engine.assembly
+    .build_replay_run`); use whichever flag names you prefer, they build the
+    exact same ReplayRunDeps.
+
+    The archive is read as the Hive-partitioned Parquet layout
+    `stoptimes.record` writes -- see `stoptimes.record.storage.schema`
+    (VehiclePositions) and `.tu_schema` (TripUpdates) for the exact column
+    list; this command treats those as plain data (it does not import
+    `stoptimes.record` -- `val` has no dependency on `record`, only on the
+    layout being documented and stable).
+    """
+    try:
+        cfg = load_named_source(source, config_dir=sources_dir)
+    except FileNotFoundError:
+        typer.echo(
+            f"Error: source {source!r} not found. Run 'stoptimes val sources' to list available.",
+            err=True,
+        )
+        raise typer.Exit(code=1) from None
+
+    predictor_ids: list[str] = list(predictor) if predictor else DEFAULT_PREDICTOR_IDS
+    unknown = [pid for pid in predictor_ids if not is_known_predictor_id(pid)]
+    if unknown:
+        typer.echo(f"Error: unknown predictor IDs: {unknown!r}", err=True)
+        typer.echo(
+            f"Known predictor IDs: {sorted(PREDICTOR_REGISTRY)} "
+            "(plus any 'stoptimes:<artifact-id>' or 'pipeline:<file.py>')",
+            err=True,
+        )
+        raise typer.Exit(code=1)
+
+    if gtfs is None and gtfs_dir is None:
+        typer.echo("Error: --gtfs or --gtfs-dir is required for replay", err=True)
+        raise typer.Exit(code=1)
+
+    try:
+        deps = build_replay_run(
+            cfg,
+            vp_path=archive,
+            tu_path=archive_tu,
+            start=from_,
+            end=to,
+            routes=list(route) if route else None,
+            predictor_ids=predictor_ids,
+            static_gtfs_zip=gtfs,
+            static_gtfs_dir=gtfs_dir,
+        )
+    except (FileNotFoundError, ValueError, RuntimeError) as exc:
+        typer.echo(f"Error building replay run: {exc}", err=True)
+        raise typer.Exit(code=1) from exc
+
+    route_display = list(route) if route else "all"
+    typer.echo(
+        f"Replaying: source={source!r}, archive={archive!r}, archive_tu={archive_tu!r}, "
+        f"predictors={predictor_ids}, routes={route_display}, from={from_!r}, to={to!r}"
+    )
+
+    gtfs_snapshot = str(gtfs) if gtfs is not None else (str(gtfs_dir) if gtfs_dir is not None else None)
+    provenance = build_run_provenance(
+        source_name=source,
+        source_config=cfg,
+        detectors=deps.detectors,
+        predictor_ids=predictor_ids,
+        seed=seed,
+        gtfs_snapshot=gtfs_snapshot,
+    )
+
+    db_path: str = str(db) if db is not None else ":memory:"
+    with SqliteStorage(db_path) as storage:
+        summary = asyncio.run(
+            _run_validation(
+                deps.feed_source,
+                deps.static_loader,
+                deps.predictors,
+                deps.detectors,
+                storage,
+                primary_method="shape_distance",
+                source_name=source,
+                seed=seed,
+                provenance=provenance,
+            )
+        )
         _report_run(summary)
         _export_if_requested(storage, out)
         _write_sidecars_if_requested(summary, out)
@@ -720,10 +864,14 @@ def walk_forward_cmd(
         raise typer.Exit(code=1) from None
 
     predictor_ids: list[str] = list(predictor) if predictor else DEFAULT_PREDICTOR_IDS
-    unknown = [pid for pid in predictor_ids if pid not in PREDICTOR_REGISTRY]
+    unknown = [pid for pid in predictor_ids if not is_known_predictor_id(pid)]
     if unknown:
         typer.echo(f"Error: unknown predictor IDs: {unknown!r}", err=True)
-        typer.echo(f"Known predictor IDs: {sorted(PREDICTOR_REGISTRY)}", err=True)
+        typer.echo(
+            f"Known predictor IDs: {sorted(PREDICTOR_REGISTRY)} "
+            "(plus any 'stoptimes:<artifact-id>' or 'pipeline:<file.py>')",
+            err=True,
+        )
         raise typer.Exit(code=1)
 
     try:
