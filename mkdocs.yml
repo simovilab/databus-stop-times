@@ -1,0 +1,72 @@
+site_name: stoptimes
+site_description: >-
+  A toolkit for arrival-time prediction on GTFS data: record GTFS-Realtime feeds, train
+  models, serve GTFS-RT TripUpdates, and validate any prediction source.
+repo_url: https://github.com/simovilab/databus-stop-times
+repo_name: databus-stop-times
+edit_uri: ""
+
+theme:
+  name: material
+  icon:
+    logo: material/bus-clock
+  favicon: assets/bUCR_logo.png
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: indigo
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: indigo
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+  features:
+    - navigation.instant
+    - navigation.tracking
+    - navigation.tabs
+    - navigation.sections
+    - navigation.top
+    - content.code.copy
+    - content.code.annotate
+    - toc.follow
+    - search.suggest
+
+markdown_extensions:
+  - attr_list
+  - admonition
+  - pymdownx.details
+  - pymdownx.superfences
+  - pymdownx.highlight
+  - pymdownx.inlinehilite
+  - pymdownx.tabbed:
+      alternate_style: true
+  - tables
+  - toc:
+      permalink: true
+      title: On this page
+
+nav:
+  - Home: index.md
+  - Quickstart: quickstart.md
+  - Concepts:
+      - Observations: concepts/observations.md
+      - Arrivals: concepts/arrivals.md
+      - The training frame: concepts/training-frame.md
+      - Artifacts and scope: concepts/artifacts-and-scope.md
+      - Selection policy: concepts/selection-policy.md
+      - Horizons: concepts/horizons.md
+      - Baselines: concepts/baselines.md
+  - Guides:
+      - Record a feed: guides/record-a-feed.md
+      - Diagnose a feed: guides/diagnose-a-feed.md
+      - Train a model: guides/train-a-model.md
+      - Serve predictions: guides/serve-predictions.md
+      - Validate any feed: guides/validate-a-feed.md
+  - CLI reference: reference/cli.md
+  - Contracts: contracts-overview.md
+  - Case study — SIMOVI: case-study/simovi.md
+  - Project plan: PLAN.md

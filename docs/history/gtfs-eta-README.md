@@ -187,7 +187,7 @@ logger = get_logger("my-component")
 logger.info("Processing", vehicle_id="V123", route="171")
 ```
 
-See [CHANGELOG.md](CHANGELOG.md) for details.
+See [CHANGELOG.md](gtfs-eta-CHANGELOG.md) for details.
 
 ### ETA Service (`eta_service/`)
 
