@@ -139,13 +139,18 @@ def models_promote(
 ) -> None:
     """Pin `artifact_id` into `source`'s agency profile (`serving.selection.pins[as_pin]`),
     per the `stoptimes.core.contracts.selection` contract. Refuses if the
-    artifact doesn't exist in `registry`.
+    artifact doesn't exist in `registry`. The previous value of this pin (if
+    any) is retained in a sidecar history file next to the profile, so
+    `stoptimes models rollback` can undo this -- see that command and
+    docs/CONTRACTS.md's promote/rollback section.
 
-    `--json`: ``{"artifact_id": str, "pin": str, "source": str, "profile_path": str}``.
+    `--json`: ``{"artifact_id": str, "pin": str, "source": str, "profile_path": str,
+    "history_path": str, "promotions_for_pin": int}``.
     """
     require("stoptimes.models", "models")
     import yaml
     from stoptimes.core.contracts.artifact import METADATA_FILENAME, artifact_dir, read_metadata
+    from stoptimes.models.common.promotion import promotions_path, record_promotion
 
     target_dir = artifact_dir(registry, artifact_id)
     if not (target_dir / METADATA_FILENAME).exists():
@@ -166,14 +171,154 @@ def models_promote(
     pins[as_pin] = artifact_id
     profile_path.write_text(yaml.safe_dump(data, sort_keys=False), encoding="utf-8")
 
+    history_path = promotions_path(profile_path)
+    history = record_promotion(history_path, as_pin, artifact_id)
+
     if json_output:
         typer.echo(
             json.dumps(
-                {"artifact_id": artifact_id, "pin": as_pin, "source": source, "profile_path": str(profile_path)}
+                {
+                    "artifact_id": artifact_id,
+                    "pin": as_pin,
+                    "source": source,
+                    "profile_path": str(profile_path),
+                    "history_path": str(history_path),
+                    "promotions_for_pin": len(history.get(as_pin, [])),
+                }
             )
         )
         return
     typer.echo(f"promoted {artifact_id!r} -> {profile_path} serving.selection.pins[{as_pin!r}]")
+
+
+@app.command("rollback")
+def models_rollback(
+    as_pin: str = typer.Option(
+        ...,
+        "--as",
+        help='Pin key to roll back (same key space as `promote --as`): "global", "route:<id>", '
+        '"route:<id>/<direction>", or "trip:<id>".',
+    ),
+    source: str = typer.Option(..., "--source", help="Agency id whose profile file to update."),
+    registry: Path = typer.Option(_DEFAULT_REGISTRY, "--registry", help="Artifact registry directory."),
+    sources_dir: Optional[Path] = typer.Option(
+        None, "--sources-dir", help="Agency profile directory. Defaults to STOPTIMES_SOURCES or ./examples/agencies."
+    ),
+    json_output: bool = typer.Option(False, "--json", help="Print the result as JSON."),
+) -> None:
+    """Undo the most recent `promote --as as_pin --source source`: restores the
+    pin to whatever it pointed at immediately before that promotion, using
+    the sidecar history file `promote` wrote (`<profile>.promotions.json`).
+
+    Refuses with a clear message if there is no earlier promotion recorded
+    for this pin (nothing to roll back to) -- it never guesses or clears the
+    pin silently. Warns, but does not refuse, if the restored artifact no
+    longer exists in `registry`: a pin naming a missing artifact degrades to
+    the metric-ranked choice rather than to no predictions (same rule as
+    `contracts.selection`), so rolling back to a since-deleted artifact is
+    still a safe, honest action.
+
+    `--json`: ``{"pin": str, "source": str, "restored_artifact_id": str,
+    "profile_path": str, "history_path": str}``.
+    """
+    require("stoptimes.models", "models")
+    import yaml
+    from stoptimes.core.contracts.artifact import METADATA_FILENAME, artifact_dir
+    from stoptimes.models.common.promotion import RollbackError, promotions_path, rollback_target
+
+    profile_dir = sources_dir or Path(os.environ.get("STOPTIMES_SOURCES", "examples/agencies"))
+    profile_path = profile_dir / f"{source}.yaml"
+    if not profile_path.exists():
+        typer.secho(f"✗ agency profile not found: {profile_path}", fg="red", err=True)
+        raise typer.Exit(1)
+
+    history_path = promotions_path(profile_path)
+    try:
+        restored_artifact_id, _history = rollback_target(history_path, as_pin)
+    except RollbackError as exc:
+        typer.secho(f"✗ {exc}", fg="red", err=True)
+        raise typer.Exit(1) from None
+
+    data = yaml.safe_load(profile_path.read_text(encoding="utf-8")) or {}
+    serving = data.setdefault("serving", {})
+    selection = serving.setdefault("selection", {})
+    pins = selection.setdefault("pins", {})
+    pins[as_pin] = restored_artifact_id
+    profile_path.write_text(yaml.safe_dump(data, sort_keys=False), encoding="utf-8")
+
+    if not (artifact_dir(registry, restored_artifact_id) / METADATA_FILENAME).exists():
+        typer.secho(
+            f"! restored pin {as_pin!r} -> {restored_artifact_id!r}, which no longer exists in {registry}; "
+            "serving will fall back to metric-ranked selection for this pin until it does",
+            fg="yellow",
+            err=True,
+        )
+
+    if json_output:
+        typer.echo(
+            json.dumps(
+                {
+                    "pin": as_pin,
+                    "source": source,
+                    "restored_artifact_id": restored_artifact_id,
+                    "profile_path": str(profile_path),
+                    "history_path": str(history_path),
+                }
+            )
+        )
+        return
+    typer.echo(f"rolled back {as_pin!r} -> {restored_artifact_id!r} in {profile_path}")
+
+
+@app.command("pins")
+def models_pins(
+    source: str = typer.Option(..., "--source", help="Agency id whose profile file to read."),
+    sources_dir: Optional[Path] = typer.Option(
+        None, "--sources-dir", help="Agency profile directory. Defaults to STOPTIMES_SOURCES or ./examples/agencies."
+    ),
+    json_output: bool = typer.Option(False, "--json", help="Print as JSON instead of a table."),
+) -> None:
+    """Show what is live: every pin currently set in `source`'s profile
+    (`serving.selection.pins`), plus how many promotions are on record for
+    it (so an operator can tell whether `rollback` has somewhere to go).
+
+    `--json`: a list of ``{"pin": str, "artifact_id": str, "promotions": int}``.
+    """
+    require("stoptimes.models", "models")
+    import yaml
+    from stoptimes.models.common.promotion import current_promotion, load_history, promotions_path
+
+    profile_dir = sources_dir or Path(os.environ.get("STOPTIMES_SOURCES", "examples/agencies"))
+    profile_path = profile_dir / f"{source}.yaml"
+    if not profile_path.exists():
+        typer.secho(f"✗ agency profile not found: {profile_path}", fg="red", err=True)
+        raise typer.Exit(1)
+
+    data = yaml.safe_load(profile_path.read_text(encoding="utf-8")) or {}
+    pins = ((data.get("serving") or {}).get("selection") or {}).get("pins") or {}
+    history = load_history(promotions_path(profile_path))
+
+    rows = [
+        {"pin": pin, "artifact_id": artifact_id, "promotions": len(history.get(pin, []))}
+        for pin, artifact_id in sorted(pins.items())
+    ]
+    # Pins with promotion history but no longer set directly in the profile
+    # (e.g. hand-edited away) still show up as "not pinned" rows so an
+    # operator sees the history exists even if the live pointer moved.
+    for pin in sorted(set(history) - set(pins)):
+        entry = current_promotion(history, pin)
+        rows.append({"pin": pin, "artifact_id": entry["artifact_id"] if entry else None, "promotions": len(history[pin])})
+
+    if json_output:
+        typer.echo(json.dumps(rows, indent=2))
+        return
+
+    print_table(
+        f"pins: {profile_path}",
+        ["pin", "artifact id", "promotions"],
+        [[row["pin"], row["artifact_id"] or "(none)", str(row["promotions"])] for row in rows],
+        empty_message=f"(no pins set in {profile_path})",
+    )
 
 
 @app.command("migrate")
