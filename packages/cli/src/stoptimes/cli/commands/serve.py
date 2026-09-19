@@ -70,7 +70,7 @@ def serve(
     from stoptimes.core.contracts.adapters import source_from_val_yaml
     from stoptimes.core.contracts.pipeline import PipelineContext
     from stoptimes.serve.model_loading import (
-        ArtifactVersionDriftError,
+        ArtifactRefusalError,
         load_artifact_model,
         load_model_ref,
         resolve_artifact,
@@ -135,7 +135,7 @@ def serve(
             resolved_artifact_id = meta.artifact_id
             try:
                 resolved_model = load_artifact_model(meta, registry)
-            except (NotImplementedError, ArtifactVersionDriftError) as exc:
+            except (NotImplementedError, ArtifactRefusalError) as exc:
                 # A refused model is an operational event, not a crash: the
                 # message already says what drifted and how to override, so
                 # print it and exit rather than dumping a traceback at whoever

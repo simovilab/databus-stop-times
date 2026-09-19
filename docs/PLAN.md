@@ -1,7 +1,7 @@
 # stoptimes — implementation plan
 
 Status: **Phase 3 tracks merged; the clean-machine gate has been run and its findings fixed (2026-09-19)** —
-1508 passed, 20 skipped · next: close the serving feature-contract gap (§7.4), then Phase 4
+1526 passed, 20 skipped · next: Phase 4 (§7.4's serving feature-contract gap is closed)
 (note G4 now precedes G2a — see §8) ·
 branch `feat/stoptimes-scaffold`, not pushed (the account has read-only access to the remote) · last updated 2026-09-19 (serving target revised §7.2/G2; gate run and fix track merged §7.4)
 
@@ -353,7 +353,7 @@ Plus three doc gaps: a quickstart step reading a file no step creates, no mentio
 `stoptimes:<artifact>` finds its registry through `STOPTIMES_MODEL_REGISTRY_DIR` (there is no
 `--registry` flag on `val replay`), and an install line that cannot work before PyPI.
 
-**Fix track F1–F3, merged 2026-09-19.** Suite: core 321, models 134+2s, serve 79+2s, record 130,
+**Fix track F1–F3, merged 2026-09-19.** Suite after F1-F3: core 321, models 134+2s, serve 79+2s, record 130,
 train 267+15s, val 484+1s, cli 92, e2e 1 — **1508 passed, 20 skipped, 0 failed**;
 `mkdocs build --strict` clean.
 
@@ -371,17 +371,28 @@ train 267+15s, val 484+1s, cli 92, e2e 1 — **1508 passed, 20 skipped, 0 failed
 - **F3** — the three doc gaps, each verified by re-extracting the code blocks from the **final**
   page text and running steps 0→6 in one shot.
 
-**The gap this exposed, and it is on the G2 critical path.** `serve.pipeline.default_features` is
-still the stopgap U6 wrote: it attaches temporal features plus whatever the `match` stage left in
-`.extra`, and it does **not** use `core.features.registry` even though T3 exists.
-`default_predict` then builds each row with `row.get(name)` for every declared feature, so a
-feature the pipeline cannot produce arrives as `None`. Nothing compares what the artifact
-*requires* against what the pipeline *can compute*. A model trained on speed, bearing or
-shape-progress is therefore either silently served on missing inputs (families that impute, e.g.
-`HistoricalMeanModel`) or fails per row into the errors list — never refused. This is exactly the
-"training and serving agree only by inspection" problem G2b is meant to end, and it should be
-closed before databus depends on it: the registry wired into `default_features`, and a declared
-refusal when required features cannot be produced. **Tracked as a Phase 3 remainder, not done.**
+**The gap this exposed — closed by F4, 2026-09-19.** `serve.pipeline.default_features` was still the
+stopgap U6 wrote: temporal features plus whatever `match` left in `.extra`, ignoring
+`core.features.registry` even though T3 exists, and `default_predict` then built each row with
+`row.get(name)`, so a feature the pipeline could not compute arrived as `None`. Nothing compared
+what an artifact *requires* against what serving *can produce*, so a model trained on
+shape-progress or rolling-conditions features was silently imputed into confident nonsense
+(families that impute) or failed per row into the errors list — never refused. That is the same
+missing-input tolerance that made the U6 gate pass vacuously, which makes three occurrences of
+one root cause this phase.
+
+F4 wired the registry into `default_features`, added `producible_features()` /
+`unproducible_registered_features()`, and made `load_artifact_model` refuse at **load time**
+rather than per row, with `STOPTIMES_ALLOW_UNPRODUCIBLE_FEATURES` as a deliberate separate
+override (a custom `--pipeline` may legitimately supply the column its own way, and the check
+cannot see that). A feature name the registry has never heard of is left alone — absence of
+information is not evidence of a problem, the same rule `check_version_drift` follows.
+
+F4 could not edit the CLI, so it hung `UnproducibleFeaturesError` off `ArtifactVersionDriftError`
+to reuse the existing catch site, and filed a note saying that was a conflation. The orchestrator
+took the note: both now derive from a shared `ArtifactRefusalError`, which `serve` catches, with
+CLI tests asserting an unproducible feature is refused as a message rather than a traceback.
+Suite after F4: **1526 passed, 20 skipped, 0 failed**.
 
 ### 7.1 User stories (the acceptance list)
 

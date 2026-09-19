@@ -105,3 +105,40 @@ def test_the_override_lets_a_known_good_model_run(tmp_path, monkeypatch):
     # It gets past loading; whether the feed has entities depends on the
     # (unreachable) example feed, which is not what this test is about.
     assert "STOPTIMES_ALLOW_VERSION_DRIFT" not in result.output, result.output
+
+
+def _artifact_with_unproducible_feature(tmp_path: Path) -> tuple[Path, str]:
+    """Train one real artifact, then declare a feature only a training-side
+    dataset builder can materialize."""
+    registry, artifact_id = _trained_registry(tmp_path)
+    meta_path = registry / artifact_id / "artifact.json"
+    meta = json.loads(meta_path.read_text(encoding="utf-8"))
+    # undo the drift `_trained_registry` forged: this test is about features
+    meta["provenance"]["lib_versions"].pop("sklearn", None)
+    meta["features"] = [*meta.get("features", []), "shape_progress"]
+    meta_path.write_text(json.dumps(meta, indent=2), encoding="utf-8")
+    return registry, artifact_id
+
+
+def test_a_feature_serving_cannot_compute_is_refused_not_imputed(tmp_path):
+    """The §7.4 defect: a missing feature used to arrive as None and be
+    imputed into confident nonsense. It must be refused at load, and -- like
+    every other refusal -- reach the operator as a message."""
+    registry, artifact_id = _artifact_with_unproducible_feature(tmp_path)
+    result = _serve(registry, _sources_dir(tmp_path), artifact_id)
+
+    assert result.exit_code == 1, result.output
+    assert result.exception is None or isinstance(result.exception, SystemExit), (
+        f"a refusal must not reach the operator as a traceback: {result.exception!r}"
+    )
+    assert "shape_progress" in result.output, result.output
+    assert "STOPTIMES_ALLOW_UNPRODUCIBLE_FEATURES" in result.output, result.output
+
+
+def test_the_unproducible_override_lets_a_custom_pipeline_through(tmp_path, monkeypatch):
+    registry, artifact_id = _artifact_with_unproducible_feature(tmp_path)
+    monkeypatch.setenv("STOPTIMES_ALLOW_UNPRODUCIBLE_FEATURES", "all")
+
+    result = _serve(registry, _sources_dir(tmp_path), artifact_id)
+
+    assert "STOPTIMES_ALLOW_UNPRODUCIBLE_FEATURES" not in result.output, result.output

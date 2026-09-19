@@ -107,25 +107,29 @@ contracts/artifact.py for the comparison itself (major.minor, built vs.
 installed)."""
 
 
-class ArtifactVersionDriftError(RuntimeError):
+class ArtifactRefusalError(RuntimeError):
+    """Base for every reason loading an artifact is refused rather than risked.
+
+    A refusal is an operational event, not a crash: each subclass's message
+    must name what is wrong, what would fix it, and which environment
+    variable overrides it. `stoptimes serve` catches this base and prints
+    the message instead of a traceback.
+    """
+
+
+class ArtifactVersionDriftError(ArtifactRefusalError):
     """Raised when a load-critical library has drifted since an artifact was
     built and no override was given. See `check_version_drift`."""
 
 
-class UnproducibleFeaturesError(ArtifactVersionDriftError):
+class UnproducibleFeaturesError(ArtifactRefusalError):
     """Raised when an artifact declares `required_features` the default
     serving pipeline has no way to compute. See `check_feature_producibility`.
 
-    Deliberately a subclass of `ArtifactVersionDriftError`, not a bare
-    `RuntimeError`: `stoptimes serve` (`packages/cli/src/stoptimes/cli/commands/serve.py`,
-    not owned by this track) catches exactly
-    `except (NotImplementedError, ArtifactVersionDriftError)` around
-    `load_artifact_model` and prints the message instead of a traceback --
-    this reuses that catch site so the refusal reaches the operator the
-    same way U7's drift refusal does, without a CLI change. It is not
-    actually a version-drift condition; see docs/notes/f4.md for a filed
-    note suggesting the CLI widen its except clause to a shared
-    `ArtifactRefusalError` base the next time that file is touched.
+    F4 originally hung this off `ArtifactVersionDriftError` to reuse the
+    CLI's existing catch site, and filed a note saying so; the orchestrator
+    took the note and introduced the shared base instead, since the two
+    conditions have nothing to do with each other beyond how they surface.
     """
 
 
