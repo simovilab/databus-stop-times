@@ -14,10 +14,13 @@ from stoptimes.core.contracts.artifact import ArtifactMetadata, ModelScope, Prov
 from stoptimes.core.contracts.model import ModelRef, ModelRefKind
 from stoptimes.core.contracts.selection import SelectionPolicy
 from stoptimes.serve.model_loading import (
+    ALLOW_VERSION_DRIFT_ENV,
+    ArtifactVersionDriftError,
     CallableModelLoader,
     HttpModelLoader,
     OnnxModelLoader,
     PickleModelLoader,
+    check_version_drift,
     iter_registry_artifacts,
     load_artifact_model,
     load_model_ref,
@@ -208,3 +211,158 @@ def test_load_model_ref_dispatches_by_kind(tmp_path):
     ref = ModelRef(kind=ModelRefKind.PICKLE, location=str(path))
     model = load_model_ref(ref)
     assert list(model.predict(pd.DataFrame({"x": [5.0]}))) == [5.0]
+
+
+# ---------------------------------------------------------------------------
+# Version drift refusal (U7): a stale artifact must be refused, not loaded
+# quietly, when a library that deserializes the model has drifted.
+# ---------------------------------------------------------------------------
+
+
+def _write_artifact_with_lib_versions(registry_dir, artifact_id, lib_versions, *, fmt=None):
+    from stoptimes.core.contracts.artifact import ModelFormat
+
+    meta = ArtifactMetadata(
+        artifact_id=artifact_id,
+        family="fake",
+        format=fmt or ModelFormat.PICKLE,
+        features=["x"],
+        provenance=Provenance(created_at=datetime.now(timezone.utc), lib_versions=lib_versions),
+        metrics={"test_mae_seconds": 1.0},
+    )
+    directory = registry_dir / artifact_id
+    write_metadata(meta, directory)
+    with open(directory / meta.model_filename, "wb") as fh:
+        pickle.dump(_StubModel(), fh)
+    return meta
+
+
+def test_check_version_drift_noop_when_lib_versions_absent(monkeypatch):
+    monkeypatch.setattr(
+        "stoptimes.serve.model_loading._installed_lib_versions",
+        lambda: {"sklearn": "1.0.0", "xgboost": "1.0.0"},
+    )
+    meta = _meta_no_provenance_versions()
+    check_version_drift(meta)  # must not raise: absence of info is not evidence of drift
+
+
+def _meta_no_provenance_versions():
+    from stoptimes.core.contracts.artifact import ModelFormat
+
+    return ArtifactMetadata(
+        artifact_id="legacy1",
+        family="fake",
+        format=ModelFormat.PICKLE,
+        features=["x"],
+        provenance=Provenance(created_at=datetime.now(timezone.utc)),
+        metrics={"test_mae_seconds": 1.0},
+    )
+
+
+def test_check_version_drift_raises_on_load_critical_mismatch(monkeypatch):
+    monkeypatch.delenv(ALLOW_VERSION_DRIFT_ENV, raising=False)
+    monkeypatch.setattr(
+        "stoptimes.serve.model_loading._installed_lib_versions",
+        lambda: {"sklearn": "1.9.0"},
+    )
+    meta = _meta_no_provenance_versions().model_copy(
+        update={"provenance": Provenance(created_at=datetime.now(timezone.utc), lib_versions={"sklearn": "1.2.0"})}
+    )
+    with pytest.raises(ArtifactVersionDriftError, match="sklearn"):
+        check_version_drift(meta)
+
+
+def test_check_version_drift_ignores_non_critical_library(monkeypatch):
+    monkeypatch.delenv(ALLOW_VERSION_DRIFT_ENV, raising=False)
+    monkeypatch.setattr(
+        "stoptimes.serve.model_loading._installed_lib_versions",
+        lambda: {"numpy": "2.0.0"},
+    )
+    meta = _meta_no_provenance_versions().model_copy(
+        update={"provenance": Provenance(created_at=datetime.now(timezone.utc), lib_versions={"numpy": "1.20.0"})}
+    )
+    check_version_drift(meta)  # numpy is not load-critical for PICKLE: warns, never refuses
+
+
+def test_check_version_drift_no_mismatch_passes(monkeypatch):
+    monkeypatch.setattr(
+        "stoptimes.serve.model_loading._installed_lib_versions",
+        lambda: {"sklearn": "1.2.5"},
+    )
+    meta = _meta_no_provenance_versions().model_copy(
+        update={"provenance": Provenance(created_at=datetime.now(timezone.utc), lib_versions={"sklearn": "1.2.0"})}
+    )
+    check_version_drift(meta)  # same major.minor: no refusal
+
+
+def test_check_version_drift_override_param_allows_load(monkeypatch):
+    monkeypatch.delenv(ALLOW_VERSION_DRIFT_ENV, raising=False)
+    monkeypatch.setattr(
+        "stoptimes.serve.model_loading._installed_lib_versions",
+        lambda: {"sklearn": "1.9.0"},
+    )
+    meta = _meta_no_provenance_versions().model_copy(
+        update={"provenance": Provenance(created_at=datetime.now(timezone.utc), lib_versions={"sklearn": "1.2.0"})}
+    )
+    check_version_drift(meta, allow_override=True)  # explicit override: no raise
+
+
+def test_check_version_drift_env_override_all(monkeypatch):
+    monkeypatch.setenv(ALLOW_VERSION_DRIFT_ENV, "all")
+    monkeypatch.setattr(
+        "stoptimes.serve.model_loading._installed_lib_versions",
+        lambda: {"sklearn": "1.9.0"},
+    )
+    meta = _meta_no_provenance_versions().model_copy(
+        update={"provenance": Provenance(created_at=datetime.now(timezone.utc), lib_versions={"sklearn": "1.2.0"})}
+    )
+    check_version_drift(meta)
+
+
+def test_check_version_drift_env_override_by_artifact_id(monkeypatch):
+    monkeypatch.delenv(ALLOW_VERSION_DRIFT_ENV, raising=False)
+    monkeypatch.setattr(
+        "stoptimes.serve.model_loading._installed_lib_versions",
+        lambda: {"sklearn": "1.9.0"},
+    )
+    meta = _meta_no_provenance_versions().model_copy(
+        update={"provenance": Provenance(created_at=datetime.now(timezone.utc), lib_versions={"sklearn": "1.2.0"})}
+    )
+    monkeypatch.setenv(ALLOW_VERSION_DRIFT_ENV, "other-artifact, legacy1")
+    check_version_drift(meta)  # legacy1 is named in the allow-list
+
+    monkeypatch.setenv(ALLOW_VERSION_DRIFT_ENV, "other-artifact")
+    with pytest.raises(ArtifactVersionDriftError):
+        check_version_drift(meta)  # legacy1 is not named: still refused
+
+
+def test_load_artifact_model_refuses_stale_artifact(tmp_path, monkeypatch):
+    monkeypatch.delenv(ALLOW_VERSION_DRIFT_ENV, raising=False)
+    monkeypatch.setattr(
+        "stoptimes.serve.model_loading._installed_lib_versions",
+        lambda: {"sklearn": "1.9.0"},
+    )
+    meta = _write_artifact_with_lib_versions(tmp_path, "a1", {"sklearn": "1.2.0"})
+    with pytest.raises(ArtifactVersionDriftError):
+        load_artifact_model(meta, tmp_path)
+
+
+def test_load_artifact_model_override_param_loads_stale_artifact(tmp_path, monkeypatch):
+    monkeypatch.delenv(ALLOW_VERSION_DRIFT_ENV, raising=False)
+    monkeypatch.setattr(
+        "stoptimes.serve.model_loading._installed_lib_versions",
+        lambda: {"sklearn": "1.9.0"},
+    )
+    meta = _write_artifact_with_lib_versions(tmp_path, "a1", {"sklearn": "1.2.0"})
+    model = load_artifact_model(meta, tmp_path, allow_version_drift=True)
+    assert model.family == "fake"
+
+
+def test_load_artifact_model_loads_when_no_lib_versions_recorded(tmp_path, monkeypatch):
+    monkeypatch.setattr(
+        "stoptimes.serve.model_loading._installed_lib_versions",
+        lambda: {"sklearn": "9.9.9", "xgboost": "9.9.9"},
+    )
+    meta = _write_artifact_with_lib_versions(tmp_path, "a1", {})
+    model = load_artifact_model(meta, tmp_path)
+    assert model.family == "fake"

@@ -386,6 +386,45 @@ the full shape (`ArtifactMetadata`, `ModelFormat`, `DataWindow`,
 
 C1 added no fields — every field a Phase 2 track needs was already present.
 
+### Loading refuses on load-critical version drift (U7)
+
+**File:** `serve/model_loading.py` (`load_artifact_model`, `check_version_drift`).
+`version_mismatches(meta, installed)` (above) has existed since C1 but nothing
+called it until U7 — a stale artifact was loaded silently, only ever warned
+about. This is the real failure `version_mismatches`' own docstring names: a
+model pickled under different library versions than the deploy target runs
+gets deserialized with those library's classes anyway, silently.
+
+`load_artifact_model` now calls `check_version_drift(meta)` before opening
+anything:
+
+- **Which libraries are load-critical is per `ModelFormat`**
+  (`LOAD_CRITICAL_LIBS`): `pickle` → `{sklearn, xgboost}` (either may own the
+  pickled class depending on family); `xgboost-json` → `{xgboost}`; `onnx` →
+  `{onnxruntime}`; `torchscript` → `{torch}`. A drift in anything else
+  currently tracked in `provenance.lib_versions` (`numpy`, `pandas`) — or
+  anything not tracked at all — is **informational**: logged as a warning,
+  never a refusal. This is what keeps a matplotlib or numpy point-release
+  from blocking a model that doesn't care.
+- **No recorded `lib_versions` → always loads.** Absence of information is
+  not evidence of drift; every pre-Phase-1 artifact keeps working.
+- **A load-critical drift raises `ArtifactVersionDriftError`**, naming the
+  library, the built vs. installed versions, and what to do: re-export the
+  artifact under the versions installed on the target, or override.
+- **The override** is `STOPTIMES_ALLOW_VERSION_DRIFT` — an environment
+  variable, not a config default, so it's opt-in per-deploy: `all`/`1`/
+  `true`/`*` overrides every artifact, or a comma-separated list of artifact
+  ids overrides only those. `load_artifact_model(..., allow_version_drift=True)`
+  is the equivalent explicit code-level override for a caller (e.g. an
+  offline re-scoring tool) that wants it hardcoded. Every override is logged
+  at `WARNING`, naming the artifact and the exact drift — it is never silent
+  and never the default.
+
+This directly targets the situation SIMOVI has today, generically: a serving
+host running different `scikit-learn`/`xgboost` builds than the host a model
+was trained on. Before U7 that produced a warning and kept going; now it
+refuses unless the operator says otherwise.
+
 ---
 
 ## 7b. `selection` — which artifact serves a trip
@@ -430,6 +469,99 @@ if-else chain in `serve.estimator`. `ServingDefaults.primary_model` /
 
 `stoptimes models migrate` maps a legacy `route_id` onto a route scope, so
 migrated per-route models keep serving only their route.
+
+### `models list --json` shape
+
+**File:** `cli/commands/models.py::models_list`. Reads every
+`<registry>/<artifact_id>/artifact.json` (skipping directories without one)
+and, with `--json`, prints a JSON array — one object per artifact, filtered
+by any of `--source`/`--route`/`--family`:
+
+```json
+[
+  {
+    "artifact_id": "xgboost_mbta_20260818_120020",
+    "family": "xgboost",
+    "scope": "route",                  // ModelScope.level.value
+    "routes": ["22"],                  // ModelScope.route_ids ([] for global/trip scope)
+    "metric": 31.5,                    // metrics["test_mae_seconds"], or null if absent
+    "created": "2026-08-18T12:00:20"   // provenance.created_at, ISO 8601
+  }
+]
+```
+
+One bad `artifact.json` (fails to parse) is skipped with a warning on
+stderr, not a hard failure of the whole listing — an operator auditing a
+registry with one corrupt artifact still sees the rest.
+
+## 7c. Promote / rollback (U7)
+
+**Files:** `cli/commands/models.py` (`promote`, `rollback`, `pins`),
+`models/common/promotion.py` (the history sidecar).
+
+**The problem this solves:** `models promote` existed before U7 but its
+behavior — what it writes, where, and how to undo it — was unspecified and
+untested. "Production must always have a way back" (docs/PLAN.md §8) needs
+promote and rollback to both exist and be exercised by tests, not just the
+promote half.
+
+**The design — smallest honest thing, not a deployment system:**
+
+- **The pointer** an operator promotes into is unchanged: `SelectionPolicy.pins`
+  (§7b) inside `serving.selection.pins` of the agency's profile YAML
+  (`<sources-dir>/<source>.yaml`, default `./examples/agencies`). This is
+  what `resolve_artifact`/`select_artifact` already read at serve time — no
+  new file for serving to consult, no new schema.
+- **The history** is a sidecar JSON file next to the profile, named by
+  suffix: `<source>.yaml` → `<source>.promotions.json`. It is *not* folded
+  into the profile YAML's `serving`/`selection` keys, because those are
+  parsed into `ServingDefaults`/`SelectionPolicy` (`contracts/source.py`),
+  both `extra="forbid"` — adding an unrecognized key there would break every
+  other reader of that file (`source_from_val_yaml`), not just this track's
+  own commands. Shape:
+
+  ```json
+  {
+    "pins": {
+      "global": [
+        {"artifact_id": "m1", "at": "2026-09-10T12:00:00+00:00"},
+        {"artifact_id": "m2", "at": "2026-09-18T09:00:00+00:00"}
+      ],
+      "route:22": [ ... ]
+    }
+  }
+  ```
+
+  Each pin key (same key space as `SelectionPolicy.pins`: `global`,
+  `route:<id>`, `route:<id>/<direction>`, `trip:<id>`) has its own
+  chronological list; the last entry is what's currently live for that pin.
+
+- **`models promote <artifact_id> --as <pin> --source <id>`**: refuses if
+  the artifact isn't in `--registry` (as before); on success, writes the pin
+  into the profile *and* appends `{artifact_id, at}` to that pin's history —
+  this is what makes rollback possible. `--json` reports
+  `promotions_for_pin` (the new history depth for that pin) alongside the
+  existing fields.
+- **`models rollback --as <pin> --source <id>`**: pops the current history
+  entry for `pin` and restores the pointer to whatever is now on top —
+  i.e. what was live immediately before the promotion being undone. Refuses
+  with a clear "nothing to roll back to" message (exit 1) if fewer than two
+  promotions are on record for that pin; it never guesses or clears the pin.
+  If the restored artifact id no longer exists in `--registry` (deleted
+  since), it still restores the pointer and warns on stderr rather than
+  refusing — a pin naming a missing artifact degrades to metric-ranked
+  selection at serve time (§7b's own rule), so this is a safe, honest
+  outcome, not a broken one. Rolling back and then promoting again is how
+  you move forward again; there is no separate "redo".
+- **`models pins --source <id>`**: shows what is live — every pin currently
+  set in the profile, its artifact id, and how many promotions are on record
+  (so an operator can tell at a glance whether `rollback` has somewhere to
+  go). `--json`: `[{"pin": str, "artifact_id": str | null, "promotions": int}, ...]`.
+
+Tests: `packages/models/tests/test_promotion.py` (history bookkeeping in
+isolation) and `packages/cli/tests/test_cli_models_promote.py` (the CLI
+commands end to end, including the missing-artifact warning and the
+nothing-to-roll-back-to refusal).
 
 ## 8. `adapters` — bridging existing code to these contracts
 
