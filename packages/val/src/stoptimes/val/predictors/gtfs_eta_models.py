@@ -219,6 +219,7 @@ class GtfsEtaModelPredictor:
         return None
 
     def __init__(self, model_type: str, model_key: str | None = None) -> None:
+        _ensure_model_registry_env()
         self.model_type = model_type
         self.model_key = model_key
         self.predictor_id: str = f"gtfs_eta:{model_type}"
@@ -301,10 +302,32 @@ class GtfsEtaModelPredictor:
         return predictions
 
 
-if not (os.environ.get("STOPTIMES_MODEL_REGISTRY_DIR") or os.environ.get("MODEL_REGISTRY_DIR")):
-    _resolved = GtfsEtaModelPredictor._resolve_model_registry_dir()
-    if _resolved is not None:
-        os.environ["MODEL_REGISTRY_DIR"] = str(_resolved)
+_model_registry_env_checked = False
+
+
+def _ensure_model_registry_env() -> None:
+    """Auto-resolve ``MODEL_REGISTRY_DIR`` (and warn if it can't be), once.
+
+    This used to run unconditionally at *import* time, which meant every
+    ``stoptimes val`` invocation printed this legacy-path warning even when
+    the user never touches a ``gtfs_eta:*``/``stoptimes:*`` predictor --
+    `assembly.py` imports this module eagerly just to register the
+    predictor factory. Deferred to first *use* (construction of a
+    ``GtfsEtaModelPredictor``) instead, so a newcomer running e.g.
+    `--predictor pipeline:my_pipeline.py` never sees it. The genuine signal
+    -- "you're on the legacy gtfs_eta path and MODEL_REGISTRY_DIR isn't
+    resolvable" -- is unchanged for anyone who actually constructs one.
+    """
+    global _model_registry_env_checked
+    if _model_registry_env_checked:
+        return
+    _model_registry_env_checked = True
+
+    if os.environ.get("STOPTIMES_MODEL_REGISTRY_DIR") or os.environ.get("MODEL_REGISTRY_DIR"):
+        return
+    resolved = GtfsEtaModelPredictor._resolve_model_registry_dir()
+    if resolved is not None:
+        os.environ["MODEL_REGISTRY_DIR"] = str(resolved)
     else:
         warnings.warn(
             "MODEL_REGISTRY_DIR is not set and gtfs-eta's models/trained/ "
@@ -318,6 +341,7 @@ if not (os.environ.get("STOPTIMES_MODEL_REGISTRY_DIR") or os.environ.get("MODEL_
             RuntimeWarning,
             stacklevel=2,
         )
+
 
 try:
     from stoptimes.serve.estimator import estimate_stop_times

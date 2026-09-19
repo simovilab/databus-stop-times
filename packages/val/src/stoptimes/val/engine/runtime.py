@@ -162,6 +162,14 @@ class RunSummary:
     results_saved: int = 0
     predictor_errors: dict[str, int] = field(default_factory=dict)
     detector_errors: dict[str, int] = field(default_factory=dict)
+    # First exception per predictor_id, as "ExcType: message" -- one representative
+    # cause per predictor, not a traceback per failure. Populated whenever
+    # predictor_errors has an entry; see run_engine's per-predictor try/except.
+    predictor_first_error: dict[str, str] = field(default_factory=dict)
+    # Total predict() attempts per predictor_id (success + failure), so callers can
+    # tell "failed once" from "failed every single time" (predictor_errors[pid] ==
+    # predictor_attempts[pid]).
+    predictor_attempts: dict[str, int] = field(default_factory=dict)
     provenance: RunProvenance | None = None
     inference_latency: dict[str, LatencyStats] = field(default_factory=dict)
 
@@ -174,6 +182,8 @@ class RunSummary:
             "results_saved": self.results_saved,
             "predictor_errors": dict(self.predictor_errors),
             "detector_errors": dict(self.detector_errors),
+            "predictor_first_error": dict(self.predictor_first_error),
+            "predictor_attempts": dict(self.predictor_attempts),
             "provenance": self.provenance.to_dict() if self.provenance is not None else None,
             "inference_latency": {
                 pid: stats.to_dict() for pid, stats in self.inference_latency.items()
@@ -198,6 +208,8 @@ class RunSummary:
             results_saved=data.get("results_saved", 0),
             predictor_errors=dict(data.get("predictor_errors") or {}),
             detector_errors=dict(data.get("detector_errors") or {}),
+            predictor_first_error=dict(data.get("predictor_first_error") or {}),
+            predictor_attempts=dict(data.get("predictor_attempts") or {}),
             provenance=provenance,
             inference_latency=inference_latency,
         )
@@ -322,6 +334,11 @@ async def run_engine(
     # both RunSummary (final) and TickEvent (per-tick cumulative snapshot).
     predictor_errors: dict[str, int] = {}
     detector_errors: dict[str, int] = {}
+    # First exception per predictor_id (never overwritten after the first),
+    # plus a total-attempts count so a caller can tell "failed once" from
+    # "failed every tick it ran" -- see RunSummary.predictor_first_error.
+    predictor_first_error: dict[str, str] = {}
+    predictor_attempts: dict[str, int] = {}
 
     # Per-predictor inference-latency tracking.
     latency_recorder = LatencyRecorder()
@@ -419,6 +436,9 @@ async def run_engine(
             # ── 5. Run predictors ─────────────────────────────────────────────
             for predictor in predictors:
                 _predict_start = time.perf_counter()
+                predictor_attempts[predictor.predictor_id] = (
+                    predictor_attempts.get(predictor.predictor_id, 0) + 1
+                )
                 try:
                     if hasattr(predictor, "predict"):
                         # Declarative opt-in: predictors that want position
@@ -443,6 +463,9 @@ async def run_engine(
                     )
                     predictor_errors[predictor.predictor_id] = (
                         predictor_errors.get(predictor.predictor_id, 0) + 1
+                    )
+                    predictor_first_error.setdefault(
+                        predictor.predictor_id, f"{type(exc).__name__}: {exc}"
                     )
                     if on_predictor_error is not None:
                         await on_predictor_error(predictor.predictor_id, exc)
@@ -533,6 +556,8 @@ async def run_engine(
 
     summary.predictor_errors = dict(predictor_errors)
     summary.detector_errors = dict(detector_errors)
+    summary.predictor_first_error = dict(predictor_first_error)
+    summary.predictor_attempts = dict(predictor_attempts)
     summary.provenance = provenance
     summary.inference_latency = latency_recorder.summary()
     return summary
