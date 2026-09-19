@@ -69,7 +69,12 @@ def serve(
     import yaml
     from stoptimes.core.contracts.adapters import source_from_val_yaml
     from stoptimes.core.contracts.pipeline import PipelineContext
-    from stoptimes.serve.model_loading import load_artifact_model, load_model_ref, resolve_artifact
+    from stoptimes.serve.model_loading import (
+        ArtifactVersionDriftError,
+        load_artifact_model,
+        load_model_ref,
+        resolve_artifact,
+    )
     from stoptimes.serve.pipeline import build_default_pipeline, load_pipeline as load_user_pipeline
     from stoptimes.serve.sinks import sink_from_uri
 
@@ -130,7 +135,11 @@ def serve(
             resolved_artifact_id = meta.artifact_id
             try:
                 resolved_model = load_artifact_model(meta, registry)
-            except NotImplementedError as exc:
+            except (NotImplementedError, ArtifactVersionDriftError) as exc:
+                # A refused model is an operational event, not a crash: the
+                # message already says what drifted and how to override, so
+                # print it and exit rather than dumping a traceback at whoever
+                # is looking at this during an incident.
                 typer.secho(f"✗ {exc}", fg="red", err=True)
                 raise typer.Exit(1) from exc
         elif model_choice is not None:

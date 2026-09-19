@@ -32,3 +32,6 @@ web/.output/
 .DS_Store
 * [0-9].py
 .venv
+
+# Built documentation (mkdocs build)
+/site/
