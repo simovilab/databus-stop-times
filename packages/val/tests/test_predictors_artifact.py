@@ -157,12 +157,34 @@ def test_predict_empty_upcoming_stops_short_circuits(tmp_path: Path) -> None:
     assert predictor.predict(TRIP_GLOBAL, [], STATE, None) == []
 
 
-def test_predict_raises_for_native_artifact_without_legacy_bridge(tmp_path: Path) -> None:
-    _write_artifact(tmp_path, "native-v1", legacy=None)
+def test_predict_bridges_native_artifact_through_serve_pipeline(tmp_path: Path) -> None:
+    """A native artifact (no `legacy` block, e.g. `stoptimes train run`
+    output) must be scored via `serve.model_loading.load_artifact_model` +
+    `serve.pipeline.default_features`/`default_predict`, not raise -- this
+    is the F2 defect fix. See `test_artifact_predictor_native.py` for the
+    fuller native-artifact coverage (real trained artifact, agreement with
+    `stoptimes serve`, model caching)."""
+    _write_artifact(tmp_path, "native-v1", family="historical_mean", legacy=None)
     predictor = StoptimesArtifactPredictor("native-v1", registry_dir=tmp_path)
 
-    with pytest.raises(RuntimeError, match="core.features.registry"):
-        predictor.predict(TRIP_GLOBAL, _stops(), STATE, None)
+    class _FakeModel:
+        family = "historical_mean"
+        required_features = ["distance_to_stop", "stops_ahead", "hour"]
+
+        def predict(self, X):
+            assert list(X.columns) == self.required_features
+            return [42.0]
+
+    with patch(
+        "stoptimes.serve.model_loading.load_artifact_model", return_value=_FakeModel()
+    ) as mock_load:
+        preds = predictor.predict(TRIP_GLOBAL, _stops(), STATE, None)
+
+    assert mock_load.call_count == 1
+    assert len(preds) == 1
+    assert preds[0].stop_id == "s1"
+    assert preds[0].predicted_arrival_epoch == STATE.epoch + 42.0
+    assert preds[0].made_at_epoch == STATE.epoch
 
 
 def test_missing_registry_dir_yields_no_candidates(tmp_path: Path) -> None:
