@@ -40,9 +40,12 @@ __all__ = [
     "resolve_artifact",
     "load_artifact_model",
     "check_version_drift",
+    "check_feature_producibility",
     "ArtifactVersionDriftError",
+    "UnproducibleFeaturesError",
     "LOAD_CRITICAL_LIBS",
     "ALLOW_VERSION_DRIFT_ENV",
+    "ALLOW_UNPRODUCIBLE_FEATURES_ENV",
     "PickleModelLoader",
     "OnnxModelLoader",
     "CallableModelLoader",
@@ -62,6 +65,21 @@ or to a comma-separated list of artifact ids (e.g.
 ``"xgb_mbta_2026,poly_v3"``) to override only those. Unset/empty means no
 override -- the default is to refuse, never to load quietly across a
 drifted load-critical library.
+"""
+
+ALLOW_UNPRODUCIBLE_FEATURES_ENV = "STOPTIMES_ALLOW_UNPRODUCIBLE_FEATURES"
+"""Override switch for a refused artifact (see `check_feature_producibility`).
+
+Same value grammar as `ALLOW_VERSION_DRIFT_ENV`: ``"1"``/``"true"``/``"all"``/
+``"*"`` overrides for every artifact, a comma-separated artifact id list
+overrides only those, unset/empty means no override. Deliberately a
+*separate* env var from `ALLOW_VERSION_DRIFT_ENV` -- overriding a library
+version mismatch and overriding "this pipeline cannot compute a declared
+feature" are unrelated judgment calls; an operator silencing one should not
+accidentally silence the other. The legitimate use is a custom `--pipeline`
+whose own `features` stage supplies the missing column some other way --
+this check runs at model-load time, before the CLI has picked a pipeline,
+so it cannot see that override and must be told about it explicitly.
 """
 
 LOAD_CRITICAL_LIBS: dict[ModelFormat, frozenset[str]] = {
@@ -92,6 +110,23 @@ installed)."""
 class ArtifactVersionDriftError(RuntimeError):
     """Raised when a load-critical library has drifted since an artifact was
     built and no override was given. See `check_version_drift`."""
+
+
+class UnproducibleFeaturesError(ArtifactVersionDriftError):
+    """Raised when an artifact declares `required_features` the default
+    serving pipeline has no way to compute. See `check_feature_producibility`.
+
+    Deliberately a subclass of `ArtifactVersionDriftError`, not a bare
+    `RuntimeError`: `stoptimes serve` (`packages/cli/src/stoptimes/cli/commands/serve.py`,
+    not owned by this track) catches exactly
+    `except (NotImplementedError, ArtifactVersionDriftError)` around
+    `load_artifact_model` and prints the message instead of a traceback --
+    this reuses that catch site so the refusal reaches the operator the
+    same way U7's drift refusal does, without a CLI change. It is not
+    actually a version-drift condition; see docs/notes/f4.md for a filed
+    note suggesting the CLI widen its except clause to a shared
+    `ArtifactRefusalError` base the next time that file is touched.
+    """
 
 
 def _lib_name(mismatch: str) -> str:
@@ -166,6 +201,73 @@ def check_version_drift(meta: ArtifactMetadata, *, allow_override: bool | None =
     )
 
 
+def _feature_override_requested(artifact_id: str) -> bool:
+    raw = os.environ.get(ALLOW_UNPRODUCIBLE_FEATURES_ENV, "").strip()
+    if not raw:
+        return False
+    if raw.lower() in ("1", "true", "all", "*"):
+        return True
+    allowed_ids = {item.strip() for item in raw.split(",") if item.strip()}
+    return artifact_id in allowed_ids
+
+
+def check_feature_producibility(meta: ArtifactMetadata, *, allow_override: bool | None = None) -> None:
+    """Refuse to proceed if `meta.features` names a `core.features.registry`
+    feature the default serving pipeline (`serve.pipeline.default_match` /
+    `default_features`) has no way to compute, unless overridden.
+
+    This is the fix for docs/PLAN.md §7.4: a model trained on, say,
+    `shape_progress` or a rolling-conditions feature used to be served on a
+    silently missing input (`row.get(name)` returning `None`) instead of
+    being refused -- fine for a family that imputes (confident nonsense),
+    fatal per-row for one that doesn't, and in both cases invisible until
+    someone reads the errors list.
+
+    - A feature name `core.features.registry` has never heard of is left
+      alone (see `serve.pipeline.unproducible_registered_features` -- no
+      positive evidence it's unproducible, same principle
+      `check_version_drift` uses for missing provenance). This keeps
+      pre-registry / BYO feature names (e.g. this package's own tests'
+      `features=["x"]`) from being refused blind.
+    - A registered feature `default_features`/`default_match` do compute
+      (`serve.pipeline.producible_features()`) passes.
+    - A registered feature neither computes (the rest of "spatial", all of
+      "segment", all of "rolling" -- columns only a `stoptimes.train.datasets`
+      builder materializes) raises `UnproducibleFeaturesError` unless
+      `allow_override` is True or `ALLOW_UNPRODUCIBLE_FEATURES_ENV` names
+      this artifact (or "all"/"1"/"true"/"*"). Meant for a custom
+      `--pipeline` whose own `features` stage supplies the column some
+      other way; always logged loudly when used.
+    """
+    from stoptimes.serve.pipeline import unproducible_registered_features
+
+    missing = unproducible_registered_features(meta.features)
+    if not missing:
+        return
+
+    override = _feature_override_requested(meta.artifact_id) if allow_override is None else allow_override
+    if override:
+        _logger.warning(
+            "OVERRIDE: loading artifact despite required feature(s) the default pipeline cannot compute",
+            artifact_id=meta.artifact_id,
+            missing_features=missing,
+        )
+        return
+
+    raise UnproducibleFeaturesError(
+        f"artifact {meta.artifact_id!r} requires feature(s) {missing} that stoptimes serve's default "
+        "pipeline cannot compute: they are core.features.registry entries describing columns only a "
+        "stoptimes.train.datasets builder materializes (VP geometry, segment identity, or rolling "
+        "traversal-time/congestion stats from archived data), and default_match/default_features have "
+        "no live source for them from a single realtime observation. Either retrain on features the "
+        "live pipeline can produce (run `stoptimes features list` -- or see "
+        "serve.pipeline.producible_features() -- for what qualifies), or, if you have a custom "
+        "--pipeline whose own features stage supplies these columns another way, override with "
+        f"{ALLOW_UNPRODUCIBLE_FEATURES_ENV}=all (or a comma-separated list of artifact ids including "
+        f"{meta.artifact_id!r}) -- this is logged loudly, never the default."
+    )
+
+
 # ---------------------------------------------------------------------------
 # Selection: which artifact.json wins
 # ---------------------------------------------------------------------------
@@ -209,15 +311,25 @@ def resolve_artifact(
 
 
 def load_artifact_model(
-    meta: ArtifactMetadata, registry_dir: Path | str, *, allow_version_drift: bool | None = None
+    meta: ArtifactMetadata,
+    registry_dir: Path | str,
+    *,
+    allow_version_drift: bool | None = None,
+    allow_unproducible_features: bool | None = None,
 ) -> Model:
     """Load the fitted model a registry artifact points at.
 
-    Before opening anything, refuses (see `check_version_drift`) when a
-    library that deserializes this `meta.format` has drifted between build
-    time (`meta.provenance.lib_versions`) and what's installed now, unless
-    `allow_version_drift` (or the `STOPTIMES_ALLOW_VERSION_DRIFT` env var)
-    overrides it for this artifact.
+    Before opening anything, refuses when either of two things is wrong:
+
+    - a library that deserializes this `meta.format` has drifted between
+      build time (`meta.provenance.lib_versions`) and what's installed now
+      (`check_version_drift`), unless `allow_version_drift` (or the
+      `STOPTIMES_ALLOW_VERSION_DRIFT` env var) overrides it for this
+      artifact;
+    - `meta.features` declares a feature the default serving pipeline has
+      no way to compute (`check_feature_producibility`), unless
+      `allow_unproducible_features` (or the
+      `STOPTIMES_ALLOW_UNPRODUCIBLE_FEATURES` env var) overrides it.
 
     Only `ModelFormat.PICKLE` is wired up here: it covers every family
     `stoptimes.models.common.registry.ModelRegistry.save_model` produces
@@ -230,6 +342,7 @@ def load_artifact_model(
     rather than guessing.
     """
     check_version_drift(meta, allow_override=allow_version_drift)
+    check_feature_producibility(meta, allow_override=allow_unproducible_features)
     directory = artifact_dir(registry_dir, meta.artifact_id)
     if meta.format is ModelFormat.PICKLE:
         with open(directory / meta.model_filename, "rb") as fh:  # noqa: S301 - registry-owned artifact

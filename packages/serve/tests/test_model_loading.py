@@ -14,12 +14,15 @@ from stoptimes.core.contracts.artifact import ArtifactMetadata, ModelScope, Prov
 from stoptimes.core.contracts.model import ModelRef, ModelRefKind
 from stoptimes.core.contracts.selection import SelectionPolicy
 from stoptimes.serve.model_loading import (
+    ALLOW_UNPRODUCIBLE_FEATURES_ENV,
     ALLOW_VERSION_DRIFT_ENV,
     ArtifactVersionDriftError,
     CallableModelLoader,
     HttpModelLoader,
     OnnxModelLoader,
     PickleModelLoader,
+    UnproducibleFeaturesError,
+    check_feature_producibility,
     check_version_drift,
     iter_registry_artifacts,
     load_artifact_model,
@@ -364,5 +367,107 @@ def test_load_artifact_model_loads_when_no_lib_versions_recorded(tmp_path, monke
         lambda: {"sklearn": "9.9.9", "xgboost": "9.9.9"},
     )
     meta = _write_artifact_with_lib_versions(tmp_path, "a1", {})
+    model = load_artifact_model(meta, tmp_path)
+    assert model.family == "fake"
+
+
+# ---------------------------------------------------------------------------
+# Feature-producibility refusal (docs/PLAN.md §7.4): an artifact declaring a
+# feature the default serving pipeline cannot compute must be refused before
+# serving starts, not silently served on a missing (None) input.
+# ---------------------------------------------------------------------------
+
+
+def _write_artifact_with_features(registry_dir, artifact_id, features):
+    from stoptimes.core.contracts.artifact import ModelFormat
+
+    meta = ArtifactMetadata(
+        artifact_id=artifact_id,
+        family="fake",
+        format=ModelFormat.PICKLE,
+        features=features,
+        provenance=Provenance(created_at=datetime.now(timezone.utc)),
+        metrics={"test_mae_seconds": 1.0},
+    )
+    directory = registry_dir / artifact_id
+    write_metadata(meta, directory)
+    with open(directory / meta.model_filename, "wb") as fh:
+        pickle.dump(_StubModel(), fh)
+    return meta
+
+
+def test_check_feature_producibility_passes_for_producible_registry_features():
+    meta = ArtifactMetadata(
+        artifact_id="a1",
+        family="fake",
+        features=["hour", "distance_to_stop", "trip_id"],
+        provenance=Provenance(created_at=datetime.now(timezone.utc)),
+    )
+    check_feature_producibility(meta)  # must not raise
+
+
+def test_check_feature_producibility_ignores_names_unknown_to_the_registry():
+    meta = ArtifactMetadata(
+        artifact_id="a1",
+        family="fake",
+        features=["x"],  # not a core.features.registry entry -- no evidence either way
+        provenance=Provenance(created_at=datetime.now(timezone.utc)),
+    )
+    check_feature_producibility(meta)  # must not raise
+
+
+def test_check_feature_producibility_refuses_a_train_only_registered_feature():
+    meta = ArtifactMetadata(
+        artifact_id="a1",
+        family="fake",
+        features=["shape_progress"],
+        provenance=Provenance(created_at=datetime.now(timezone.utc)),
+    )
+    with pytest.raises(UnproducibleFeaturesError, match="shape_progress"):
+        check_feature_producibility(meta)
+
+
+def test_check_feature_producibility_override_param_allows_load():
+    meta = ArtifactMetadata(
+        artifact_id="a1",
+        family="fake",
+        features=["shape_progress"],
+        provenance=Provenance(created_at=datetime.now(timezone.utc)),
+    )
+    check_feature_producibility(meta, allow_override=True)  # explicit override: no raise
+
+
+def test_check_feature_producibility_env_override_by_artifact_id(monkeypatch):
+    monkeypatch.delenv(ALLOW_UNPRODUCIBLE_FEATURES_ENV, raising=False)
+    meta = ArtifactMetadata(
+        artifact_id="a1",
+        family="fake",
+        features=["shape_progress"],
+        provenance=Provenance(created_at=datetime.now(timezone.utc)),
+    )
+    monkeypatch.setenv(ALLOW_UNPRODUCIBLE_FEATURES_ENV, "other-artifact, a1")
+    check_feature_producibility(meta)  # a1 is named in the allow-list
+
+    monkeypatch.setenv(ALLOW_UNPRODUCIBLE_FEATURES_ENV, "other-artifact")
+    with pytest.raises(UnproducibleFeaturesError):
+        check_feature_producibility(meta)  # a1 is not named: still refused
+
+
+def test_load_artifact_model_refuses_artifact_requiring_unproducible_feature(tmp_path, monkeypatch):
+    monkeypatch.delenv(ALLOW_UNPRODUCIBLE_FEATURES_ENV, raising=False)
+    meta = _write_artifact_with_features(tmp_path, "a1", ["shape_progress"])
+    with pytest.raises(UnproducibleFeaturesError, match="shape_progress"):
+        load_artifact_model(meta, tmp_path)
+
+
+def test_load_artifact_model_override_param_loads_despite_unproducible_feature(tmp_path, monkeypatch):
+    monkeypatch.delenv(ALLOW_UNPRODUCIBLE_FEATURES_ENV, raising=False)
+    meta = _write_artifact_with_features(tmp_path, "a1", ["shape_progress"])
+    model = load_artifact_model(meta, tmp_path, allow_unproducible_features=True)
+    assert model.family == "fake"
+
+
+def test_load_artifact_model_loads_normally_for_producible_features(tmp_path):
+    meta = _write_artifact_with_features(tmp_path, "a1", ["distance_to_stop", "hour"])
     model = load_artifact_model(meta, tmp_path)
     assert model.family == "fake"

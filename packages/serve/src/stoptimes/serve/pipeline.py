@@ -30,10 +30,14 @@ Seams (T1/T2/T3 not yet landed at the time this was written):
   identified, just without spatial extras) and `vehicle_position`
   observations still record a per-item error, since there's nothing to
   project them onto.
-- `default_features` is one small adapter this track owns, bridging to T3's
-  not-yet-existing `core.features.registry`: it calls the temporal feature
-  helper that already exists (`core.features.temporal`) and leaves spatial
+- `default_features` computes temporal features through T3's
+  `core.features.registry.build` (landed in Phase 2) and leaves spatial
   features to whatever `match` attached to `MatchedObservation.extra`.
+  `producible_features()`/`unproducible_registered_features()` below name
+  exactly which registry entries this pipeline can and cannot compute --
+  `serve.model_loading.check_feature_producibility` uses the latter to
+  refuse an artifact before serving starts, instead of returning `None` for
+  every row of a feature it can never produce (docs/PLAN.md §7.4).
 
 Errors are contained per matched row, not per pipeline run: `default_predict`
 and `default_postprocess` catch exceptions per item, append a structured
@@ -48,7 +52,7 @@ import sys
 from dataclasses import dataclass, field
 from datetime import timedelta
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable, Sequence
 
 import pandas as pd
 
@@ -75,7 +79,64 @@ __all__ = [
     "default_publish",
     "build_default_pipeline",
     "load_pipeline",
+    "producible_features",
+    "unproducible_registered_features",
 ]
+
+# ---------------------------------------------------------------------------
+# What `default_features`/`default_match` can actually compute -- the
+# contract `serve.model_loading.check_feature_producibility` refuses against.
+# ---------------------------------------------------------------------------
+
+IDENTITY_COLUMNS: frozenset[str] = frozenset(
+    {"trip_id", "route_id", "direction_id", "start_date", "vehicle_id", "stop_id", "stop_sequence"}
+)
+"""Always present on a `MatchedObservation`-derived row, not from the registry."""
+
+MATCH_SPATIAL_COLUMNS: frozenset[str] = frozenset({"distance_to_stop", "stops_ahead", "cross_track_error"})
+"""The only `core.features.registry` "spatial"-tagged columns `default_match`
+(`_match_trip_update`/`_match_vehicle_position`) actually attaches to
+`MatchedObservation.extra` today. Every other registered spatial column
+(`vp_lat`, `shape_progress`, `current_speed_kmh`, ...) describes geometry
+only `train.datasets.dataset_builder` computes from an archived, densely
+sampled trip -- this pipeline has no live source for it."""
+
+
+def producible_features() -> frozenset[str]:
+    """Feature names `default_features` can compute for a live serving row
+    today: every `core.features.registry` "temporal" feature (derived live
+    from a timestamp), the handful of "spatial" columns `default_match`
+    attaches (`MATCH_SPATIAL_COLUMNS`), and the trip/stop identity columns
+    always present on a `MatchedObservation` (`IDENTITY_COLUMNS`).
+
+    Every other feature the registry knows about -- the rest of "spatial",
+    all of "segment", all of "rolling" -- describes a column only a
+    `stoptimes.train.datasets` builder materializes; nothing in this module
+    computes it. See `unproducible_registered_features`.
+    """
+    from stoptimes.core.features.registry import list_features
+
+    temporal_names = {f.name for f in list_features(tag="temporal")}
+    return frozenset(temporal_names) | MATCH_SPATIAL_COLUMNS | IDENTITY_COLUMNS
+
+
+def unproducible_registered_features(required: Sequence[str]) -> list[str]:
+    """Which of `required` are `core.features.registry` entries this
+    pipeline has no way to compute.
+
+    A name the registry has never heard of (a BYO/legacy feature column,
+    e.g. a pre-registry artifact's raw column name) is left alone -- there's
+    no positive evidence it's unproducible, the same principle
+    `model_loading.check_version_drift` uses for an artifact with no
+    recorded library versions: absence of information is not evidence of a
+    problem. Only a name the registry *does* know, and tags as something
+    `default_features`/`default_match` don't compute, is reported.
+    """
+    from stoptimes.core.features.registry import list_features
+
+    registered = {f.name for f in list_features()}
+    producible = producible_features()
+    return [name for name in required if name in registered and name not in producible]
 
 
 @dataclass
@@ -422,13 +483,22 @@ def default_match(observations: list[Observation], ctx: PipelineContext) -> list
 def default_features(matched: list[MatchedObservation], ctx: PipelineContext) -> pd.DataFrame:
     """Compute a features DataFrame, one row per `MatchedObservation`.
 
-    Small adapter this track owns in place of T3's not-yet-existing
-    `core.features.registry`: uses `core.features.temporal` (already
-    landed) for time-of-day/holiday features, and reads any spatial fields
-    a `match` stage already attached to `.extra`. Missing model features are
-    filled with NaN so `model.predict` sees every declared column.
+    Temporal features (time-of-day/holiday) go through T3's
+    `core.features.registry.build`, not a direct call to
+    `core.features.temporal` -- so this and any future caller that lists
+    features by name (training, `val`'s `StoptimesArtifactPredictor`) agree
+    on what a "temporal" feature is. Spatial features are read from whatever
+    a `match` stage already attached to `.extra` -- `default_match` is the
+    only thing in this pipeline that can compute them live; the registry
+    only *describes* the rest (see `producible_features`). Missing model
+    features are left absent (not filled with NaN) so `default_predict`'s
+    `row.get(name)` behavior is unchanged; refusing an artifact that
+    requires a column this stage can never produce is
+    `model_loading.check_feature_producibility`'s job, at load time, not
+    this stage's.
     """
-    from stoptimes.core.features.temporal import extract_temporal_features
+    from stoptimes.core.features.registry import build as build_registry_features
+    from stoptimes.core.features.registry import list_features as list_registry_features
 
     holiday_region = getattr(ctx.source, "holiday_region", None)
     timezone = getattr(ctx.source, "timezone", "UTC")
@@ -436,7 +506,6 @@ def default_features(matched: list[MatchedObservation], ctx: PipelineContext) ->
     rows: list[dict[str, Any]] = []
     for item in matched:
         ts = item.observation.ts or item.observation.arrival_time or ctx.now
-        temporal = extract_temporal_features(pd.Timestamp(ts).to_pydatetime(), tz=timezone, region=holiday_region)
         row: dict[str, Any] = {
             "trip_id": item.trip_id,
             "route_id": item.route_id,
@@ -445,11 +514,22 @@ def default_features(matched: list[MatchedObservation], ctx: PipelineContext) ->
             "vehicle_id": item.vehicle_id,
             "stop_id": item.stop_id,
             "stop_sequence": item.stop_sequence,
-            **temporal,
+            "_ts": pd.Timestamp(ts).to_pydatetime(),
             **item.extra,
         }
         rows.append(row)
-    return pd.DataFrame(rows)
+
+    frame = pd.DataFrame(rows)
+    if frame.empty:
+        return frame
+
+    temporal_names = [f.name for f in list_registry_features(tag="temporal")]
+    frame = build_registry_features(
+        temporal_names,
+        frame,
+        {"timestamp_column": "_ts", "tz": timezone, "holiday_region": holiday_region},
+    )
+    return frame.drop(columns=["_ts"])
 
 
 def default_predict(features: pd.DataFrame, ctx: PipelineContext) -> list[StopTimePrediction]:
