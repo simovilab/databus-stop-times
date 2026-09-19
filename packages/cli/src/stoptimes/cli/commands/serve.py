@@ -23,6 +23,13 @@ def serve(
     registry: Path = typer.Option(None, "--registry", help="Model registry directory (one artifact.json per subdir)."),
     model: str = typer.Option(None, "--model", help="Artifact id, or a BYO spec: pickle:PATH | onnx:PATH | callable:module:func | http(s)://URL."),
     artifact: str = typer.Option(None, "--artifact", help="Alias for --model."),
+    static: Path = typer.Option(
+        None,
+        "--static",
+        help="GTFS static feed (.zip or URL) used to map-match vehicle positions onto stops. "
+        "Defaults to the source's gtfs_static_url. Without geometry only feeds that already name "
+        "a stop (TripUpdates) can be served.",
+    ),
     pipeline: str = typer.Option(None, "--pipeline", help="Custom Pipeline: 'module:attr' or 'path/to/file.py:attr'."),
     sink: str = typer.Option(None, "--sink", help="file:PATH | http(s)://... | mqtt://host/topic"),
     format: str = typer.Option("json", "--format", help="Feed encoding: pb | json."),
@@ -76,6 +83,24 @@ def serve(
     agency = yaml.safe_load(source_path.read_text(encoding="utf-8"))
     src = source_from_val_yaml(agency)
 
+    # Geometry for the `match` stage. Without it a vehicle position cannot be
+    # turned into "which stop is next and how far away" -- serving would be
+    # limited to feeds that already name a stop.
+    static_loader = None
+    static_location = str(static) if static else (src.gtfs_static_url or None)
+    if static_location:
+        from stoptimes.core.readers import read_static
+
+        try:
+            static_loader, _static_tables = read_static(static_location, src.id)
+        except Exception as exc:  # a bad static feed must not be a silent downgrade
+            typer.secho(
+                f"⚠ could not read the static feed {static_location!r} ({exc}); serving without "
+                "map-matching — only stop-bearing feeds (TripUpdates) will produce predictions",
+                fg="yellow",
+                err=True,
+            )
+
     model_choice = artifact or model
     resolved_model = None
     resolved_artifact_id = None
@@ -122,7 +147,7 @@ def serve(
     def run_once() -> dict:
         ctx = PipelineContext(
             source=src,
-            static_feed=None,
+            static_feed=static_loader,
             model=resolved_model,
             now=datetime.now(timezone.utc),
             config={"sink": active_sink, "format": format},

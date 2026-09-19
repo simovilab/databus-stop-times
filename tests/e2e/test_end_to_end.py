@@ -157,10 +157,17 @@ def _trip_updates_feed(path: Path) -> Path:
     return path
 
 
-def _pipeline_file(path: Path, feed: Path) -> Path:
-    """A user pipeline overriding two stages — the customizable inference
-    story from the product page — leaving match/predict/postprocess/publish
-    at their defaults."""
+def _pipeline_file(path: Path, feed: Path, probe: Path) -> Path:
+    """A user pipeline overriding `ingest` — the customizable inference story
+    from the product page — leaving match/features/predict/postprocess/publish
+    at their defaults.
+
+    `features` is overridden too, but only to record what the *default* stages
+    produced: the spatial features must come from real map-matching in `match`
+    (U6), not from the test handing them over. `probe` is how the test checks
+    that, rather than trusting a prediction that a tolerant model would have
+    produced from NaNs anyway.
+    """
     path.write_text(
         f'''
 import json
@@ -200,8 +207,21 @@ def ingest_from_file(_payload, ctx):
 
 
 @pipeline.stage("features")
-def features_with_distance(matched, ctx):
+def features_recording_what_match_produced(matched, ctx):
     frame = default_features(matched, ctx)
+    probe = {{
+        "columns": sorted(frame.columns),
+        "rows": int(len(frame)),
+        "distance_to_stop_present": "distance_to_stop" in frame.columns,
+        "distance_to_stop_finite": (
+            int(frame["distance_to_stop"].notna().sum()) if "distance_to_stop" in frame.columns else 0
+        ),
+        "unmatched_stop_sequences": (
+            sorted({{int(v) for v in frame.loc[frame["distance_to_stop"].isna(), "stop_sequence"]}})
+            if "distance_to_stop" in frame.columns else []
+        ),
+    }}
+    Path(r"{probe}").write_text(json.dumps(probe), encoding="utf-8")
     return frame
 ''',
         encoding="utf-8",
@@ -291,14 +311,16 @@ def test_raw_feed_to_scored_predictions(tmp_path):
 
     # 5. serve one TripUpdates feed from that model, through a user pipeline
     served = tmp_path / "trip_updates.json"
+    probe = tmp_path / "match_probe.json"
     pipeline_file = _pipeline_file(
-        tmp_path / "my_pipeline.py", _trip_updates_feed(tmp_path / "incoming_tu.json")
+        tmp_path / "my_pipeline.py", _trip_updates_feed(tmp_path / "incoming_tu.json"), probe
     )
     serve_summary = json.loads(
         _run(
             "serve",
             "--source", SOURCE,
             "--sources-dir", str(agencies),
+            "--static", str(static),
             "--registry", str(registry),
             "--model", artifact_id,
             "--pipeline", f"{pipeline_file}:pipeline",
@@ -310,6 +332,18 @@ def test_raw_feed_to_scored_predictions(tmp_path):
     )
     assert serve_summary["errors"] == [], serve_summary
     assert serve_summary["trip_update_count"] > 0, serve_summary
+
+    # Serving computed the spatial features itself, by map-matching against the
+    # static feed. Without this the chain still "passes" -- the model imputes
+    # missing features and returns numbers -- so asserting only on the output
+    # would let a silently broken `match` stage through.
+    matched = json.loads(probe.read_text(encoding="utf-8"))
+    assert matched["distance_to_stop_present"], matched
+    # Every stop except each trip's first one: approaching the first stop there
+    # is no preceding stop to measure from and a TripUpdate carries no position,
+    # so that distance is genuinely unknown rather than missing.
+    assert matched["unmatched_stop_sequences"] == [1], matched
+    assert matched["distance_to_stop_finite"] == matched["rows"] - 4, matched
 
     feed = json.loads(served.read_text(encoding="utf-8"))
     assert feed["header"]["gtfs_realtime_version"] == "2.0"

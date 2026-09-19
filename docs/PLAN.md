@@ -367,7 +367,14 @@ Each step touching production needs the user's explicit go.
 - **G3 Collector:** VPS collector moves to `stoptimes record`. Production still runs from
   `~/git/gtfs-django/eta_prediction/gtfs-rt-pipeline` with uncommitted changes; confirm with
   `docker inspect … working_dir`, back up `.env`, run side by side before switching.
-- **G4 Served models:** re-export served artifacts under the deploy target's library versions (the deferred RUNBOOK task).
+- **G4 Served models — must now happen BEFORE G2a, not after.** Re-export served artifacts under the deploy
+  target's library versions (the deferred RUNBOOK task). Phase 3's U7 makes a load-critical version drift a
+  **refusal** rather than a warning, and the currently served artifact is exactly that case: pickled under the
+  training host's scikit-learn/xgboost, loaded under different minor versions in the deployment. Before U7 that was
+  hygiene; after U7 the cutover would refuse to load the live model and serve nothing. Two acceptable orders:
+  re-export first (preferred — it removes the drift), or set `STOPTIMES_ALLOW_VERSION_DRIFT` deliberately in the
+  deploy environment as a temporary, logged exception. Choosing neither is an outage. Verify which applies by
+  loading the artifact under the target's versions before scheduling G2a.
 - **G5 Freeze:** tag `gtfs-eta` and `etaval` (citation), update `CITATION.cff`, archive both repos with a pointer here.
 - **G6 Main:** replace `main` of `simovilab/databus-stop-times` with this branch (user decision).
 - Then delete `legacy/`.
