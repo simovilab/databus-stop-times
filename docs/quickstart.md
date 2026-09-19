@@ -12,13 +12,25 @@ data add  →  data arrivals  →  data frame  →  train run  →  serve  →  
 
 ## Install
 
+`stoptimes` isn't on PyPI yet (that's Phase 5). Until then, install it from a clone with
+[uv](https://docs.astral.sh/uv/):
+
 ```bash
-pip install 'stoptimes[core,record,train,serve,val]'
+git clone <this-repo-url> stoptimes && cd stoptimes
+uv venv --python 3.12 .venv
+source .venv/bin/activate
+uv pip install './packages/cli[core,record,train,serve,val]'
 ```
 
-Install only the parts you need — `pip install 'stoptimes[serve]'` alone never pulls in
-training dependencies (xgboost, torch). Every command below prints an install hint instead
-of a traceback if you're missing a part.
+`uv pip install` resolves the in-repo `stoptimes-core`/`-record`/`-train`/`-serve`/`-val`
+packages straight from `packages/*` (it reads the workspace's `pyproject.toml`), so no PyPI
+lookup is needed for them. A plain `pip install` from a path like this will fail, because
+`pip` doesn't know to resolve those names against the local workspace.
+
+Install only the parts you need — `'./packages/cli[serve]'` alone never pulls in training
+dependencies (xgboost, torch). Every command below prints an install hint instead of a
+traceback if you're missing a part. (Contributing to `stoptimes` itself instead of just
+using it? Use `uv sync --group dev` from the repo root — see the repo README.)
 
 ## 0. Try it in under a minute (no network, no real agency needed)
 
@@ -209,6 +221,75 @@ example only overrides `ingest`, to read one JSON snapshot instead of polling a 
 [Serve predictions](guides/serve-predictions.md) for what `match` does and what happens if
 `--static` can't be read.
 
+The `ingest` override below reads one JSON snapshot, `incoming_tu.json`, standing in for a
+poll of a live TripUpdates URL. Nothing before this step created that file, so build it from
+the schedule already sitting in `gtfs.zip` — save this as `build_incoming_tu.py`:
+
+```python
+# build_incoming_tu.py
+import csv
+import json
+import zipfile
+from datetime import datetime, timedelta, timezone
+from io import StringIO
+
+SOURCE, SERVICE_DAY = "demo", "20260917"
+service_midnight = datetime.strptime(SERVICE_DAY, "%Y%m%d").replace(tzinfo=timezone.utc)
+
+def read_csv(zf, name):
+    return list(csv.DictReader(StringIO(zf.read(name).decode())))
+
+with zipfile.ZipFile("gtfs.zip") as zf:
+    trips = read_csv(zf, "trips.txt")
+    stop_times = read_csv(zf, "stop_times.txt")
+
+by_trip = {}
+for row in stop_times:
+    by_trip.setdefault(row["trip_id"], []).append(row)
+
+entities = []
+for trip in trips:
+    trip_id = trip["trip_id"]
+    stus = sorted(by_trip[trip_id], key=lambda r: int(r["stop_sequence"]))
+    stop_time_update = []
+    for stu in stus:
+        h, m, s = (int(p) for p in stu["arrival_time"].split(":"))
+        arrival = service_midnight + timedelta(hours=h, minutes=m, seconds=s)
+        stop_time_update.append({
+            "stop_sequence": int(stu["stop_sequence"]),
+            "stop_id": stu["stop_id"],
+            "arrival": {"time": int(arrival.timestamp())},
+        })
+    entities.append({
+        "id": f"tu:{trip_id}:{SERVICE_DAY}",
+        "trip_update": {
+            "trip": {
+                "trip_id": trip_id, "route_id": trip["route_id"],
+                "direction_id": int(trip["direction_id"]), "start_date": SERVICE_DAY,
+            },
+            "vehicle": {"id": f"v-{trip_id}"},
+            "stop_time_update": stop_time_update,
+            "timestamp": int(min(u["arrival"]["time"] for u in stop_time_update)),
+        },
+    })
+
+feed = {
+    "header": {"gtfs_realtime_version": "2.0", "timestamp": entities[0]["trip_update"]["timestamp"]},
+    "entity": entities,
+}
+with open("incoming_tu.json", "w") as f:
+    json.dump(feed, f, indent=2)
+print(f"wrote incoming_tu.json ({len(entities)} trip updates)")
+```
+
+```console
+$ python build_incoming_tu.py
+wrote incoming_tu.json (4 trip updates)
+```
+
+(Using your own feed? Point this at a real GTFS-RT poll instead — see [Record a
+feed](guides/record-a-feed.md) — or write `ingest` to call your producer directly.)
+
 ```python
 # my_pipeline.py
 import json
@@ -280,7 +361,11 @@ $ stoptimes val report ./scores.parquet
 (`baseline:schedule` scores 0 error here only because this toy feed's synthetic ground truth
 was built to exactly match the schedule — a real feed will show real error. Point `val
 replay` at your trained artifact with `--predictor stoptimes:quickstart-historical-mean` to
-score your own model the same way; see [Validate any feed](guides/validate-a-feed.md).)
+score your own model the same way; see [Validate any feed](guides/validate-a-feed.md).
+`stoptimes:<artifact_id>` finds your registry through the `STOPTIMES_MODEL_REGISTRY_DIR`
+environment variable — there's no `--registry` flag on `val replay`/`val run` — so point it
+at the same directory you trained into: `STOPTIMES_MODEL_REGISTRY_DIR=./registry stoptimes
+val replay ...`.)
 
 **Note on first-run speed:** `stoptimes val --help` and `stoptimes --help` are fast (well
 under a second). Running an actual `val` subcommand (including that subcommand's own
