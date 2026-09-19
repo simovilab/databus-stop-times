@@ -2,6 +2,7 @@
 
 Status: **proposal, not scheduled** · written 2026-09-18 · to start after Phase 3 is tested
 (see [PLAN.md](PLAN.md) §7) · assumes the plan is finished and works as described there.
+For how databus would consume MLflow-backed predictions, see [DATABUS_INTEGRATION.md](DATABUS_INTEGRATION.md) (O3, model source).
 
 This document says where MLflow can stand in for something stoptimes already does, where it
 can't, and how to wire each option in as an **optional** extra. The filesystem registry,

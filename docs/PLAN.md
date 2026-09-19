@@ -2,7 +2,7 @@
 
 Status: **Phase 3 tracks all merged (2026-09-18)** — 1497 passed, 20 skipped; the clean-machine quickstart gate has
 **not** been run yet · next: run that gate, then Phase 4 (note G4 now precedes G2a — see §8) ·
-branch `feat/stoptimes-scaffold`, not pushed (the account has read-only access to the remote) · last updated 2026-09-18
+branch `feat/stoptimes-scaffold`, not pushed (the account has read-only access to the remote) · last updated 2026-09-19 (serving target for databus revised, §7.2 / G2)
 
 This is the working plan for turning SIMOVI's ETA research code (`gtfs-eta`) and its
 validation tool (`etaval`) into **stoptimes**: a general toolkit that lets anyone with
@@ -24,7 +24,7 @@ checkable definition of done.
 | Record | Archive a live GTFS-RT feed, compacted, local or S3 | `stoptimes-record` |
 | Arrivals | Actual stop arrivals derived from vehicle positions (map-matching) | `stoptimes-core` |
 | Train | Pick target, model, features, hyperparameters (TUI or YAML); get a versioned artifact + model card | `stoptimes-train`, `stoptimes-models` |
-| Serve | A prediction library (load a model, compute its inputs, produce stop time updates) with overridable pipeline stages, plus a standalone publisher that emits spec-valid TripUpdates. Anyone who already owns a feed builder — databus does — calls the library and skips the publisher; see §7.2 | `stoptimes-serve` |
+| Serve | A prediction library (load a model, compute its inputs, produce stop time updates) with overridable pipeline stages, plus a standalone service loop with overridable input and output. The loop either emits spec-valid TripUpdates or, for anyone who already owns a feed builder (databus does), writes predictions into their state for their builder to read; see §7.2 | `stoptimes-serve` |
 | Validate | Horizon-based scoring against published-feed ground truth, live or replayed, for any TripUpdates source | `stoptimes-val` |
 | Diagnose | Feed quality report before training | `stoptimes-core` |
 
@@ -60,7 +60,8 @@ databus-stop-times/
 │   └── cli/      stoptimes.cli      the `stoptimes` command
 ├── web/          Nuxt UI (etaval console today; experiments later)
 ├── examples/     agencies/ and experiments/ configs (Phase 1)
-├── docs/         PLAN.md, MIGRATION_MAP.md, CONTRACTS.md (Phase 1), research/, history/, val/
+├── docs/         PLAN.md, MIGRATION_MAP.md, CONTRACTS.md (Phase 1), DATABUS_INTEGRATION.md,
+│                 MLFLOW_INTEGRATION.md, research/, history/, val/
 └── legacy/       not-yet-migrated code, kept with history for reference; deleted in Phase 4
 ```
 `*` = placeholder module today.
@@ -363,16 +364,31 @@ Two different things get called serving, and the plan must not blur them.
 The **prediction library** — load a model, compute its inputs, produce stop time updates — is
 load-bearing regardless: databus calls exactly that, and `val` scores through the same seam.
 
-The **standalone publisher** (`stoptimes serve`: poll on a timer, predict, publish a feed) is
-what databus does *not* need, since databus owns its own feed. It stays, because an agency
-without a databus would otherwise be left with a model file and nowhere to put it, and because
-the loop around the prediction code is thin. But the docs must not imply it solves the
-operations problem of running a public realtime feed: it ships as the straightforward path for
-a small agency and the way to watch your own model work end to end, while anyone with real
-infrastructure calls the library from their own publisher. **U5 writes it that way.**
+The **service loop** (`stoptimes serve`: on a timer, ingest, predict, publish) runs the same
+pipeline in its own process. It can be used two ways, and the only difference is which
+`ingest` and `publish` stages it runs with:
 
-databus is the first proof that seam is in the right place: it takes the prediction and skips
-the loop cleanly. See G2 for the two-step cutover that follows from this.
+- **Standalone publisher** (defaults: poll a GTFS-RT URL, publish a TripUpdates feed to a
+  file/HTTP/MQTT sink). This is the straightforward path for a small agency and the way to watch
+  your own model work end to end. The docs must not imply it solves the operations problem of
+  running a public realtime feed.
+- **Prediction service for an existing feed builder** (overridden stages: read the host's live
+  state, write predictions back into it). The host keeps building and publishing its own feed
+  and only *reads* predictions. **This is databus's target** (revised 2026-09-19; it replaces
+  "databus calls the pipeline in-process"). Why:
+  - the model moves out of databus's telemetry task, so a slow or failing model no longer delays ingestion;
+  - model dependencies and Python version are separate from databus's venv (databus is on Python 3.14; stoptimes pins 3.12 because of torch);
+  - all active runs are predicted in one batched call;
+  - models deploy and roll back without a databus deploy.
+
+The stages that know the host's schema (for databus: its Redis keys) belong to the host, not
+to `packages/` (design rule 4). They're shipped as a pipeline file and passed with `--pipeline`.
+The docs site must describe all three uses: library, standalone publisher, prediction service.
+U5 shipped before this revision, so the prediction-service page is a G2 prerequisite.
+
+databus is the first proof the seams are in the right place. The options, the trade-offs and
+what databus needs to change are in [DATABUS_INTEGRATION.md](DATABUS_INTEGRATION.md); the
+cutover is G2.
 
 ---
 
@@ -381,21 +397,45 @@ the loop cleanly. See G2 for the two-step cutover that follows from this.
 Each step touching production needs the user's explicit go.
 
 - **G1 Generality:** bUCR and MBTA both run end to end with configs only; `grep -ri bucr packages/` is empty (tests/fixtures excepted).
-- **G2 databus (two deploys, not one):** databus keeps building its own feed; only the prediction call moves.
+- **G2 databus (staged, each step reversible):** databus keeps building and publishing its own feed; only the
+  producer of `run:<id>:stop_time_updates` changes: first the library in-process (G2a), then a separate prediction service (G2b–G2c).
   - **G2a — drop-in.** `runs/domain/progression/stop_times.py` imports `estimate_stop_times` from `stoptimes.serve`
     instead of `gtfs_eta.eta_service.estimator` (same signature, including the `shape_distance_to_stop` hook databus
     relies on); the `backend/gtfs-eta` symlink becomes a pinned `stoptimes` dependency; `ETA_*` env vars become
     `STOPTIMES_*` (old names still read, deprecated). Nothing else changes — progression, the Redis
     `stop_time_updates` projection and `schedule_engine`'s `build_trip_updates` are untouched. Deliberately a
     one-line-import cutover so rollback is a revert.
-  - **G2b — pipeline.** Once G2a is proven live, databus supplies a pipeline overriding `ingest` (its own vehicles,
-    no polling) and `publish` (write the Redis projection), inheriting `match`/`features`/`predict`/`postprocess`.
-    `build_trip_updates` still untouched. This is what kills the duplicated feature computation (today training and
-    serving agree only by inspection), makes bUCR's loop-back-safe shape distance a declared `match` override rather
-    than logic buried in progression, and lets a newly trained route-level model be picked up by the selection policy
-    with no databus deploy. Requires **U6**.
-  - Before either: a thin databus-facing adapter tested against a recorded bUCR day, so the cutover is verified
-    off-VPS first.
+  - **G2b — prediction service, shadow.** Once G2a is proven live, a `stoptimes serve` container runs next to
+    databus on the same Docker network, using a databus-owned pipeline file:
+    - `ingest` reads `runs:in_progress`, run, position and stop-status keys from databus's Redis;
+    - `publish` writes `run:<id>:stop_time_updates:shadow` (same 5-field format, 60 s TTL);
+    - `match`/`features`/`predict`/`postprocess` are inherited.
+
+    Production is untouched: `realtime-engine` still writes the real key through G2a. Compare shadow and
+    production for a few days: replay one recorded bUCR day through `val` with both, and diff the keys live.
+    This is what:
+    - kills the duplicated feature computation (today training and serving agree only by inspection);
+    - makes bUCR's loop-back-safe shape distance a declared `match` override rather than logic buried in progression;
+    - lets a newly trained route-level model be picked up by the selection policy with no databus deploy.
+
+    Requires **U6**, **U7** and the G2 prerequisites below.
+  - **G2c — switch writers.** The service writes the real key; databus removes `produce_stop_times` from
+    `realtime_engine/tasks.py` in the same deploy (never two writers to one key). databus amends ARCHITECTURE.md
+    with a `prediction-engine` mandate: reads state, writes only prediction keys, never interprets raw telemetry
+    or builds protobuf. Rollback: stop the service and revert the databus deploy (back to G2a); the keys expire in 60 s.
+  - **G2d — optional, MLflow.** Point the service's registry at MLflow ([MLFLOW_INTEGRATION.md](MLFLOW_INTEGRATION.md) I2/I4),
+    a config-only change, and run the comparison in that doc's §6.
+  - **G2 prerequisites** (stoptimes side, before G2b):
+    - a `serve` Docker image (only `record` has a Dockerfile, never built);
+    - reload the static GTFS when databus publishes a new version (`--static` loads once today), so `trip_id`s and
+      stop sequences can't drift from databus's;
+    - a heartbeat key, and the age of the position each prediction came from, so databus's ops dashboard and
+      `schedule-engine` can tell stale predictions from fresh ones;
+    - the databus pipeline file, tested against a recorded bUCR day off-VPS;
+    - docs for the prediction-service use (§7.2): `guides/serve-predictions.md` and `case-study/simovi.md` still
+      describe the superseded in-process G2b and say databus never runs `stoptimes serve`.
+
+    Details, the options considered and the databus-side changes: [DATABUS_INTEGRATION.md](DATABUS_INTEGRATION.md).
 - **G3 Collector:** VPS collector moves to `stoptimes record`. Production still runs from
   `~/git/gtfs-django/eta_prediction/gtfs-rt-pipeline` with uncommitted changes; confirm with
   `docker inspect … working_dir`, back up `.env`, run side by side before switching.
@@ -414,7 +454,9 @@ Each step touching production needs the user's explicit go.
 ## 9. Phase 5 — Ecosystem (optional, parallel)
 
 Model cards + pretrained zoo · public MBTA benchmark with fixed splits + leaderboard · simulator for data-free testing
-(databus-sim) · PyPI release · positioning vs TheTransitClock and a prior-art survey · further targets (dwell, headway, bunching).
+(databus-sim) · PyPI release · positioning vs TheTransitClock and a prior-art survey · further targets (dwell, headway, bunching) ·
+**optional MLflow integration** (tracking sink, MLflow registry backend, pyfunc import/export, `mlflow:` val predictor), started
+once Phase 3 is tested, as a second implementation to compare ours against: [MLFLOW_INTEGRATION.md](MLFLOW_INTEGRATION.md).
 
 ---
 
