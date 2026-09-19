@@ -202,10 +202,6 @@ def ingest_from_file(_payload, ctx):
 @pipeline.stage("features")
 def features_with_distance(matched, ctx):
     frame = default_features(matched, ctx)
-    # the trained model wants these; a real deployment gets them from the
-    # match stage's map-matching against the static feed
-    frame["distance_to_stop"] = 300.0
-    frame["stops_ahead"] = frame["stop_sequence"].astype(float)
     return frame
 ''',
         encoding="utf-8",

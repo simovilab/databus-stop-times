@@ -14,11 +14,22 @@ Seams (T1/T2/T3 not yet landed at the time this was written):
   `google.protobuf.json_format.MessageToDict` into the same shape) instead of
   going through T1's `core.readers` (still a placeholder). Swap it out once
   that lands -- see docs/notes/p2-t4.md.
-- `default_match` is a pass-through for `trip_update` Observations (they
-  already carry `stop_id`/`stop_sequence`) and records a per-item error for
-  `vehicle_position` Observations, since real map-matching is T2's
-  `core.arrivals`/`core.segments` (also placeholders). A caller with a real
-  matcher overrides just this stage.
+- `default_match` matches both `trip_update` and `vehicle_position`
+  Observations against the source's static feed, using the same spatial
+  primitives `core.arrivals`/`core.segments` are built on
+  (`core.spatial.polyline`'s `build_polyline`/`assign_stops_monotonic`/
+  `project_point_to_polyline`/`upcoming_stops`) to attach real
+  distance-along-shape features (`distance_to_stop`, `stops_ahead`) to
+  `MatchedObservation.extra`. Static geometry comes from `ctx.static_feed`
+  when the caller supplied one (T1's reader); otherwise this stage lazily
+  loads it itself from `ctx.source.gtfs_static_url` via `core.readers.read_static`
+  -- CLI wiring for `ctx.static_feed` doesn't exist yet (docs/notes/p3-u6.md),
+  so this local fallback is what makes real matching reachable today. When no
+  geometry can be resolved at all, behavior falls back to the historical
+  default: `trip_update` observations still pass through (stop already
+  identified, just without spatial extras) and `vehicle_position`
+  observations still record a per-item error, since there's nothing to
+  project them onto.
 - `default_features` is one small adapter this track owns, bridging to T3's
   not-yet-existing `core.features.registry`: it calls the temporal feature
   helper that already exists (`core.features.temporal`) and leaves spatial
@@ -208,26 +219,165 @@ def default_ingest(_payload: Any, ctx: PipelineContext) -> list[Observation]:
     return observations
 
 
-def default_match(observations: list[Observation], ctx: PipelineContext) -> list[MatchedObservation]:
-    """Pass-through match for `trip_update` observations (already stop-identified).
+def _load_static_geometry(ctx: PipelineContext) -> Any | None:
+    """Resolve something satisfying `core.arrivals.StaticGeometry` (a
+    `trip_geometry(trip_id) -> (shape_points, ordered_stops)` duck type) for
+    this run, or `None` if none is available.
 
-    `vehicle_position` observations need real map-matching (T2's job); this
-    default records a per-item error and drops them rather than crashing the
-    run, which is the "collect and report" behavior the contract asks for.
+    Prefers `ctx.static_feed` (T1's reader, once a caller wires it up).
+    Otherwise lazily loads it from `ctx.source.gtfs_static_url` via
+    `core.readers.read_static` -- the CLI doesn't populate `ctx.static_feed`
+    today (docs/notes/p3-u6.md), so without this fallback real map-matching
+    would never be reachable from `stoptimes serve`. The result (including a
+    failure) is cached on `ctx.state` so a bad/missing URL is only tried once
+    per run, not once per observation.
     """
+    if hasattr(ctx.static_feed, "trip_geometry"):
+        return ctx.static_feed
+
+    cache_key = "_p3_u6_static_geometry"
+    if cache_key in ctx.state:
+        return ctx.state[cache_key]
+
+    geometry = None
+    url = getattr(ctx.source, "gtfs_static_url", None)
+    source_id = getattr(ctx.source, "id", "unknown")
+    if url:
+        try:
+            from stoptimes.core.readers import read_static
+
+            loader, _feed = read_static(url, source_id)
+            geometry = loader
+        except Exception as exc:  # noqa: BLE001 - a bad/missing static feed must not crash serving
+            ctx.logger.debug("default_match: could not load static feed for %s: %s", source_id, exc)
+            geometry = None
+    ctx.state[cache_key] = geometry
+    return geometry
+
+
+def _trip_geometry_cached(ctx: PipelineContext, geometry: Any, trip_id: str) -> Any | None:
+    """`geometry.trip_geometry(trip_id)` -> monotonic-progress stops + polyline,
+    cached per trip on `ctx.state` (a run may match many observations for the
+    same trip). Returns `None` when the trip has no usable geometry.
+    """
+    from stoptimes.core.spatial.polyline import assign_stops_monotonic, build_polyline
+
+    cache = ctx.state.setdefault("_p3_u6_trip_geometry", {})
+    if trip_id in cache:
+        return cache[trip_id]
+
+    resolved = None
+    try:
+        shape_points, stops = geometry.trip_geometry(trip_id)
+    except (ValueError, KeyError):
+        shape_points, stops = None, None
+
+    if stops:
+        polyline = build_polyline(shape_points) if shape_points else None
+        ordered_stops = assign_stops_monotonic(stops, polyline) if polyline and len(polyline) >= 2 else stops
+        resolved = (polyline, ordered_stops)
+    cache[trip_id] = resolved
+    return resolved
+
+
+def _match_trip_update(obs: Observation, ctx: PipelineContext, geometry: Any | None) -> MatchedObservation:
+    """`trip_update` match: the stop is already identified by the
+    observation; when static geometry is available, attach the
+    distance-along-shape approaching this stop (mirrors
+    `core.segments`'s `distance_to_stop` -- the from-stop-to-this-stop
+    segment length) and `stops_ahead` (stops remaining after this one,
+    the same 0-from-the-end training convention `core.segments` uses).
+    """
+    extra: dict[str, Any] = {}
+    resolved = _trip_geometry_cached(ctx, geometry, obs.trip_id) if geometry is not None else None
+    if resolved is not None:
+        _polyline, ordered_stops = resolved
+        with_progress = [s for s in ordered_stops if s.progress_m is not None]
+        by_sequence = {s.stop_sequence: s for s in with_progress}
+        this_stop = by_sequence.get(obs.stop_sequence)
+        if this_stop is not None:
+            ordered = sorted(with_progress, key=lambda s: s.stop_sequence)
+            idx = ordered.index(this_stop)
+            prev_stop = ordered[idx - 1] if idx > 0 else None
+            if prev_stop is not None:
+                extra["distance_to_stop"] = float(this_stop.progress_m - prev_stop.progress_m)
+            extra["stops_ahead"] = float(len(ordered) - 1 - idx)
+
+    return MatchedObservation(
+        trip_id=obs.trip_id,
+        route_id=obs.route_id,
+        direction_id=obs.direction_id,
+        start_date=obs.start_date,
+        vehicle_id=obs.vehicle_id,
+        stop_id=obs.stop_id,  # type: ignore[arg-type]
+        stop_sequence=obs.stop_sequence,  # type: ignore[arg-type]
+        observation=obs,
+        extra=extra,
+    )
+
+
+def _match_vehicle_position(
+    obs: Observation, ctx: PipelineContext, geometry: Any | None
+) -> list[MatchedObservation]:
+    """`vehicle_position` match: project the vehicle onto its trip's shape
+    (`core.spatial.polyline.project_point_to_polyline`) and emit one
+    `MatchedObservation` per not-yet-reached stop (`upcoming_stops`), each
+    carrying its real along-shape `distance_to_stop` and 0-indexed
+    `stops_ahead` -- the live-serving analogue of `core.arrivals`'s
+    map-matched arrival detection, projecting forward instead of back.
+
+    Records a per-item error (as the old placeholder did) when there's no
+    geometry, no shape for this trip, or the vehicle has already passed every
+    scheduled stop.
+    """
+    if geometry is None:
+        record_error(
+            ctx,
+            stage="match",
+            trip_id=obs.trip_id,
+            error=RuntimeError(
+                "no static feed available to map-match this vehicle_position "
+                "(ctx.static_feed is unset and ctx.source.gtfs_static_url could not be loaded)"
+            ),
+        )
+        return []
+
+    resolved = _trip_geometry_cached(ctx, geometry, obs.trip_id)
+    if resolved is None or obs.lat is None or obs.lon is None:
+        record_error(
+            ctx,
+            stage="match",
+            trip_id=obs.trip_id,
+            error=RuntimeError("no shape/stop geometry available for this trip"),
+        )
+        return []
+
+    polyline, ordered_stops = resolved
+    if polyline is None or len(polyline) < 2:
+        record_error(
+            ctx,
+            stage="match",
+            trip_id=obs.trip_id,
+            error=RuntimeError("trip has no usable shape polyline to project onto"),
+        )
+        return []
+
+    from stoptimes.core.spatial.polyline import project_point_to_polyline
+    from stoptimes.core.spatial.polyline import upcoming_stops as _upcoming_stops
+
+    projection = project_point_to_polyline(obs.lat, obs.lon, polyline)
+    ahead = _upcoming_stops(projection.progress_m, ordered_stops)
+    if not ahead:
+        record_error(
+            ctx,
+            stage="match",
+            trip_id=obs.trip_id,
+            error=RuntimeError("vehicle has already passed every scheduled stop"),
+        )
+        return []
+
     matched: list[MatchedObservation] = []
-    for obs in observations:
-        if obs.kind != ObservationKind.TRIP_UPDATE:
-            record_error(
-                ctx,
-                stage="match",
-                trip_id=obs.trip_id,
-                error=NotImplementedError(
-                    "default_match only handles trip_update observations; "
-                    "vehicle_position map-matching is T2's core.arrivals/core.segments"
-                ),
-            )
-            continue
+    for idx, stop in enumerate(ahead):
         matched.append(
             MatchedObservation(
                 trip_id=obs.trip_id,
@@ -235,11 +385,37 @@ def default_match(observations: list[Observation], ctx: PipelineContext) -> list
                 direction_id=obs.direction_id,
                 start_date=obs.start_date,
                 vehicle_id=obs.vehicle_id,
-                stop_id=obs.stop_id,  # type: ignore[arg-type]
-                stop_sequence=obs.stop_sequence,  # type: ignore[arg-type]
+                stop_id=stop.stop_id,
+                stop_sequence=stop.stop_sequence,
                 observation=obs,
+                extra={
+                    "distance_to_stop": float(stop.progress_m - projection.progress_m),
+                    "cross_track_error": float(projection.cross_track_m),
+                    "stops_ahead": float(idx),
+                },
             )
         )
+    return matched
+
+
+def default_match(observations: list[Observation], ctx: PipelineContext) -> list[MatchedObservation]:
+    """Match every observation against the source's static feed.
+
+    `trip_update` observations already know their stop; a resolved static
+    feed just adds real spatial features to it. `vehicle_position`
+    observations are actually map-matched: projected onto their trip's shape
+    to discover the upcoming stops and their along-shape distances. Either
+    kind degrades to the historical placeholder behavior (pass-through /
+    per-item error) when no static geometry can be resolved at all -- see
+    `_load_static_geometry`.
+    """
+    geometry = _load_static_geometry(ctx)
+    matched: list[MatchedObservation] = []
+    for obs in observations:
+        if obs.kind == ObservationKind.TRIP_UPDATE:
+            matched.append(_match_trip_update(obs, ctx, geometry))
+        else:
+            matched.extend(_match_vehicle_position(obs, ctx, geometry))
     return matched
 
 
