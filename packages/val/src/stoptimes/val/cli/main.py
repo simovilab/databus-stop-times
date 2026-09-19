@@ -608,6 +608,17 @@ def _report_run(summary: RunSummary) -> None:
     )
     if summary.predictor_errors:
         typer.echo(f"Predictor errors: {summary.predictor_errors}")
+        for predictor_id, count in summary.predictor_errors.items():
+            cause = summary.predictor_first_error.get(predictor_id, "<no exception captured>")
+            attempts = summary.predictor_attempts.get(predictor_id, count)
+            if attempts > 0 and count == attempts:
+                typer.echo(
+                    f"  FAILED EVERY TICK: {predictor_id} produced no predictions "
+                    f"({count}/{attempts} attempts raised) -- first cause: {cause}",
+                    err=True,
+                )
+            else:
+                typer.echo(f"  {predictor_id}: first cause (of {count}) -- {cause}")
     if summary.detector_errors:
         typer.echo(f"Detector errors: {summary.detector_errors}")
     if summary.provenance is not None:

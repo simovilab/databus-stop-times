@@ -96,10 +96,41 @@ class PipelineTripUpdatesPredictor:
         ``PipelineContext.static_feed`` for the run's GTFS static data."""
         self._static_feed = static_loader
 
+    _DEFAULT_ATTR = "pipeline"
+
+    def _spec(self) -> str:
+        """Build the ``module:attr``/``path/to/file.py:attr`` string ``load_pipeline`` expects.
+
+        ``load_pipeline`` (``stoptimes.serve.pipeline``) requires a string with an explicit
+        ``:attr`` suffix and rejects a bare ``Path``. The CLI/docs form is
+        ``--predictor pipeline:my_pipeline.py`` -- no attribute name -- so a user typing that
+        on the command line should not have to know the loader's ``:attr`` convention at all.
+        We default the attribute to ``"pipeline"`` (the name every example in the docs uses)
+        when the raw path carries no colon of its own, and pass an already-qualified
+        ``path.py:attr`` straight through so a user who *does* want a different attribute name
+        can still ask for it explicitly.
+        """
+        raw = str(self.path)
+        if ":" in raw:
+            return raw
+        return f"{raw}:{self._DEFAULT_ATTR}"
+
     def _ensure_pipeline(self) -> Any:
         if self._pipeline is None:
             load_pipeline = _load_pipeline_loader()
-            self._pipeline = load_pipeline(self.path)
+            spec = self._spec()
+            try:
+                self._pipeline = load_pipeline(spec)
+            except AttributeError as exc:
+                if ":" not in str(self.path):
+                    raise AttributeError(
+                        f"{self.path} has no attribute '{self._DEFAULT_ATTR}' (the default "
+                        f"the pipeline:<file.py> predictor looks for). Define a module-level "
+                        f"`{self._DEFAULT_ATTR} = build_default_pipeline()` (or a factory "
+                        f"function of that name), or point at a different attribute explicitly "
+                        f"with `pipeline:{self.path}:<attr>`."
+                    ) from exc
+                raise
         return self._pipeline
 
     def predict(
