@@ -1,8 +1,9 @@
 # stoptimes — implementation plan
 
-Status: **Phase 3 tracks all merged (2026-09-18)** — 1497 passed, 20 skipped; the clean-machine quickstart gate has
-**not** been run yet · next: run that gate, then Phase 4 (note G4 now precedes G2a — see §8) ·
-branch `feat/stoptimes-scaffold`, not pushed (the account has read-only access to the remote) · last updated 2026-09-19 (serving target for databus revised, §7.2 / G2)
+Status: **Phase 3 tracks merged; the clean-machine gate has been run and its findings fixed (2026-09-19)** —
+1508 passed, 20 skipped · next: close the serving feature-contract gap (§7.4), then Phase 4
+(note G4 now precedes G2a — see §8) ·
+branch `feat/stoptimes-scaffold`, not pushed (the account has read-only access to the remote) · last updated 2026-09-19 (serving target revised §7.2/G2; gate run and fix track merged §7.4)
 
 This is the working plan for turning SIMOVI's ETA research code (`gtfs-eta`) and its
 validation tool (`etaval`) into **stoptimes**: a general toolkit that lets anyone with
@@ -328,6 +329,59 @@ still the legacy agency-specific CLI (U5, folds into G1); a `val` leaf subcomman
 ~4-6 s to start, down from 20-60 s (U5); `import stoptimes` is not a usable entry point — there
 is no root namespace module, so verbs import from their packages (U4, **user decision, ties to
 the naming question**).
+
+### 7.4 The gate was run — and it failed (2026-09-19)
+
+A third-party agent that had not seen the repo installed the toolkit from a clean machine and
+followed the docs. Install (both modes), `data add`/`arrivals`/`frame`, `train run`, `models list`,
+`serve --once` (spec-valid TripUpdates, real map-matching via `--static`), `val replay` and
+`val report` with the schedule baseline all worked. Three things did not, and none of them would
+have been caught by the suite as it stood:
+
+- **`pipeline:<file.py>` had never worked at all.** The val adapter passed a `Path` into
+  `load_pipeline`, which does `":" not in spec` on it, and omitted the mandatory `:attr` suffix.
+  Every tick failed. It had unit tests; it had never been run through the CLI.
+- **The failures were invisible.** `val replay` printed `Predictor errors: {pipeline:…: 103}` and
+  nothing else — not the exception, not on screen, not in `summary.json`. This is why the first
+  defect survived, and it is the more important of the two.
+- **`stoptimes:<artifact>` could not score anything `stoptimes train run` produces.** It raised for
+  any artifact without legacy migration metadata, so the loop the project exists to close —
+  train, serve, validate the same model — did not close. The docstring blamed T3 as a placeholder;
+  T3 landed in Phase 2.
+
+Plus three doc gaps: a quickstart step reading a file no step creates, no mention that
+`stoptimes:<artifact>` finds its registry through `STOPTIMES_MODEL_REGISTRY_DIR` (there is no
+`--registry` flag on `val replay`), and an install line that cannot work before PyPI.
+
+**Fix track F1–F3, merged 2026-09-19.** Suite: core 321, models 134+2s, serve 79+2s, record 130,
+train 267+15s, val 484+1s, cli 92, e2e 1 — **1508 passed, 20 skipped, 0 failed**;
+`mkdocs build --strict` clean.
+
+- **F1** — `pipeline:my_pipeline.py` works in the bare form the docs use, an explicit `:attr`
+  still passes through, and a missing default attribute says so. `RunSummary` now carries the
+  first exception and the attempt count per predictor, printed and persisted, with a stderr
+  escalation when a predictor fails *every* tick. The legacy `MODEL_REGISTRY_DIR` warning was
+  firing at **module import**, so every `stoptimes val` invocation emitted it; now deferred to
+  when that predictor is actually constructed. Verified by re-running the tester's own fixtures:
+  MAE 85.2 s vs the 0.0 s schedule baseline, the same numbers they got with an external patch.
+- **F2** — native artifacts are loaded with `load_artifact_model` and scored through
+  `serve.pipeline`'s own `default_features`/`default_predict`, not a second implementation. The
+  test that matters trains a real artifact and asserts the predictor and an independent
+  `build_default_pipeline()` run agree to 1e-6 on the same input.
+- **F3** — the three doc gaps, each verified by re-extracting the code blocks from the **final**
+  page text and running steps 0→6 in one shot.
+
+**The gap this exposed, and it is on the G2 critical path.** `serve.pipeline.default_features` is
+still the stopgap U6 wrote: it attaches temporal features plus whatever the `match` stage left in
+`.extra`, and it does **not** use `core.features.registry` even though T3 exists.
+`default_predict` then builds each row with `row.get(name)` for every declared feature, so a
+feature the pipeline cannot produce arrives as `None`. Nothing compares what the artifact
+*requires* against what the pipeline *can compute*. A model trained on speed, bearing or
+shape-progress is therefore either silently served on missing inputs (families that impute, e.g.
+`HistoricalMeanModel`) or fails per row into the errors list — never refused. This is exactly the
+"training and serving agree only by inspection" problem G2b is meant to end, and it should be
+closed before databus depends on it: the registry wired into `default_features`, and a declared
+refusal when required features cannot be produced. **Tracked as a Phase 3 remainder, not done.**
 
 ### 7.1 User stories (the acceptance list)
 
