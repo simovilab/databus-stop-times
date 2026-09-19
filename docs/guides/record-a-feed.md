@@ -50,13 +50,10 @@ this page and printed:
 (zero writes because the quickstart's feed URLs are deliberately unreachable placeholders —
 against a real feed, `written` counts real polled rows.)
 
-!!! warning "Always pass `--status-dir`"
-    If you omit `--status-dir`, the recorder falls back to a hard-coded
-    `/var/lib/simovi/status` — a path baked in from SIMOVI's own deployment, left over in
-    `stoptimes.record.status.DEFAULT_STATUS_DIR`. On any machine that isn't that specific
-    VPS this fails outright (`PermissionError`/`FileNotFoundError`), not gracefully. Always
-    pass an explicit `--status-dir` (or `--spool-dir`) until this default is fixed — see
-    `docs/notes/p3-u5.md` for the bug report filed against this.
+`--status-dir` is optional: if you omit it, the recorder resolves, in order, `--status-dir` →
+`STOPTIMES_STATUS_DIR` → `<STOPTIMES_HOME>/status` → `./artifacts/status` — always somewhere
+writable relative to your own environment, never a fixed deployment path. Pass it explicitly
+when you want status snapshots somewhere specific (e.g. next to `--spool-dir`, as above).
 
 ## Ask "how much data do I have"
 

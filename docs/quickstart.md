@@ -202,10 +202,12 @@ choices, and [Baselines](concepts/baselines.md) for why a baseline ships with ev
 ## 5. Serve predictions from that model
 
 Serving needs two things beyond the model: a way to get observations in (`ingest`) and a
-sink to publish to. This example overrides `ingest` to read one JSON snapshot instead of
-polling a live URL, and fills in two feature columns a real deployment's `match` stage
-(map-matching against the static feed) would normally compute — see the note in
-[Serve predictions](guides/serve-predictions.md) about why that's still a manual step today.
+sink to publish to. `--static` points the default `match` stage at your GTFS zip so it can
+map-match and attach real `distance_to_stop`/`stops_ahead` features automatically — this
+example only overrides `ingest`, to read one JSON snapshot instead of polling a live URL;
+`match`, `features`, `predict`, `postprocess`, and `publish` all run unmodified. See
+[Serve predictions](guides/serve-predictions.md) for what `match` does and what happens if
+`--static` can't be read.
 
 ```python
 # my_pipeline.py
@@ -213,7 +215,7 @@ import json
 from pathlib import Path
 import pandas as pd
 from stoptimes.core.contracts.data import Observation, ObservationKind
-from stoptimes.serve.pipeline import build_default_pipeline, default_features
+from stoptimes.serve.pipeline import build_default_pipeline
 
 pipeline = build_default_pipeline()
 
@@ -235,28 +237,26 @@ def ingest_from_file(_payload, ctx):
                 arrival_time=pd.Timestamp(stu["arrival"]["time"], unit="s", tz="UTC"),
             ))
     return observations
-
-@pipeline.stage("features")
-def features_with_distance(matched, ctx):
-    frame = default_features(matched, ctx)
-    frame["distance_to_stop"] = 300.0
-    frame["stops_ahead"] = frame["stop_sequence"].astype(float)
-    return frame
 ```
 
 ```console
 $ stoptimes serve \
     --source demo --sources-dir ./agencies --registry ./registry \
-    --model quickstart-historical-mean --pipeline ./my_pipeline.py:pipeline \
+    --model quickstart-historical-mean --static ./gtfs.zip \
+    --pipeline ./my_pipeline.py:pipeline \
     --sink file:./trip_updates.json --format json --once --json
 {"source": "demo", "artifact_id": "quickstart-historical-mean",
- "generated_at": "2026-09-19T04:53:22Z", "trip_update_count": 4,
+ "generated_at": "2026-09-19T05:23:58Z", "trip_update_count": 4,
  "errors": [], "published": true}
 ```
 
 `trip_updates.json` is now a spec-valid GTFS-RT TripUpdates feed with your model's
 predictions. `--once` produces one feed and exits (used above and by the project's own gate
-test); drop it and add `--interval 15` to run continuously like a real publisher.
+test); drop it and add `--interval 15` to run continuously like a real publisher. If you omit
+`--static`, `serve` falls back to the source's own `gtfs_static_url` (here, a placeholder
+`gtfs.zip` that doesn't resolve from an arbitrary working directory) and warns on stderr
+rather than failing silently — try it and you'll see `⚠ could not read the static feed
+'gtfs.zip' ...; serving without map-matching`.
 
 ## 6. Score it against what actually happened
 
@@ -282,11 +282,12 @@ was built to exactly match the schedule — a real feed will show real error. Po
 replay` at your trained artifact with `--predictor stoptimes:quickstart-historical-mean` to
 score your own model the same way; see [Validate any feed](guides/validate-a-feed.md).)
 
-**Note on first-run speed:** the first invocation of any `stoptimes val <command>` in a
-fresh interpreter pulls in a heavy import chain (scikit-learn, matplotlib) and can take
-20-60 seconds before it prints anything — this is a real, known cost (see
-`docs/notes/p3-u2.md`'s follow-up), not a hang. `stoptimes val --help` itself is fast; only
-running a real subcommand pays the cost.
+**Note on first-run speed:** `stoptimes val --help` and `stoptimes --help` are fast (well
+under a second). Running an actual `val` subcommand (including that subcommand's own
+`--help`, e.g. `val replay --help`) still pulls in a heavier import chain
+(scikit-learn, matplotlib) than the other command groups and takes a few seconds — around
+4-6s measured on this machine, not the 20-60s an earlier draft of this page reported before a
+startup fix landed. Still not instant, but not a hang either.
 
 ## Using your own feed instead of the synthetic one
 

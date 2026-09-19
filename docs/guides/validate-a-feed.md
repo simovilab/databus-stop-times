@@ -9,11 +9,11 @@ Validation never reads training internals — it scores predictions purely throu
 `Predictor` id resolves to and what actually happened
 ([Arrivals](../concepts/arrivals.md)), per `docs/PLAN.md` rule 3.
 
-!!! note "First run is slow, not stuck"
-    The first `stoptimes val <command>` invocation in a fresh process imports scikit-learn
-    and matplotlib and can take 20-60 seconds before printing anything (see
-    `docs/notes/p3-u2.md`). `stoptimes val --help` itself is fast; a real subcommand pays the
-    import cost once per process.
+!!! note "A few seconds' delay is normal, not stuck"
+    `stoptimes val --help` (the group) is fast. Running an actual `val` subcommand — including
+    that subcommand's own `--help`, e.g. `val replay --help` — still imports scikit-learn and
+    matplotlib and takes a few seconds (measured 4-6s on this machine) before printing
+    anything. Noticeably slower than the other command groups, but not a hang.
 
 ## Replay a recorded day
 

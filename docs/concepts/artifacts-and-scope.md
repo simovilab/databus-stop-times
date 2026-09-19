@@ -49,7 +49,7 @@ bUCR's production deployment needed a hard-coded pin before this contract existe
 turns "which artifacts are even eligible for this trip" into a declared, checkable fact
 instead of an implicit assumption baked into serving code. See [Selection
 policy](selection-policy.md) for how an artifact is actually chosen among the eligible ones,
-and [Model lifecycle](../guides/train-a-model.md#registry-lifecycle-thin-pending-u7) for the
-part of this still landing in track U7.
+and [Registry lifecycle](../guides/train-a-model.md#registry-lifecycle) for how a pin is
+promoted, rolled back, and refused when stale.
 
 Full shape: [Contracts §7](../CONTRACTS.md#7-artifact-model-artifacts-on-disk).
