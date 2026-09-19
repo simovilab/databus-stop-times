@@ -1,6 +1,7 @@
 # stoptimes — implementation plan
 
-Status: **Phase 2 complete — gate passed (2026-09-18)** · next: Phase 3, scope revised 2026-09-18, awaiting the user's go ·
+Status: **Phase 3 tracks all merged (2026-09-18)** — 1497 passed, 20 skipped; the clean-machine quickstart gate has
+**not** been run yet · next: run that gate, then Phase 4 (note G4 now precedes G2a — see §8) ·
 branch `feat/stoptimes-scaffold`, not pushed (the account has read-only access to the remote) · last updated 2026-09-18
 
 This is the working plan for turning SIMOVI's ETA research code (`gtfs-eta`) and its
@@ -292,9 +293,40 @@ during the cutover is the worst possible time.
 | **U6 Serving on the pipeline** | Rebuild `serve.estimator` on `serve.pipeline` (it is what databus calls today); real vehicle-position map-matching in the default `match` stage via `core.arrivals`/`core.segments`; the legacy estimator becomes a thin compatibility shim over the pipeline, not a second implementation |
 | **U7 Registry lifecycle** | Refuse (or require an explicit override) to load an artifact whose library versions have drifted — `version_mismatches` exists and nothing acts on it; a tested `models promote` / rollback workflow, documented in CONTRACTS.md along with the `models list --json` shape |
 
-**Gate:** quickstart executed from a clean machine by an agent that has not seen the repo.
+**Gate:** quickstart executed from a clean machine by an agent that has not seen the repo. **Not yet run.**
 U6 additionally must keep the end-to-end gate green **without** the hand-supplied distance
 features in the test's pipeline — that removal is the proof map-matching actually landed.
+
+### 7.3 Phase 3 status — all seven tracks merged 2026-09-18
+
+Suite: core 321, models 134+2s, serve 79+2s, record 130, train 267+15s, val 473+1s, cli 92, e2e 1 —
+**1497 passed, 20 skipped, 0 failed**. `mkdocs build --strict` clean.
+
+**The U6 gate was passing vacuously and U6 said so.** Deleting the hand-supplied features proved
+nothing: `serve` hard-coded `static_feed=None`, so matching never fired through the CLI, and
+`HistoricalMeanModel` imputes missing features and returns numbers anyway. A silently broken
+`match` stage would have looked identical. Fixed by the orchestrator (`--static`, threaded into
+the context) and the gate now asserts on what the *stages produced* — spatial features present
+and finite for every stop except each trip's first, where the distance is genuinely unknown.
+Lesson for later phases: assert on the intermediate, not only on the output, whenever the model
+tolerates missing inputs.
+
+Defects found and fixed this phase, each by a track following its own instructions rather than by
+review: a silent date-range drop when editing an experiment in the TUI (U1); `--help` importing
+sklearn and matplotlib, 3-5 s → 0.13 s (U2); an install hint naming an extra that could not fix
+the error it was printed for (U2, predates the phase); an unbounded archive read in `diagnose`
+(U3); the async entry point breaking scoring inside a notebook (U4); a hard-coded deployment
+path in `record` violating rule 4 (U5); a refused model reaching the operator as a traceback
+instead of its own actionable message (U5→orchestrator).
+
+Carried forward: `read_archive_parquet` has no column projection, so a bounded read still loads
+every column (U3, U5); `stoptimes-models` exposes no public family registry, so the TUI reads a
+private mapping (U1); no target registry exists (U1); ONNX/TorchScript drift is undetectable
+because provenance records only python/sklearn/xgboost/numpy/pandas (U7); `record compact` is
+still the legacy agency-specific CLI (U5, folds into G1); a `val` leaf subcommand still takes
+~4-6 s to start, down from 20-60 s (U5); `import stoptimes` is not a usable entry point — there
+is no root namespace module, so verbs import from their packages (U4, **user decision, ties to
+the naming question**).
 
 ### 7.1 User stories (the acceptance list)
 
