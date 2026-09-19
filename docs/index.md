@@ -36,8 +36,11 @@ configuration.
 | Serve | A prediction library, plus a standalone publisher for agencies without one — see [What "serving" means](concepts/selection-policy.md#two-things-called-serving) | `stoptimes-serve` |
 | Validate | Score any TripUpdates source against what actually happened | `stoptimes-val` |
 
-Install only what you need: `pip install 'stoptimes[serve]'` never pulls training
-dependencies. One command ties it together: `stoptimes {data,record,train,models,serve,val,diagnose}`.
+`stoptimes` isn't on PyPI yet (that's Phase 5) — for now, install it from a clone with
+[uv](https://docs.astral.sh/uv/): `uv pip install './packages/cli[core,record,train,serve,val]'`.
+Install only what you need: `'./packages/cli[serve]'` never pulls training dependencies. See
+the [quickstart's install section](quickstart.md#install) for the full recipe. One command
+ties it together: `stoptimes {data,record,train,models,serve,val,diagnose}`.
 
 ## Status
 

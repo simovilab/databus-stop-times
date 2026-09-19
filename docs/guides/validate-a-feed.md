@@ -42,6 +42,17 @@ Predictor ids: `baseline:schedule` / `baseline:constant_speed` need no trained a
 serving pipeline the way `stoptimes serve` would run it; `gtfs_eta:*` aliases exist for
 scoring a legacy artifact directly.
 
+`stoptimes:<artifact_id>` resolves its registry through the `STOPTIMES_MODEL_REGISTRY_DIR`
+environment variable, not a flag — `val replay`/`val run` have no `--registry` option. Set it
+before invoking the CLI:
+
+```bash
+STOPTIMES_MODEL_REGISTRY_DIR=./registry stoptimes val replay --predictor stoptimes:<artifact_id> ...
+```
+
+(The deprecated `MODEL_REGISTRY_DIR` name is also read, for compatibility with older
+scripts.)
+
 ## Turn scores into a report
 
 ```bash
