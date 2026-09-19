@@ -15,6 +15,7 @@ Two separate concerns, both required by docs/CONTRACTS.md §4/§7b:
 from __future__ import annotations
 
 import importlib
+import os
 import pickle  # noqa: S403 - BYO pickle loading is an explicit, documented opt-in
 from pathlib import Path
 from typing import Any
@@ -22,14 +23,26 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
-from stoptimes.core.contracts.artifact import ArtifactMetadata, ModelFormat, artifact_dir, read_metadata
+from stoptimes.core.contracts.artifact import (
+    ArtifactMetadata,
+    ModelFormat,
+    artifact_dir,
+    read_metadata,
+    version_mismatches,
+)
 from stoptimes.core.contracts.model import Model, ModelRef, ModelRefKind
 from stoptimes.core.contracts.selection import SelectionPolicy, select_artifact
+from stoptimes.core.logging import get_logger
+from stoptimes.models.common.provenance import lib_versions as _installed_lib_versions
 
 __all__ = [
     "iter_registry_artifacts",
     "resolve_artifact",
     "load_artifact_model",
+    "check_version_drift",
+    "ArtifactVersionDriftError",
+    "LOAD_CRITICAL_LIBS",
+    "ALLOW_VERSION_DRIFT_ENV",
     "PickleModelLoader",
     "OnnxModelLoader",
     "CallableModelLoader",
@@ -38,6 +51,119 @@ __all__ = [
     "CallableModel",
     "HttpModel",
 ]
+
+_logger = get_logger("model_loading")
+
+ALLOW_VERSION_DRIFT_ENV = "STOPTIMES_ALLOW_VERSION_DRIFT"
+"""Override switch for a refused artifact (see `load_artifact_model`).
+
+Set to ``"1"``/``"true"``/``"all"``/``"*"`` to override for every artifact,
+or to a comma-separated list of artifact ids (e.g.
+``"xgb_mbta_2026,poly_v3"``) to override only those. Unset/empty means no
+override -- the default is to refuse, never to load quietly across a
+drifted load-critical library.
+"""
+
+LOAD_CRITICAL_LIBS: dict[ModelFormat, frozenset[str]] = {
+    # PICKLE covers every family produced by `models.common.contract_adapter`
+    # today (historical_mean, ewma, polyreg_*, xgb, lstm baselines) -- the
+    # pickled object's class may come from either library depending on
+    # family, so both are load-critical for this format. numpy/pandas are
+    # deliberately excluded: they are far more stable across minor versions
+    # for the plain arrays/frames these models carry, and treating every
+    # numpy point release as unloadable would make the refusal useless noise
+    # (see docs/PLAN.md U7 and docs/CONTRACTS.md).
+    ModelFormat.PICKLE: frozenset({"sklearn", "xgboost"}),
+    # Not yet loaded generically (see `load_artifact_model`'s NotImplementedError
+    # below), but declared here so the table is complete once a per-family
+    # loader is wired for it.
+    ModelFormat.XGBOOST_JSON: frozenset({"xgboost"}),
+    ModelFormat.ONNX: frozenset({"onnxruntime"}),
+    ModelFormat.TORCHSCRIPT: frozenset({"torch"}),
+}
+"""Which libraries, if drifted, make an artifact of this `ModelFormat` unsafe
+to deserialize. A drift in any other tracked library (e.g. numpy, pandas, or
+anything not in this set -- a matplotlib drift, say) is informational only:
+logged as a warning, never a refusal. See `version_mismatches` in
+contracts/artifact.py for the comparison itself (major.minor, built vs.
+installed)."""
+
+
+class ArtifactVersionDriftError(RuntimeError):
+    """Raised when a load-critical library has drifted since an artifact was
+    built and no override was given. See `check_version_drift`."""
+
+
+def _lib_name(mismatch: str) -> str:
+    """`"xgboost: built with 3.1.2, installed 3.0.5"` -> `"xgboost"`."""
+    return mismatch.split(":", 1)[0]
+
+
+def _drift_override_requested(artifact_id: str) -> bool:
+    raw = os.environ.get(ALLOW_VERSION_DRIFT_ENV, "").strip()
+    if not raw:
+        return False
+    if raw.lower() in ("1", "true", "all", "*"):
+        return True
+    allowed_ids = {item.strip() for item in raw.split(",") if item.strip()}
+    return artifact_id in allowed_ids
+
+
+def check_version_drift(meta: ArtifactMetadata, *, allow_override: bool | None = None) -> None:
+    """Refuse to proceed if a load-critical library has drifted since
+    `meta` was built, unless overridden.
+
+    - Artifacts with no recorded `provenance.lib_versions` (pre-Phase-1, or
+      any producer that never populated it) are never refused: absence of
+      information is not evidence of drift.
+    - A drift in a library that is not load-critical for `meta.format`
+      (see `LOAD_CRITICAL_LIBS`) is logged as a warning and never blocks
+      loading.
+    - A drift in a load-critical library raises `ArtifactVersionDriftError`
+      unless `allow_override` is True (explicit, per-call) or the
+      `STOPTIMES_ALLOW_VERSION_DRIFT` env var names this artifact (or
+      "all"/"1"/"true"/"*"). An override is always logged loudly, naming the
+      drift, so it is never a silent default.
+    """
+    if not meta.provenance.lib_versions:
+        return
+
+    mismatches = version_mismatches(meta, _installed_lib_versions())
+    if not mismatches:
+        return
+
+    critical_libs = LOAD_CRITICAL_LIBS.get(meta.format, frozenset())
+    critical = [m for m in mismatches if _lib_name(m) in critical_libs]
+    informational = [m for m in mismatches if _lib_name(m) not in critical_libs]
+
+    for note in informational:
+        _logger.warning(
+            "artifact library drift (non-load-critical, proceeding)",
+            artifact_id=meta.artifact_id,
+            drift=note,
+        )
+
+    if not critical:
+        return
+
+    override = _drift_override_requested(meta.artifact_id) if allow_override is None else allow_override
+    detail = "; ".join(critical)
+    if override:
+        _logger.warning(
+            "OVERRIDE: loading artifact despite load-critical library drift",
+            artifact_id=meta.artifact_id,
+            drift=detail,
+        )
+        return
+
+    raise ArtifactVersionDriftError(
+        f"artifact {meta.artifact_id!r} was built with different library versions than are "
+        f"installed here, for a library that deserializes the model: {detail}. Re-export the "
+        "artifact under the versions installed on this host (or the deploy target's versions, "
+        "if this is a deploy), or, if you know this artifact is still good, override with "
+        f"{ALLOW_VERSION_DRIFT_ENV}=all (or a comma-separated list of artifact ids including "
+        f"{meta.artifact_id!r}) -- this is logged loudly, never the default."
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -82,8 +208,16 @@ def resolve_artifact(
     )
 
 
-def load_artifact_model(meta: ArtifactMetadata, registry_dir: Path | str) -> Model:
+def load_artifact_model(
+    meta: ArtifactMetadata, registry_dir: Path | str, *, allow_version_drift: bool | None = None
+) -> Model:
     """Load the fitted model a registry artifact points at.
+
+    Before opening anything, refuses (see `check_version_drift`) when a
+    library that deserializes this `meta.format` has drifted between build
+    time (`meta.provenance.lib_versions`) and what's installed now, unless
+    `allow_version_drift` (or the `STOPTIMES_ALLOW_VERSION_DRIFT` env var)
+    overrides it for this artifact.
 
     Only `ModelFormat.PICKLE` is wired up here: it covers every family
     `stoptimes.models.common.registry.ModelRegistry.save_model` produces
@@ -95,6 +229,7 @@ def load_artifact_model(meta: ArtifactMetadata, registry_dir: Path | str) -> Mod
     loader T3 owns (`contracts.model.Model.load`); this raises a clear error
     rather than guessing.
     """
+    check_version_drift(meta, allow_override=allow_version_drift)
     directory = artifact_dir(registry_dir, meta.artifact_id)
     if meta.format is ModelFormat.PICKLE:
         with open(directory / meta.model_filename, "rb") as fh:  # noqa: S301 - registry-owned artifact
