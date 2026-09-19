@@ -1,10 +1,14 @@
 """Atomic, human- and machine-readable status snapshots for the RT collectors.
 
-Why: when a collector goes quiet at 2am, the fastest diagnostic is
-``ssh ... cat /var/lib/simovi/status/<name>.txt`` or ``tail -f
-.../<name>.events.log`` -- no Django shell, no log-grepping. This module is
-the write side of that contract; a later ops script (``simovi-status``) is
-the read side.
+Why: when a collector goes quiet at 2am, the fastest diagnostic is to
+``cat`` the status file or ``tail -f`` the event log -- no shell into the
+application, no log-grepping. This module is the write side of that contract;
+an ops script is the read side.
+
+The directory is chosen by the caller: ``--status-dir``, else
+``STOPTIMES_STATUS_DIR``, else ``<STOPTIMES_HOME>/status``. It must never
+default to a deployment-specific absolute path (docs/PLAN.md rule 4: no
+agency-specific code in ``packages/``).
 
 Per name (e.g. ``mbta``), three files:
 
@@ -35,7 +39,21 @@ from typing import Any, Optional
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_STATUS_DIR = "/var/lib/simovi/status"
+def default_status_dir() -> Path:
+    """Where status files go when the caller names no directory.
+
+    `STOPTIMES_STATUS_DIR` if set, else `<stoptimes home>/status`. Read on
+    every call rather than captured at import, so a test or a relocated home
+    takes effect (the same reason `core.config` reads the environment on
+    access).
+    """
+    override = os.environ.get("STOPTIMES_STATUS_DIR")
+    if override:
+        return Path(override)
+    from stoptimes.core.config import get_config
+
+    home = get_config().stoptimes_home
+    return (home / "status") if home is not None else Path("./artifacts/status")
 
 # Keys that are computed fresh on every render rather than carried forward by
 # the merge -- stripped from "existing" before merging so a stale computed
@@ -54,7 +72,7 @@ def _now_utc() -> dt.datetime:
 
 
 def _status_dir(status_dir: Optional[str]) -> Path:
-    return Path(status_dir or DEFAULT_STATUS_DIR)
+    return Path(status_dir) if status_dir else default_status_dir()
 
 
 def _atomic_write(path: Path, content: str) -> None:

@@ -37,6 +37,8 @@ dev = [
 ]
 # Deep-learning models (LSTM). Separate so `uv sync` stays light.
 dl = ["stoptimes-models[torch]"]
+# The documentation site (`mkdocs serve` / `mkdocs build --strict`).
+docs = ["mkdocs-material>=9.5"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
