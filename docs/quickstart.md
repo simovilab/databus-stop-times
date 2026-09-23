@@ -27,10 +27,17 @@ packages straight from `packages/*` (it reads the workspace's `pyproject.toml`),
 lookup is needed for them. A plain `pip install` from a path like this will fail, because
 `pip` doesn't know to resolve those names against the local workspace.
 
-Install only the parts you need — `'./packages/cli[serve]'` alone never pulls in training
-dependencies (xgboost, torch). Every command below prints an install hint instead of a
-traceback if you're missing a part. (Contributing to `stoptimes` itself instead of just
+Install only the parts you need. `'./packages/cli[serve]'` installs inference and the
+xgboost runtime (serving has to be able to load an xgboost artifact) but not torch, the
+`train` pipeline, or `val` — about 20s. Every command below prints an install hint instead
+of a traceback if you're missing a part. (Contributing to `stoptimes` itself instead of just
 using it? Use `uv sync --group dev` from the repo root — see the repo README.)
+
+**First run is slow.** Every number on this page is a *warm* run. On a clean machine the
+first invocation of each heavy command pays an import cost that dwarfs the work: `train run`
+took 67s cold against ~8s warm, `make_fixtures.py` 37s, `val replay --help` 12s cold against
+4.7s warm. Nothing is hanging — it's pandas, scikit-learn and matplotlib being imported and
+byte-compiled for the first time. Later runs in the same checkout are the fast ones.
 
 ## 0. Try it in under a minute (no network, no real agency needed)
 
@@ -206,7 +213,12 @@ $ stoptimes models list --registry ./registry
 (data window, features, scores by horizon). See `stoptimes models card
 quickstart-historical-mean --registry ./registry`.
 
-A toy 100-row synthetic feed trains in about a second; this is a `historical_mean` baseline
+Re-running `train run` with the same experiment name refuses rather than silently replacing
+a trained artifact — `✗ artifact 'quickstart-historical-mean' already exists at ...`. Pass
+`--overwrite` to replace it.
+
+A toy 100-row synthetic feed trains in a few seconds warm (about a minute on the very first
+run — see the note under [Install](#install)); this is a `historical_mean` baseline
 family on purpose — it's fast and needs no tuning, which keeps this page honest about what
 was actually run. See [Train a model](guides/train-a-model.md) for real feature/family
 choices, and [Baselines](concepts/baselines.md) for why a baseline ships with every report.
@@ -334,10 +346,13 @@ $ stoptimes serve \
 `trip_updates.json` is now a spec-valid GTFS-RT TripUpdates feed with your model's
 predictions. `--once` produces one feed and exits (used above and by the project's own gate
 test); drop it and add `--interval 15` to run continuously like a real publisher. If you omit
-`--static`, `serve` falls back to the source's own `gtfs_static_url` (here, a placeholder
-`gtfs.zip` that doesn't resolve from an arbitrary working directory) and warns on stderr
-rather than failing silently — try it and you'll see `⚠ could not read the static feed
-'gtfs.zip' ...; serving without map-matching`.
+`--static`, `serve` falls back to the source's own `gtfs_static_url` — here the relative
+path `gtfs.zip`, which `agencies/demo.yaml` sets. Standing in the directory step 0 wrote,
+that resolves to the same zip and serving proceeds normally, with no warning; the fallback
+is only visible from a directory where `gtfs.zip` isn't there, and then it warns on stderr
+rather than failing silently: `⚠ could not read the static feed 'gtfs.zip' ...; serving
+without map-matching`. Worth knowing, because it means `--static` can appear optional in
+your own tree and then stop being optional when the process runs from somewhere else.
 
 ## 6. Score it against what actually happened
 
@@ -347,7 +362,10 @@ $ stoptimes val replay \
     --from 2026-09-17 --to 2026-09-18 --predictor baseline:schedule --out ./scores.parquet
 Replaying: source='demo', archive='./archive', ..., predictors=['baseline:schedule'], ...
 Done. Ticks=100 Samples=176 Arrivals=32 Results=176
-Exported 176 results → ./scores.parquet
+Provenance: etaval unknown[?] / gtfs-eta unknown[?] / seed=none / snapshot=gtfs.zip
+Exported 176 results → scores.parquet
+Wrote provenance → scores.parquet.provenance.json
+Wrote summary → scores.parquet.summary.json
 
 $ stoptimes val report ./scores.parquet
                          Per-Predictor Metrics
@@ -357,6 +375,14 @@ $ stoptimes val report ./scores.parquet
 │ baseline:schedule │     0.0 │      0.0 │      0.0 │      0.0 │   176 │
 └───────────────────┴─────────┴──────────┴──────────┴──────────┴───────┘
 ```
+
+Two things in that output are worth naming. `val report` prints a second table after this
+one, **Error vs Horizon Bucket** (the same metrics split by how far ahead the prediction
+was) — omitted here, not missing from your run. And `Provenance: etaval unknown[?]` is not
+an error: replay stamps every result file with the git SHA of the code that produced it, and
+`unknown[?]` means it couldn't find one, which is what you get running from an installed
+package rather than a git checkout. The two sidecar files next to `scores.parquet` carry the
+same stamp plus the run summary.
 
 (`baseline:schedule` scores 0 error here only because this toy feed's synthetic ground truth
 was built to exactly match the schedule — a real feed will show real error. Point `val
@@ -370,9 +396,9 @@ val replay ...`.)
 **Note on first-run speed:** `stoptimes val --help` and `stoptimes --help` are fast (well
 under a second). Running an actual `val` subcommand (including that subcommand's own
 `--help`, e.g. `val replay --help`) still pulls in a heavier import chain
-(scikit-learn, matplotlib) than the other command groups and takes a few seconds — around
-4-6s measured on this machine, not the 20-60s an earlier draft of this page reported before a
-startup fix landed. Still not instant, but not a hang either.
+(scikit-learn, matplotlib) than the other command groups and takes a few seconds — 4.7s warm
+on this machine, 11.9s on the very first run, not the 20-60s an earlier draft of this page
+reported before a startup fix landed. Still not instant, but not a hang either.
 
 ## Using your own feed instead of the synthetic one
 

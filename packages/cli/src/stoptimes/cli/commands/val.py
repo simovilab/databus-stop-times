@@ -88,8 +88,51 @@ def _add_api_tui_commands(val_app: typer.Typer) -> None:
         tui_main()
 
 
+def _make_missing_stub(name: str):
+    """A stand-in for a val subcommand that swallows its arguments and prints
+    the install hint.
+
+    `PASSTHROUGH` is what makes the hint reachable: without it, click parses
+    `stoptimes val report scores.parquet` against a no-argument command and
+    exits 2 with "Got unexpected extra argument(s)" before the body ever runs
+    -- a usage error about a perfectly correct command line (docs/PLAN.md §7.5).
+    """
+
+    def _missing(ctx: typer.Context) -> None:
+        require("stoptimes.val", "val")
+
+    _missing.__name__ = f"val_{name.replace('-', '_')}_missing"
+    return _missing
+
+
+def _mount_missing(app: typer.Typer) -> None:
+    """Mount `val` as the same command list, each one an install hint.
+
+    The group keeps its real shape so that a missing part is reported as a
+    missing part, whatever the user typed: `stoptimes val`, `stoptimes val
+    --help` and `stoptimes val report <file>` all say the same thing.
+    """
+    val_app = typer.Typer(help=VAL_MISSING_HELP, invoke_without_command=True)
+
+    @val_app.callback()
+    def _val_root(ctx: typer.Context) -> None:
+        if ctx.invoked_subcommand is None:
+            require("stoptimes.val", "val")
+
+    stubs = {
+        **_FORWARDED_COMMANDS,
+        "api": "Run the REST + WebSocket API.",
+        "tui": "Launch the terminal ops console.",
+    }
+    for name, help_text in stubs.items():
+        command = val_app.command(name, context_settings=PASSTHROUGH, help=help_text)
+        command(_make_missing_stub(name))
+
+    app.add_typer(val_app, name="val", help=VAL_MISSING_HELP)
+
+
 def mount(app: typer.Typer) -> None:
-    """Mount `val` onto the assembled `app`, or an install-hint stub if absent.
+    """Mount `val` onto the assembled `app`, or install-hint stubs if absent.
 
     Checking `find_spec` (rather than importing) keeps this cheap even when
     `stoptimes.val` isn't installed at all.
@@ -97,11 +140,7 @@ def mount(app: typer.Typer) -> None:
     import importlib.util
 
     if importlib.util.find_spec("stoptimes.val") is None:
-
-        @app.command("val", help=VAL_MISSING_HELP)
-        def val_missing() -> None:
-            require("stoptimes.val", "val")
-
+        _mount_missing(app)
         return
 
     val_app = typer.Typer(help=VAL_HELP, no_args_is_help=True)

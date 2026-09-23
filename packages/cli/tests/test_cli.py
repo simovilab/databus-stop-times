@@ -317,6 +317,60 @@ def test_val_tui_help_reaches_argparse():
     assert "--api-url" in result.stdout
 
 
+def _app_without_val(monkeypatch):
+    """Assemble a fresh CLI with `stoptimes.val` made to look uninstalled."""
+    import importlib.util
+
+    import typer
+    from stoptimes.cli.commands import val as val_commands
+
+    real_find_spec = importlib.util.find_spec
+
+    def fake_find_spec(name, *args, **kwargs):
+        if name == "stoptimes.val":
+            return None
+        return real_find_spec(name, *args, **kwargs)
+
+    monkeypatch.setattr(importlib.util, "find_spec", fake_find_spec)
+    bare = typer.Typer(no_args_is_help=True, rich_markup_mode=None)
+    val_commands.mount(bare)
+    return bare
+
+
+def test_val_without_the_extra_hints_instead_of_a_usage_error(monkeypatch):
+    """A correct command line for a part that isn't installed must say so.
+
+    Before this, `val` collapsed into one no-argument command when the extra was
+    missing, so click rejected `val report <file>` with "Got unexpected extra
+    argument(s)" (exit 2) -- a usage error about a command line that is in fact
+    correct. Found by the clean-machine gate; see docs/PLAN.md §7.5."""
+    bare = _app_without_val(monkeypatch)
+
+    result = runner.invoke(bare, ["val", "report", "scores.parquet"])
+    assert result.exit_code == 1, result.output
+    assert "unexpected extra argument" not in result.output.lower()
+    assert "needs the 'val' part" in result.output
+
+
+def test_val_without_the_extra_hints_for_the_bare_group(monkeypatch):
+    bare = _app_without_val(monkeypatch)
+
+    result = runner.invoke(bare, ["val"])
+    assert result.exit_code == 1, result.output
+    assert "needs the 'val' part" in result.output
+
+
+def test_install_hints_name_a_command_that_works(monkeypatch):
+    """`stoptimes` isn't on PyPI, and `uv sync --extra ...` only works from
+    `packages/cli` -- neither belongs in a hint aimed at someone who installed
+    from a clone."""
+    bare = _app_without_val(monkeypatch)
+
+    result = runner.invoke(bare, ["val", "run"])
+    assert "uv pip install './packages/cli[val]'" in result.output
+    assert "pip install 'stoptimes[" not in result.output
+
+
 def test_implemented_commands_never_claim_to_be_planned():
     """Every command that Phase 2 built must give a real usage error, not the
     placeholder text from before it existed."""

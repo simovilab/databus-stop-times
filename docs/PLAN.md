@@ -394,6 +394,47 @@ took the note: both now derive from a shared `ArtifactRefusalError`, which `serv
 CLI tests asserting an unproducible feature is refused as a message rather than a traceback.
 Suite after F4: **1526 passed, 20 skipped, 0 failed**.
 
+### 7.5 The gate was re-run — and it passed (2026-09-23)
+
+The same exercise after F1–F4: a stranger, a clean machine, `docs/quickstart.md` and nothing
+else. **Every step passed.** Install, the fixture build, `data add`/`arrivals`/`frame`,
+`train run`/`models list`/`models card`, `serve --once` (4 TripUpdates, `errors: []`,
+structurally valid GTFS-RT) and `val replay`/`val report` all produced the output the page
+says they produce — 100/16/`map_matched` 16, 252/252, the metrics table identical — with zero
+source-code peeks. The closing suggestion (`STOPTIMES_MODEL_REGISTRY_DIR` +
+`stoptimes:quickstart-historical-mean`, the loop F1–F2 fixed) scored MAE 81.9 s.
+
+So the loop closes for someone who has never seen the repo. What the run found instead was a
+page that describes a machine which has already run everything once, and one real defect:
+
+- **`val report` broke its own promise.** "Every command below prints an install hint instead
+  of a traceback if you're missing a part" was true for `train` and false for `val`: with the
+  `val` extra absent, `mount()` collapsed the whole group into a single no-argument command, so
+  click rejected `stoptimes val report scores.parquet` with `Got unexpected extra argument(s)`
+  and exit 2 — a *usage error about a correct command line*, which sends the reader debugging
+  their own typing instead of installing the part. The missing branch now mounts the same
+  command list, each one a passthrough stub that prints the hint; `stoptimes val` bare does too.
+- **The install hints named two commands that do not work.** `pip install 'stoptimes[train]'`
+  (not on PyPI until Phase 5) and `uv sync --extra train` (only from `packages/cli`, not the
+  repo root). Both replaced with `uv pip install './packages/cli[train]'`, the clone-path form
+  the quickstart itself uses, plus `uv sync --group dev` for contributors.
+- **The `train run` refusal mixed the two audiences.** `pass overwrite=True / --overwrite to
+  replace` — half Python API, half CLI, in one line. `ArtifactExistsError` now states the fact
+  and each caller adds its own remedy.
+
+The rest were the page over-claiming, all corrected against measured numbers: "trains in about
+a second" (67 s cold, ~8 s warm — first-run import cost is invisible in every timing on the
+page, so it now has its own note under Install); `'./packages/cli[serve]'` "never pulls in
+xgboost" (it does, and must, to load an xgboost artifact — torch it genuinely doesn't); the
+`--static` aside describing a warning that never fires from the quickstart's own directory,
+because step 0 leaves a `gtfs.zip` there that the relative `gtfs_static_url` resolves to; and a
+step-6 transcript missing the provenance stamp, both sidecar-file lines and the second report
+table, which "lightly trimmed" did not cover.
+
+The pattern worth keeping: the three defects are all the same shape as F1–F4's — a path that
+*works when everything is installed and warm*, and misinforms when it isn't. The gate is
+valuable precisely because it runs cold.
+
 ### 7.1 User stories (the acceptance list)
 
 Written 2026-09-18 to describe the whole toolkit from outside. Phase 3 is judged by whether a

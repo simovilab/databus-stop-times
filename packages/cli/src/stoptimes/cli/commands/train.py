@@ -72,6 +72,7 @@ def train_run(
         )
     except ArtifactExistsError as exc:
         typer.secho(f"✗ {exc}", fg="red", err=True)
+        typer.echo("  Re-run with --overwrite to replace it.", err=True)
         raise typer.Exit(1) from exc
 
     if json_output:
@@ -102,7 +103,8 @@ def train_ui(
     if importlib.util.find_spec("textual") is None:
         typer.secho("✗ `stoptimes train ui` needs Textual, which isn't installed.", fg="red", err=True)
         typer.echo(
-            "  Install it with:  uv sync --extra tui   (or pip install 'stoptimes-train[tui]')",
+            "  Install it with:  uv pip install './packages/cli[tui]'"
+            "   (from a clone of the repo)",
             err=True,
         )
         raise typer.Exit(1)

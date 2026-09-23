@@ -302,9 +302,10 @@ def run_experiment(
     artifact_id = _sanitize_artifact_id(experiment.name)
     target_dir = artifact_dir(registry_root, artifact_id)
     if target_dir.exists() and not overwrite:
-        raise ArtifactExistsError(
-            f"artifact {artifact_id!r} already exists at {target_dir} (pass overwrite=True / --overwrite to replace)"
-        )
+        # States the fact only: the remedy is spelled differently for a library
+        # caller (`overwrite=True`, documented in this function's docstring) and
+        # for a CLI user (`--overwrite`), so each caller adds its own.
+        raise ArtifactExistsError(f"artifact {artifact_id!r} already exists at {target_dir}")
 
     dataset = resolve_dataset(experiment.data, dataset_dir=dataset_dir)
     dataset.clean_data()

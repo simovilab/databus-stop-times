@@ -19,13 +19,21 @@ def run_module(module: str, prog: str, args: list[str]) -> None:
 
 
 def require(module: str, extra: str) -> None:
-    """Exit with an install hint when an optional part of the toolkit is missing."""
+    """Exit with an install hint when an optional part of the toolkit is missing.
+
+    The hint names commands that actually work today: `stoptimes` isn't on PyPI
+    yet (docs/PLAN.md §9), so `pip install 'stoptimes[...]'` resolves to
+    nothing, and `uv sync --extra ...` only works from `packages/cli`, not from
+    the repo root a reader is most likely standing in.
+    """
     if importlib.util.find_spec(module) is None:
         typer.secho(f"✗ This command needs the '{extra}' part of stoptimes.", fg="red", err=True)
         typer.echo(
-            f"  Install it with:  uv sync --extra {extra}   (or pip install 'stoptimes[{extra}]')",
+            f"  Install it with:  uv pip install './packages/cli[{extra}]'"
+            "   (from a clone of the repo)",
             err=True,
         )
+        typer.echo("  Contributing to stoptimes itself?  uv sync --group dev", err=True)
         raise typer.Exit(1)
 
 
