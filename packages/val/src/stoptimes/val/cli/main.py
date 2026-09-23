@@ -718,12 +718,12 @@ def report(
 
     # ── 1. Per-predictor table ────────────────────────────────────────────────
     pp_table = Table(title="Per-Predictor Metrics", show_lines=True)
-    pp_table.add_column("Predictor", no_wrap=True)
-    pp_table.add_column("MAE (s)", justify="right")
-    pp_table.add_column("RMSE (s)", justify="right")
-    pp_table.add_column("MAPE (%)", justify="right")
-    pp_table.add_column("Bias (s)", justify="right")
-    pp_table.add_column("Count", justify="right")
+    pp_table.add_column("Predictor", overflow="fold")
+    pp_table.add_column("MAE (s)", justify="right", no_wrap=True)
+    pp_table.add_column("RMSE (s)", justify="right", no_wrap=True)
+    pp_table.add_column("MAPE (%)", justify="right", no_wrap=True)
+    pp_table.add_column("Bias (s)", justify="right", no_wrap=True)
+    pp_table.add_column("Count", justify="right", no_wrap=True)
     for m in metrics.per_predictor:
         pp_table.add_row(
             m.predictor_id,
@@ -739,10 +739,10 @@ def report(
     if metrics.horizon_buckets:
         hb_table = Table(title="Error vs Horizon Bucket", show_lines=True)
         hb_table.add_column("Bucket")
-        hb_table.add_column("Predictor")
-        hb_table.add_column("MAE (s)", justify="right")
-        hb_table.add_column("Bias (s)", justify="right")
-        hb_table.add_column("Count", justify="right")
+        hb_table.add_column("Predictor", overflow="fold")
+        hb_table.add_column("MAE (s)", justify="right", no_wrap=True)
+        hb_table.add_column("Bias (s)", justify="right", no_wrap=True)
+        hb_table.add_column("Count", justify="right", no_wrap=True)
         for b in metrics.horizon_buckets:
             hb_table.add_row(
                 b.label,
@@ -756,10 +756,10 @@ def report(
     # ── 3. Head-to-head ───────────────────────────────────────────────────────
     if metrics.head_to_head:
         h2h_table = Table(title="Head-to-Head Win Rate", show_lines=True)
-        h2h_table.add_column("Predictor")
-        h2h_table.add_column("Wins", justify="right")
-        h2h_table.add_column("Total", justify="right")
-        h2h_table.add_column("Win %", justify="right")
+        h2h_table.add_column("Predictor", overflow="fold")
+        h2h_table.add_column("Wins", justify="right", no_wrap=True)
+        h2h_table.add_column("Total", justify="right", no_wrap=True)
+        h2h_table.add_column("Win %", justify="right", no_wrap=True)
         for w in metrics.head_to_head:
             h2h_table.add_row(
                 w.predictor_id,
@@ -785,11 +785,11 @@ def report(
             typer.echo("No detector sensitivity to report (0 persisted arrivals in --db).")
         else:
             sens_table = Table(title="Detector Sensitivity", show_lines=True)
-            sens_table.add_column("Detector", no_wrap=True)
-            sens_table.add_column("Predictor", no_wrap=True)
-            sens_table.add_column("MAE (s)", justify="right")
-            sens_table.add_column("Count", justify="right")
-            sens_table.add_column("Δ MAE vs default (s)", justify="right")
+            sens_table.add_column("Detector", overflow="fold")
+            sens_table.add_column("Predictor", overflow="fold")
+            sens_table.add_column("MAE (s)", justify="right", no_wrap=True)
+            sens_table.add_column("Count", justify="right", no_wrap=True)
+            sens_table.add_column("Δ MAE vs default (s)", justify="right", no_wrap=True)
             for row in rows:
                 if not row.metrics_by_predictor:
                     sens_table.add_row(row.detector_id, "—", "—", "0", "—")

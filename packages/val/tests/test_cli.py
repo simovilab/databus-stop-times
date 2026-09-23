@@ -237,6 +237,28 @@ def test_report_shows_mae_value(tmp_path: Path) -> None:
     )
 
 
+def test_report_never_truncates_a_number(tmp_path: Path) -> None:
+    """At 80 columns a long predictor id used to squeeze the numeric columns
+    until rich ellipsized them -- the clean-machine gate saw a MAPE cell
+    rendered as `1199…`, which could as easily be 11990 as 1199. The id may
+    wrap; a number may not. See docs/PLAN.md §7.5."""
+    long_id = "stoptimes:quickstart-historical-mean"
+    wide = ValidationResult(
+        trip_key="k1", predictor_id=long_id, stop_id="s2", stop_sequence=2, route_id="r1",
+        error_s=123456.7, horizon_s=120.0, dist_remaining_m=500.0, stops_remaining=3,
+        predicted_arrival_epoch=1100.0 + 123456.7, actual_arrival_epoch=1100.0,
+        made_at_epoch=980.0,
+    )
+    out = tmp_path / "results.parquet"
+    export_results([wide, _make_result("k2", "baseline:schedule")], out)
+
+    result = runner.invoke(app, ["report", str(out)], env={"COLUMNS": "80"})
+
+    assert result.exit_code == 0, result.output
+    assert "123456.7" in result.output, result.output
+    assert "…" not in result.output, result.output
+
+
 def test_report_missing_file_nonzero_exit(tmp_path: Path) -> None:
     missing = tmp_path / "does_not_exist.parquet"
     result = runner.invoke(app, ["report", str(missing)])

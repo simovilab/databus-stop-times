@@ -77,6 +77,9 @@ def test_train_run_refuses_to_overwrite_without_flag(tmp_path):
     second = runner.invoke(app, ["train", "run", str(experiment_path), "--dataset-dir", str(_MODELS_FIXTURES)])
     assert second.exit_code == 1
     assert "already exists" in second.output
+    # a CLI remedy only -- `overwrite=True` is the library spelling (docs/PLAN.md §7.5)
+    assert "--overwrite" in second.output
+    assert "overwrite=True" not in second.output
 
     third = runner.invoke(
         app,

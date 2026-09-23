@@ -435,6 +435,23 @@ The pattern worth keeping: the three defects are all the same shape as F1–F4's
 *works when everything is installed and warm*, and misinforms when it isn't. The gate is
 valuable precisely because it runs cold.
 
+**Run 2, same day, after `285741b`.** A fresh run with the `stoptimes*` entries purged from
+uv's cache (the OS page cache can't be flushed without a reboot, so "cold" means cold venv on
+a warm machine). **Clean pass, zero improvisations, zero doc-vs-reality discrepancies.** Every
+run-1 finding was verified fixed against the page alone. The new first-run note held: `train
+run` 54.9 s first, `val replay --help` 9.4 s cold, both inside the brackets the page now
+quotes. The serve-only venv printed the `val` install hint with exit 1.
+
+The tester listed two leftover nits. One was stale: the `train run` refusal no longer mentions
+`overwrite=True`. Their fresh directory never triggered a second `train run`, so they never saw
+the new message; `test_train_run_refuses_to_overwrite_without_flag` now pins it. The other was
+real, and more than cosmetic: with the model predictor's 36-character id at 80 columns, `val
+report` rendered MAPE as `1199…`. rich was ellipsizing a **number**, which could as easily
+have been 11990. Every table `val report` prints now lets text columns fold and never wraps a
+numeric one, and a test renders the report at 80 columns and asserts no `…`. (The MAPE value
+itself, ~1200 %, is what MAPE does when the denominator is near zero. That's a question about
+the metric, not the table, and it's left open.)
+
 ### 7.1 User stories (the acceptance list)
 
 Written 2026-09-18 to describe the whole toolkit from outside. Phase 3 is judged by whether a
