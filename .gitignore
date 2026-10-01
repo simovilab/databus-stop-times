@@ -14,7 +14,7 @@ dist/
 htmlcov/
 # runtime outputs
 artifacts/
-runs/
+/runs/
 *.sqlite
 *.sqlite3
 celerybeat-schedule

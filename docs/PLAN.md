@@ -435,7 +435,7 @@ The pattern worth keeping: the three defects are all the same shape as F1–F4's
 *works when everything is installed and warm*, and misinforms when it isn't. The gate is
 valuable precisely because it runs cold.
 
-**Run 2, same day, after `285741b`.** A fresh run with the `stoptimes*` entries purged from
+**Run 2, same day, after `ecfea1c`.** A fresh run with the `stoptimes*` entries purged from
 uv's cache (the OS page cache can't be flushed without a reboot, so "cold" means cold venv on
 a warm machine). **Clean pass, zero improvisations, zero doc-vs-reality discrepancies.** Every
 run-1 finding was verified fixed against the page alone. The new first-run note held: `train
