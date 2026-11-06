@@ -29,7 +29,7 @@ model:
     reg_lambda: 10.0
     reg_alpha: 0.1
     gamma: 0.0
-    n_estimators: 3000
+    n_estimators: 4000
     early_stopping_rounds: 50
     n_jobs: 6
 features:

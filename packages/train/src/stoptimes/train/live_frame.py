@@ -56,6 +56,7 @@ __all__ = [
     "prepare_trip_records",
     "arrivals_table",
     "build_live_dataset",
+    "build_day_frame",
     "write_live_assets",
     "LIVE_ASSETS_MANIFEST",
     "TARGET_COLUMN",
@@ -288,9 +289,14 @@ def _instants(rec: TripRecord, params: LiveFrameParams) -> np.ndarray:
     return grid[ok]
 
 
-def _day_frame(
+def build_day_frame(
     records: Sequence[TripRecord], assets: LiveAssets, params: LiveFrameParams, day: str, split: str
 ) -> pd.DataFrame:
+    """Rows of one service day (``split`` is ``'train'`` or ``'val'``) with the given assets.
+
+    Training days must be given their out-of-fold statistics, validation days the shipped ones;
+    :func:`build_live_dataset` does that bookkeeping.
+    """
     parts = []
     for rec in records:
         times = _instants(rec, params)
@@ -353,7 +359,7 @@ def build_live_dataset(
     for day in (*train_days, *val_days):
         is_train = day in train_days
         stats = oof.for_day(pd.Timestamp(day).date().isoformat()) if is_train else oof.full
-        frame = _day_frame(
+        frame = build_day_frame(
             load_records(day), LiveAssets(stats, vocabulary), params, day, "train" if is_train else "val"
         )
         _log.info("live frame %s (%s): %d rows", day, "train" if is_train else "val", len(frame))
