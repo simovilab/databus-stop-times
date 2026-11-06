@@ -148,25 +148,34 @@ def build_trip_context(
     tz: str,
     *,
     holiday_region: str | None = None,
+    geometry_cache: dict[str, tuple[ForwardMatcher, tuple[float, ...]]] | None = None,
 ) -> tuple[TripContext, ForwardMatcher]:
     """Context and shape matcher of a trip from GTFS static.
 
     Stop progress comes from the monotonic stop-to-shape assignment; the schedule is
-    anchored per GTFS on ``service_date``.  Raises ``ValueError`` for an unknown trip,
+    anchored per GTFS on ``service_date``.  ``geometry_cache`` (trip_id -> matcher and stop
+    progress) lets a caller that builds the same trip for many days skip the shape work; it
+    must only be shared between calls against the same static feed.  Raises ``ValueError`` for an unknown trip,
     a missing/short shape, or when schedule and geometry disagree about the stops.
     """
     from stoptimes.core.spatial.polyline import assign_stops_monotonic, build_polyline
 
-    shape_points, stops = static.trip_geometry(trip_id)
-    if len(shape_points) < 2:
-        raise ValueError(f"trip {trip_id!r} has no usable shape")
-    polyline = build_polyline(shape_points)
-    placed = assign_stops_monotonic(list(stops), polyline)
     schedule = static.trip_schedule(trip_id)
-    if tuple(s.stop_id for s in placed) != schedule.stop_ids or tuple(
-        s.stop_sequence for s in placed
-    ) != schedule.stop_sequences:
-        raise ValueError(f"trip {trip_id!r}: stops of the shape geometry and the schedule do not align")
+    cached = geometry_cache.get(trip_id) if geometry_cache is not None else None
+    if cached is None:
+        shape_points, stops = static.trip_geometry(trip_id)
+        if len(shape_points) < 2:
+            raise ValueError(f"trip {trip_id!r} has no usable shape")
+        polyline = build_polyline(shape_points)
+        placed = assign_stops_monotonic(list(stops), polyline)
+        if tuple(s.stop_id for s in placed) != schedule.stop_ids or tuple(
+            s.stop_sequence for s in placed
+        ) != schedule.stop_sequences:
+            raise ValueError(f"trip {trip_id!r}: stops of the shape geometry and the schedule do not align")
+        cached = (ForwardMatcher(polyline), tuple(float(s.progress_m) for s in placed))
+        if geometry_cache is not None:
+            geometry_cache[trip_id] = cached
+    matcher, progress = cached
     ctx = TripContext(
         trip_id=str(trip_id),
         route_id=str(route_id),
@@ -174,11 +183,11 @@ def build_trip_context(
         tz=tz,
         stop_ids=schedule.stop_ids,
         stop_sequences=schedule.stop_sequences,
-        stop_progress_m=tuple(float(s.progress_m) for s in placed),
+        stop_progress_m=progress,
         sched_epochs=tuple(float(v) for v in scheduled_epochs(schedule, service_date, tz)),
         holiday_region=holiday_region,
     )
-    return ctx, ForwardMatcher(polyline)
+    return ctx, matcher
 
 
 # ---------------------------------------------------------------------------
