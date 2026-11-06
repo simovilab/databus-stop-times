@@ -181,3 +181,16 @@ async def test_stats_1_computed_once_and_cached(
     assert run_manager._stats_cache[run_id] is cached_obj
     assert first["significance"] == second["significance"]
     assert first["calibration"] == second["calibration"]
+
+
+async def test_stats_1_serves_a_run_that_ended_with_an_error(
+    client: httpx.AsyncClient, run_manager: RunManager
+) -> None:
+    """A live run that scored results and then failed (e.g. a feed outage) still gets its analytics."""
+    run_id = await _done_run(client)
+    state = run_manager.get_run(run_id)
+    state.status = "error"
+    state.error = "ConnectError: [Errno 8] nodename nor servname provided, or not known"
+    resp = await client.get(f"/api/runs/{run_id}/metrics", params={"stats": 1})
+    assert resp.status_code == 200
+    assert len(resp.json()["per_predictor"]) > 0

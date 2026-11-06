@@ -17,9 +17,7 @@ async function loadRuns() {
     runs.value = await api.getRuns()
     // Most recent first
     runs.value = [...runs.value].sort((a, b) => {
-      const ta = a.started_at ?? ''
-      const tb = b.started_at ?? ''
-      return tb.localeCompare(ta)
+      return (toDate(b.started_at)?.getTime() ?? 0) - (toDate(a.started_at)?.getTime() ?? 0)
     })
   } catch {
     loadError.value = 'Could not load runs. Is the backend running?'
@@ -30,15 +28,16 @@ async function loadRuns() {
 
 onMounted(loadRuns)
 
-function fmtDate(iso: string | null): string {
-  if (!iso) return '—'
-  return new Date(iso).toLocaleString()
+function fmtDate(value: string | number | null): string {
+  const d = toDate(value)
+  return d ? d.toLocaleString() : '—'
 }
 
 function fmtDuration(run: RunInfo): string {
-  if (!run.started_at) return '—'
-  const start = new Date(run.started_at).getTime()
-  const end = run.ended_at ? new Date(run.ended_at).getTime() : Date.now()
+  const startDate = toDate(run.started_at)
+  if (!startDate) return '—'
+  const start = startDate.getTime()
+  const end = toDate(run.ended_at)?.getTime() ?? Date.now()
   const secs = Math.max(0, Math.round((end - start) / 1000))
   const m = Math.floor(secs / 60)
   const s = secs % 60

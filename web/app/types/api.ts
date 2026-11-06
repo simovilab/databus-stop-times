@@ -52,8 +52,8 @@ export interface RunInfo {
   status: RunStatus
   summary: RunSummary
   db_path: string
-  started_at: string | null
-  ended_at: string | null
+  started_at: number | string | null
+  ended_at: number | string | null
   error: string | null
   provenance?: RunProvenance | null
 }
@@ -181,7 +181,7 @@ export interface SnapshotFrame {
     run_id: string
     status: RunStatus
     summary: RunSummary
-    started_at: string | null
+    started_at: number | string | null
   }
 }
 

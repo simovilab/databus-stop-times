@@ -66,7 +66,8 @@ onMounted(async () => {
   const s = run.value.status
   if (s === 'pending' || s === 'running') {
     stream.start()
-  } else if (s === 'done') {
+  } else if (s === 'done' || s === 'error') {
+    // An errored run keeps everything scored before it stopped: show it.
     await loadPostRunData()
   }
 })
@@ -84,9 +85,9 @@ async function handleDelete() {
   }
 }
 
-function fmtDate(iso: string | null): string {
-  if (!iso) return '—'
-  return new Date(iso).toLocaleString()
+function fmtDate(value: string | number | null): string {
+  const d = toDate(value)
+  return d ? d.toLocaleString() : '—'
 }
 
 function fmtSha(sha: string | null | undefined, dirty: boolean | null | undefined): string {
@@ -221,18 +222,15 @@ const isError = computed(() => displayStatus.value === 'error')
       />
     </template>
 
-    <!-- ── ERROR VIEW ─────────────────────────────────────────────────────── -->
-    <template v-else-if="isError && run">
+    <!-- ── DONE VIEW (also an errored run: its results up to the failure) ── -->
+    <template v-else-if="(isDone || isError) && run">
       <UAlert
+        v-if="isError"
         color="error"
         variant="subtle"
-        title="Run failed"
-        :description="run.error ?? 'Unknown error'"
+        title="Run ended early"
+        :description="`${run.error ?? 'Unknown error'} — showing the results scored before it stopped.`"
       />
-    </template>
-
-    <!-- ── DONE VIEW ──────────────────────────────────────────────────────── -->
-    <template v-else-if="isDone && run">
       <ConsoleCounterTiles :summary="run.summary" />
 
       <UAlert v-if="metricsError" color="warning" variant="subtle" :title="metricsError" />

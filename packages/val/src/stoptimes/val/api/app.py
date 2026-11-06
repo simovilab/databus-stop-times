@@ -202,7 +202,7 @@ def create_app(
     ) -> MetricsResponse:
         """Compute and return the full metrics report for a completed run.
 
-        With ``?stats=1`` (only valid for DONE runs), the response is
+        With ``?stats=1`` (only valid for finished runs: DONE, or ERROR with the results scored before it stopped), the response is
         augmented with a per-predictor ``mae_ci``/``latency`` and top-level
         ``significance``/``calibration``/``seed`` — see
         :mod:`stoptimes.val.api.stats_ext` for the full contract. The augmentation
@@ -225,11 +225,11 @@ def create_app(
         if not stats:
             return MetricsResponse(**s)
 
-        if state.status != "done":
+        if state.status not in ("done", "error"):
             raise HTTPException(
                 status_code=409,
-                detail=f"Run {run_id!r} is not done (status={state.status!r}); "
-                "?stats=1 requires a completed run",
+                detail=f"Run {run_id!r} is still {state.status!r}; "
+                "?stats=1 requires a finished run (done, or ended early with an error)",
             )
 
         ext = run_manager.get_stats_extension(run_id, results)

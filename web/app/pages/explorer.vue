@@ -14,7 +14,7 @@ onMounted(async () => {
     const all = await api.getRuns()
     runs.value = all
       .filter((r) => r.status === 'done')
-      .sort((a, b) => (b.started_at ?? '').localeCompare(a.started_at ?? ''))
+      .sort((a, b) => (toDate(b.started_at)?.getTime() ?? 0) - (toDate(a.started_at)?.getTime() ?? 0))
     if (runs.value.length > 0) selectedRunId.value = runs.value[0]!.id
   } catch {
     loadError.value = 'Could not load runs. Is the backend running?'
