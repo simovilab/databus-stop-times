@@ -130,7 +130,7 @@ def missing_inputs(
 
     A feature is blocked when one of its declared `inputs` is not in
     `available_inputs`, or when it reads a sidecar asset that is not in
-    `artifact_assets`. Names the registry does not know, and features that
+    `artifact_assets` (the ``asset`` input is judged by the assets alone). Names the registry does not know, and features that
     declare no inputs, are never reported (absence of information is not
     evidence). Returns ``{feature: [human-readable reasons]}`` for blocked
     features only.
@@ -143,7 +143,7 @@ def missing_inputs(
         reasons = [
             f"needs {INPUT_DESCRIPTIONS.get(inp, inp)}"
             for inp in feature.inputs
-            if inp not in available_inputs
+            if inp != "asset" and inp not in available_inputs
         ]
         reasons += [
             f"artifact has no {asset} asset" for asset in feature.assets if asset not in artifact_assets
