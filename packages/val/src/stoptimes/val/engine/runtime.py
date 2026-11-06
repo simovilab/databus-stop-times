@@ -34,6 +34,7 @@ Public API
 from __future__ import annotations
 
 import asyncio
+import logging
 import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
@@ -83,6 +84,24 @@ class FeedSnapshot:
     tu_records: list[TripUpdateRecord]
 
 
+#: How long a live feed may stay unreachable before the run fails (transient errors are retried).
+DEFAULT_MAX_FEED_OUTAGE_S = 600.0
+
+_logger = logging.getLogger(__name__)
+
+
+def is_transient_feed_error(exc: BaseException) -> bool:
+    """A fetch failure worth retrying: network/DNS errors, timeouts, HTTP 5xx and 429."""
+    import httpx
+
+    if isinstance(exc, (httpx.TransportError, asyncio.TimeoutError, TimeoutError, ConnectionError)):
+        return True
+    if isinstance(exc, httpx.HTTPStatusError):
+        status = exc.response.status_code
+        return status >= 500 or status == 429
+    return False
+
+
 class LiveFeedSource:
     """Async iterator that polls live GTFS-RT HTTP feeds each iteration.
 
@@ -100,18 +119,60 @@ class LiveFeedSource:
         self,
         vp_poller: VehiclePositionsPoller,
         tu_poller: TripUpdatesPoller,
+        *,
+        max_outage_s: float = DEFAULT_MAX_FEED_OUTAGE_S,
+        retry_base_s: float = 2.0,
+        retry_max_s: float = 30.0,
     ) -> None:
+        """
+        Args:
+            max_outage_s: a transient fetch failure (network error, timeout, HTTP 5xx/429) is
+                retried with exponential backoff; the run only fails once the feed has been
+                unreachable for longer than this. Any other error fails at once.
+        """
         self._vp = vp_poller
         self._tu = tu_poller
+        self._max_outage_s = max_outage_s
+        self._retry_base_s = retry_base_s
+        self._retry_max_s = retry_max_s
+        self.feed_errors = 0
+        """Transient fetch failures retried so far in this run."""
+        self.last_error: str | None = None
 
     def __aiter__(self) -> LiveFeedSource:
         return self
 
     async def __anext__(self) -> FeedSnapshot:
-        vp_result, tu_result = await asyncio.gather(
-            self._vp.poll(),
-            self._tu.poll(),
-        )
+        outage_started: float | None = None
+        attempt = 0
+        while True:
+            try:
+                vp_result, tu_result = await asyncio.gather(
+                    self._vp.poll(),
+                    self._tu.poll(),
+                )
+                break
+            except Exception as exc:  # noqa: BLE001 - classified below; non-transient re-raised
+                if not is_transient_feed_error(exc):
+                    raise
+                now = time.monotonic()
+                outage_started = now if outage_started is None else outage_started
+                outage = now - outage_started
+                self.feed_errors += 1
+                self.last_error = f"{type(exc).__name__}: {exc}"
+                if outage >= self._max_outage_s:
+                    raise
+                delay = min(self._retry_base_s * (2**attempt), self._retry_max_s)
+                attempt += 1
+                _logger.warning(
+                    "feed fetch failed (%s); retry %d in %.0fs, unreachable for %.0fs of %.0fs allowed",
+                    self.last_error,
+                    attempt,
+                    delay,
+                    outage,
+                    self._max_outage_s,
+                )
+                await asyncio.sleep(delay)
         return FeedSnapshot(
             header_timestamp=vp_result.header_timestamp,
             vp_records=vp_result.records,
