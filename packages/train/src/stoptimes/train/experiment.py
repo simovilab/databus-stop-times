@@ -281,8 +281,12 @@ def run_experiment(
     registry_dir: str | Path | None = None,
     dataset_dir: str | Path | None = None,
     overwrite: bool = False,
+    tracker: Any = None,
 ) -> ArtifactMetadata:
     """Run `experiment` end to end and write its artifact.
+
+    With a *tracker* (`stoptimes.core.tracking.Tracker`), the run is also logged to MLflow,
+    best-effort: a tracking failure is a warning, never a failed training run.
 
     Steps: resolve the dataset (`resolve_dataset`), filter to
     `data.routes` if given, build `features` through the feature registry,
@@ -313,7 +317,7 @@ def run_experiment(
     live = locate_live_frame(experiment.data, dataset_dir)
     if live is not None:  # a `data frame --live` dataset: calendar split, early stopping, sidecar assets
         return run_live_experiment(
-            experiment, live[0], live[1], registry_dir=registry_dir, overwrite=overwrite
+            experiment, live[0], live[1], registry_dir=registry_dir, overwrite=overwrite, tracker=tracker
         )
 
     dataset = resolve_dataset(experiment.data, dataset_dir=dataset_dir)
@@ -395,7 +399,11 @@ def run_experiment(
         tags=list(experiment.outputs.tags),
     )
 
-    _write_artifact(fitted, meta, registry, split_outcome.notes, baseline_metrics, overwrite=overwrite)
+    card = render_card(meta, baseline_metrics=baseline_metrics, notes=split_outcome.notes)
+    _write_artifact(fitted, meta, registry, card, overwrite=overwrite)
+    from stoptimes.train.tracking import log_training
+
+    log_training(tracker, meta, registry, card=card, baselines=baseline_metrics, experiment=experiment)
     return meta
 
 
@@ -403,17 +411,14 @@ def _write_artifact(
     model: Any,
     meta: ArtifactMetadata,
     registry: RegistryBackend,
-    split_notes: list[str],
-    baseline_metrics: dict[str, dict[str, float]],
+    card: str,
     *,
     overwrite: bool = False,
 ) -> None:
     with registry.staged(meta.artifact_id, overwrite=overwrite) as tmp_dir:
         model.save(tmp_dir)
         write_metadata(meta, tmp_dir)
-        (tmp_dir / "card.md").write_text(
-            render_card(meta, baseline_metrics=baseline_metrics, notes=split_notes), encoding="utf-8"
-        )
+        (tmp_dir / "card.md").write_text(card, encoding="utf-8")
 
 
 def render_card(

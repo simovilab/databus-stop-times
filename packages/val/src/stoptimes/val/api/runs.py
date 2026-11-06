@@ -26,6 +26,8 @@ from stoptimes.val.feeds.source_config import load_named_source
 from stoptimes.val.provenance import RunProvenance, build_run_provenance, write_provenance_sidecar
 from stoptimes.val.storage.sqlite import SqliteStorage
 
+_TRACKER_FROM_ENV: Any = object()
+
 
 @dataclass
 class RunState:
@@ -70,7 +72,14 @@ class RunManager:
         deps_builder: Callable[..., LiveRunDeps] = build_live_run,
         telemetry: TelemetryCollector | None = None,
         sources_dir: str | Path | None = None,
+        tracker: Any = _TRACKER_FROM_ENV,
     ) -> None:
+        """*tracker*: where finished runs are logged (`stoptimes.core.tracking.Tracker`); by default
+        ``$STOPTIMES_TRACKING``, None turns it off."""
+        from stoptimes.core.tracking import get_tracker
+
+        self._tracker = get_tracker() if tracker is _TRACKER_FROM_ENV else tracker
+        self._tracking_tasks: set[asyncio.Task] = set()
         self._data_dir = Path(data_dir)
         self._runs_dir = self._data_dir / "runs"
         self._runs_dir.mkdir(parents=True, exist_ok=True)
@@ -298,6 +307,7 @@ class RunManager:
         state = self._runs[run_id]
         gtfs_path = None
         storage = None
+        models: dict[str, dict[str, str]] = {}
         try:
             deps: LiveRunDeps = await asyncio.to_thread(
                 self._deps_builder,
@@ -306,6 +316,9 @@ class RunManager:
                 routes or None,
             )
             gtfs_path = deps.gtfs_path
+            from stoptimes.val.tracking import predictor_models
+
+            models = predictor_models(deps.predictors)
             storage = SqliteStorage(state.db_path)
 
             # Build provenance BEFORE the engine starts and persist it right
@@ -371,6 +384,70 @@ class RunManager:
             self._persist()
             # Signal Phase B WebSocket subscribers that this run has ended.
             self._signal_end(run_id)
+        self._start_tracking(state, cfg, predictor_ids, routes, duration_s, seed, models)
+
+    def _start_tracking(
+        self,
+        state: RunState,
+        cfg: Any,
+        predictor_ids: list[str],
+        routes: list[str],
+        duration_s: float,
+        seed: int | None,
+        models: dict[str, dict[str, str]],
+    ) -> None:
+        """Log the finished run to MLflow in the background.
+
+        The server can take a minute and the run is already over, so nothing waits for it.
+        Best-effort; the outcome is a telemetry event.
+        """
+        if self._tracker is None or state.status not in ("done", "error"):
+            return
+        tracker = self._tracker
+
+        def _log() -> str | None:
+            from stoptimes.val.tracking import log_validation
+
+            with SqliteStorage(state.db_path) as storage:
+                results = storage.load_results()
+            return log_validation(
+                tracker,
+                results,
+                source=cfg.name,
+                mode="live",
+                run_id=state.id,
+                predictor_ids=list(predictor_ids),
+                routes=list(routes),
+                duration_s=duration_s,
+                seed=seed,
+                status=state.status,
+                error=state.error,
+                models=models,
+            )
+
+        async def _track() -> None:
+            try:
+                mlflow_run = await asyncio.to_thread(_log)
+            except Exception as exc:  # noqa: BLE001 - e.g. the run DB is unreadable
+                mlflow_run, detail = None, f"{type(exc).__name__}: {exc}"
+            else:
+                detail = "see the API log"
+            if mlflow_run is None:
+                message = f"MLflow logging failed ({detail})"
+                self.telemetry.log_event(
+                    "warn", source="tracking", message=message, run_id=state.id
+                )
+                return
+            from stoptimes.core.tracking import VAL_EXPERIMENT_PREFIX, source_slug
+
+            experiment = VAL_EXPERIMENT_PREFIX + source_slug(cfg.name)
+            url = tracker.run_url(experiment, mlflow_run) or mlflow_run
+            message = f"logged to MLflow: {url}"
+            self.telemetry.log_event("info", source="tracking", message=message, run_id=state.id)
+
+        task = asyncio.get_running_loop().create_task(_track())
+        self._tracking_tasks.add(task)
+        task.add_done_callback(self._tracking_tasks.discard)
 
     # ── Queries ────────────────────────────────────────────────────────────────
 

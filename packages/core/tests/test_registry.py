@@ -221,6 +221,16 @@ class TestMlflow:
         assert mv.tags["stoptimes.test_mae_s"] == "95.600"
         assert mv.run_id  # every publish records a run
 
+    def test_the_publish_run_carries_params_metrics_and_card(self, tmp_path, monkeypatch):
+        reg = mlflow_registry(tmp_path, monkeypatch)
+        _publish(reg, _meta(scope={"source_id": "mbta"}, params={"max_depth": 8}, metrics={"test_mae_seconds": 95.6}))
+        client = reg._client()
+        run = client.get_run(reg.resolve("stoptimes-mbta/1").run_id)
+        assert run.data.params["model.max_depth"] == "8"
+        assert run.data.metrics["test_mae_seconds"] == 95.6
+        assert run.data.tags["stoptimes.kind"] == "train"
+        assert "card.md" in {a.path for a in client.list_artifacts(run.info.run_id)}
+
     def test_overwrite_adds_a_version_and_latest_wins(self, tmp_path, monkeypatch):
         reg = mlflow_registry(tmp_path, monkeypatch)
         _publish(reg, _meta(params={"v": 1}))

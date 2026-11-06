@@ -130,8 +130,10 @@ def run_live_experiment(
     *,
     registry_dir: str | Path | None = None,
     overwrite: bool = False,
+    tracker: Any = None,
 ) -> ArtifactMetadata:
-    """Fit on the frame's train days, early-stop and score on its val days, write the artifact."""
+    """Fit on the frame's train days, early-stop and score on its val days, write the artifact
+    (and log the run to *tracker*, best-effort)."""
     from stoptimes.models.common.metrics import compute_all_metrics
     from stoptimes.models.common.provenance import git_sha, lib_versions
     from stoptimes.train.experiment import ArtifactExistsError, _sanitize_artifact_id
@@ -217,7 +219,12 @@ def run_live_experiment(
         "is fitted on all training days.",
         f"best iteration {model.best_iteration} of at most {_split_params(dict(experiment.model.params))[1]}.",
     ]
-    _write_live_artifact(model, meta, assets, registry, notes, overwrite=overwrite)
+    from stoptimes.train.experiment import render_card
+    from stoptimes.train.tracking import log_training
+
+    card = render_card(meta, baseline_metrics={}, notes=notes)
+    _write_live_artifact(model, meta, assets, registry, card, overwrite=overwrite)
+    log_training(tracker, meta, registry, card=card, experiment=experiment)
     return meta
 
 
@@ -236,16 +243,14 @@ def _write_live_artifact(
     meta: ArtifactMetadata,
     assets: dict[str, bytes],
     registry: Any,
-    notes: list[str],
+    card: str,
     *,
     overwrite: bool = False,
 ) -> None:
-    from stoptimes.train.experiment import render_card
-
     with registry.staged(meta.artifact_id, overwrite=overwrite) as tmp_dir:
         with open(tmp_dir / meta.model_filename, "wb") as fh:
             pickle.dump(model, fh)
         for name, data in assets.items():
             write_asset(tmp_dir, meta.assets[name].file, data)
         write_metadata(meta, tmp_dir)
-        (tmp_dir / "card.md").write_text(render_card(meta, baseline_metrics={}, notes=notes), encoding="utf-8")
+        (tmp_dir / "card.md").write_text(card, encoding="utf-8")

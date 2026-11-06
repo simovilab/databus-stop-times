@@ -280,6 +280,7 @@ class MlflowRegistry:
             )
             run_id = run.info.run_id
             try:
+                _log_artifact_summary(client, run_id, meta, directory)
                 with tempfile.TemporaryDirectory(prefix="stoptimes-pyfunc-") as tmp:
                     model_path = Path(tmp) / "model"
                     with _quiet_mlflow():
@@ -520,6 +521,16 @@ class MlflowRegistry:
                 f"({getattr(exc, 'error_code', '')}): it probably exists and belongs to another user; "
                 "ask an MLflow admin to grant you EDIT on it"
             ) from exc
+
+
+def _log_artifact_summary(client: Any, run_id: str, meta: ArtifactMetadata, directory: Path) -> None:
+    """The publish run carries the artifact's params, metrics, per-horizon scores and card (D6)."""
+    from stoptimes.core.tracking import Tracker, artifact_metrics, artifact_params, artifact_tags
+
+    Tracker._log_batches(client, run_id, artifact_params(meta), artifact_metrics(meta), artifact_tags(meta))
+    card = directory / "card.md"
+    if card.is_file():
+        client.log_text(run_id, card.read_text(encoding="utf-8"), "card.md")
 
 
 def _fingerprint(meta: ArtifactMetadata) -> str:

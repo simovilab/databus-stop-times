@@ -35,6 +35,7 @@ import json
 import math
 import os
 import sys
+import uuid
 from pathlib import Path
 from typing import Any
 
@@ -245,6 +246,12 @@ def run(
         help="TripUpdates wire format: json | pb | auto (default; sniffed per response). "
         "Live mode only -- overrides the source YAML's trip_updates_format, if set.",
     ),
+    track: str | None = typer.Option(
+        None,
+        "--track",
+        help="Log the scores to this MLflow tracking server "
+        "(default $STOPTIMES_TRACKING; '' = off). Best-effort: a failure is a warning.",
+    ),
 ) -> None:
     """Run headless ETA validation against a live GTFS-RT source, or replay an archive.
 
@@ -347,6 +354,17 @@ def run(
             _report_run(summary)
             _export_if_requested(storage, out)
             _write_sidecars_if_requested(summary, out)
+            _track_if_requested(
+                track,
+                storage,
+                cfg,
+                "replay",
+                deps.predictors,
+                predictor_ids,
+                route,
+                None,
+                seed,
+            )
         return
 
     # ── Live mode ──────────────────────────────────────────────────────────────
@@ -439,6 +457,17 @@ def run(
         _report_run(summary)
         _export_if_requested(storage, out)
         _write_sidecars_if_requested(summary, out)
+        _track_if_requested(
+            track,
+            storage,
+            cfg,
+            "live",
+            predictors,
+            predictor_ids,
+            route,
+            duration_s,
+            seed,
+        )
 
 
 @app.command()
@@ -484,6 +513,12 @@ def replay(
     ),
     seed: int | None = typer.Option(
         None, "--seed", help="Run seed, recorded in provenance (no RNG in the tick loop today)"
+    ),
+    track: str | None = typer.Option(
+        None,
+        "--track",
+        help="Log the scores to this MLflow tracking server "
+        "(default $STOPTIMES_TRACKING; '' = off). Best-effort: a failure is a warning.",
     ),
 ) -> None:
     """Score predictions from a recorded archive instead of a live feed.
@@ -577,6 +612,17 @@ def replay(
         _report_run(summary)
         _export_if_requested(storage, out)
         _write_sidecars_if_requested(summary, out)
+        _track_if_requested(
+            track,
+            storage,
+            cfg,
+            "replay",
+            deps.predictors,
+            predictor_ids,
+            route,
+            None,
+            seed,
+        )
 
 
 def _format_provenance_stamp(prov: RunProvenance) -> str:
@@ -639,6 +685,43 @@ def _write_sidecars_if_requested(summary: RunSummary, out: Path | None) -> None:
     summary_path = Path(f"{out}.summary.json")
     summary_path.write_text(json.dumps(summary.to_dict(), indent=2, sort_keys=True))
     typer.echo(f"Wrote summary → {summary_path}")
+
+
+def _track_if_requested(
+    track: str | None,
+    storage: SqliteStorage,
+    cfg: Any,
+    mode: str,
+    predictors: list[Any],
+    predictor_ids: list[str],
+    routes: list[str] | None,
+    duration_s: float | None,
+    seed: int | None,
+) -> None:
+    """Log the run's scores to MLflow when tracking is on (``--track``, ``$STOPTIMES_TRACKING``)."""
+    from stoptimes.core.tracking import get_tracker
+    from stoptimes.val.tracking import log_validation, predictor_models
+
+    tracker = get_tracker(track)
+    if tracker is None:
+        return
+    typer.echo(f"Logging to MLflow at {tracker.uri} ...")
+    mlflow_run = log_validation(
+        tracker,
+        storage.load_results(),
+        source=cfg.name,
+        mode=mode,
+        run_id=uuid.uuid4().hex,
+        predictor_ids=list(predictor_ids),
+        routes=list(routes) if routes else None,
+        duration_s=duration_s,
+        seed=seed,
+        models=predictor_models(predictors),
+    )
+    if mlflow_run is None:
+        typer.echo("MLflow logging failed (see the warning above); results unaffected.", err=True)
+    else:
+        typer.echo(f"Logged to MLflow run {mlflow_run}")
 
 
 def _export_if_requested(storage: SqliteStorage, out: Path | None) -> None:

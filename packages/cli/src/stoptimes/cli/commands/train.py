@@ -39,6 +39,12 @@ def train_run(
     json_output: bool = typer.Option(
         False, "--json", help="Print the trained artifact's id/family/metrics as JSON."
     ),
+    track: Optional[str] = typer.Option(
+        None,
+        "--track",
+        help="Log the run to this MLflow tracking server (default $STOPTIMES_TRACKING; '' turns it off). "
+        "Best-effort: a tracking failure is a warning.",
+    ),
 ) -> None:
     """Train from an experiment.yaml: resolve data, build features, split, fit
     the model plus its baselines, score by horizon, and write an artifact +
@@ -65,12 +71,16 @@ def train_run(
         typer.echo(json.dumps(plan_experiment(experiment), indent=2))
         return
 
+    from stoptimes.core.tracking import get_tracker
+
+    tracker = get_tracker(track)
     try:
         meta = run_experiment(
             experiment,
             registry_dir=registry,
             dataset_dir=dataset_dir,
             overwrite=overwrite,
+            tracker=tracker,
         )
     except ArtifactExistsError as exc:
         typer.secho(f"✗ {exc}", fg="red", err=True)
