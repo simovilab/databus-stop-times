@@ -61,7 +61,9 @@ def serve(
     sources_dir: Path = typer.Option(
         None, "--sources-dir", help="Directory of agency YAMLs (default: --sources-dir -> STOPTIMES_SOURCES -> ./examples/agencies)."
     ),
-    registry: Path = typer.Option(None, "--registry", help="Model registry directory (one artifact.json per subdir)."),
+    registry: str = typer.Option(
+        None, "--registry", help="Model registry: a directory (one artifact.json per subdir), or mlflow+<tracking uri>."
+    ),
     model: str = typer.Option(None, "--model", help="Artifact id, or a BYO spec: pickle:PATH | onnx:PATH | callable:module:func | http(s)://URL."),
     artifact: str = typer.Option(None, "--artifact", help="Alias for --model."),
     static: Path = typer.Option(
@@ -167,6 +169,9 @@ def serve(
             ref = ModelRef(kind=ModelRefKind(kind_str), location=location)
         resolved_model = load_model_ref(ref)
     elif registry is not None:
+        from stoptimes.core.registry import open_registry
+
+        registry = open_registry(registry)  # opened once: listing a remote registry is slow
         meta = resolve_artifact(
             registry,
             source_id=src.id,
@@ -186,7 +191,7 @@ def serve(
                 raise typer.Exit(1) from exc
             live_session = _build_live_session(meta, registry, static_loader, src)
         elif model_choice is not None:
-            typer.secho(f"✗ artifact {model_choice!r} not found in registry {registry}", fg="red", err=True)
+            typer.secho(f"✗ artifact {model_choice!r} not found in registry {registry.uri}", fg="red", err=True)
             raise typer.Exit(1)
 
     if pipeline is not None:

@@ -60,43 +60,40 @@ from typing import Any
 
 import pandas as pd
 
-from stoptimes.core.contracts.artifact import ArtifactMetadata, read_metadata
+from stoptimes.core.contracts.artifact import ArtifactMetadata
 from stoptimes.core.contracts.data import Observation, ObservationKind
 from stoptimes.core.contracts.pipeline import PipelineContext
 from stoptimes.core.contracts.selection import SelectionPolicy, select_artifact
 from stoptimes.core.domain.models import Stop, TripInstance, VehicleState
+from stoptimes.core.registry import RegistryBackend, RegistryLike, open_registry
 from stoptimes.serve.pipeline import MatchedObservation
 from stoptimes.val.predictors.base import StopPrediction
 
 
 def default_registry_dir() -> Path:
-    """Default artifact registry root: ``core.config``'s ``model_registry_dir``."""
+    """Default artifact registry directory: ``core.config``'s ``model_registry_dir``.
+
+    Kept for callers that need a path; prefer ``default_registry()``, which also honors
+    ``STOPTIMES_REGISTRY`` (a directory or a non-filesystem backend).
+    """
     from stoptimes.core.config import get_config
 
     return Path(get_config().model_registry_dir)
 
 
-def load_registry_candidates(registry_dir: Path) -> list[ArtifactMetadata]:
-    """Read every ``<registry_dir>/*/artifact.json`` into an ``ArtifactMetadata`` list.
+def default_registry() -> RegistryBackend:
+    """The registry val uses when none is given: ``core.registry.open_registry()``."""
+    return open_registry()
 
-    A subdirectory without an ``artifact.json``, or with one that fails to
-    parse, is skipped rather than raising -- a registry is expected to be
-    scanned repeatedly (once per predictor construction) and a single
-    malformed entry must not take every other artifact down with it.
+
+def load_registry_candidates(registry: RegistryLike | None) -> list[ArtifactMetadata]:
+    """Every artifact's metadata in *registry* (``None`` = ``default_registry()``).
+
+    An entry with a malformed ``artifact.json`` is skipped rather than raising -- a registry
+    is scanned repeatedly (once per predictor construction) and a single malformed entry
+    must not take every other artifact down with it.
     """
-    candidates: list[ArtifactMetadata] = []
-    registry_dir = Path(registry_dir)
-    if not registry_dir.is_dir():
-        return candidates
-    for child in sorted(registry_dir.iterdir()):
-        meta_path = child / "artifact.json"
-        if not meta_path.is_file():
-            continue
-        try:
-            candidates.append(read_metadata(child))
-        except Exception:  # noqa: BLE001 - malformed artifact.json, skip, not fatal
-            continue
-    return candidates
+    return open_registry(registry).list(strict=False)
 
 
 def _needs_live(artifact: ArtifactMetadata) -> bool:
@@ -176,7 +173,7 @@ def _build_matched_observations(
 
 def _score_native_artifact(
     artifact: ArtifactMetadata,
-    registry_dir: Path,
+    registry_dir: RegistryLike,
     trip: TripInstance,
     upcoming_stops: list[Stop],
     vehicle_state: VehicleState,
@@ -247,8 +244,8 @@ class StoptimesArtifactPredictor:
         ref: An exact ``artifact_id``, or a scope name (today: a
             ``source_id``) resolved per-trip via
             ``core.contracts.selection.select_artifact``.
-        registry_dir: Registry root to scan; defaults to
-            ``core.config.get_config().model_registry_dir``.
+        registry_dir: Registry to scan (a directory, a ``STOPTIMES_REGISTRY``-style URI or a
+            ``RegistryBackend``); defaults to ``core.registry.open_registry()``.
         source_id: Agency id passed to ``select_artifact`` when *ref* names a
             scope rather than one artifact. Defaults to *ref* itself -- the
             common case, where ``stoptimes:mbta`` selects for source
@@ -260,17 +257,17 @@ class StoptimesArtifactPredictor:
     def __init__(
         self,
         ref: str,
-        registry_dir: Path | None = None,
+        registry_dir: RegistryLike | None = None,
         source_id: str | None = None,
         policy: SelectionPolicy | None = None,
     ) -> None:
         self.ref = ref
         self.predictor_id: str = f"stoptimes:{ref}"
-        self._registry_dir = Path(registry_dir) if registry_dir is not None else default_registry_dir()
+        self._registry: RegistryBackend = open_registry(registry_dir)
         self._source_id = source_id if source_id is not None else ref
         self._policy = policy or SelectionPolicy()
 
-        self._candidates = load_registry_candidates(self._registry_dir)
+        self._candidates = load_registry_candidates(self._registry)
         by_id = {c.artifact_id: c for c in self._candidates}
         self._static_artifact: ArtifactMetadata | None = by_id.get(ref)
         self._static_loader: Any = None
@@ -352,7 +349,7 @@ class StoptimesArtifactPredictor:
 
         return _score_native_artifact(
             artifact,
-            self._registry_dir,
+            self._registry,
             trip,
             upcoming_stops,
             vehicle_state,
@@ -377,11 +374,11 @@ class StoptimesArtifactPredictor:
         config = get_config()
         model = self._native_model_cache.get(artifact.artifact_id)
         if model is None:
-            model = load_artifact_model(artifact, self._registry_dir)
+            model = load_artifact_model(artifact, self._registry)
             self._native_model_cache[artifact.artifact_id] = model
         session = LiveSession.from_artifact(
             artifact,
-            self._registry_dir,
+            self._registry,
             self._static_loader,
             fallback_timezone=config.default_timezone,
             fallback_holiday_region=config.default_region,

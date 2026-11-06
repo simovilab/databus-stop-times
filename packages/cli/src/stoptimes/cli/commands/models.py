@@ -24,7 +24,9 @@ def models_check(ctx: typer.Context) -> None:
 
 @app.command("list")
 def models_list(
-    registry: Path = typer.Option(_DEFAULT_REGISTRY, "--registry", help="Artifact registry directory."),
+    registry: str = typer.Option(
+        str(_DEFAULT_REGISTRY), "--registry", help="Artifact registry: a directory, or mlflow+<tracking uri>."
+    ),
     source: Optional[str] = typer.Option(
         None, "--source", help="Filter to this Source.id (contracts.artifact.ModelScope.source_id)."
     ),
@@ -38,34 +40,31 @@ def models_list(
     `--json`: a list of ``{"artifact_id", "family", "scope", "routes", "metric", "created"}``.
     """
     require("stoptimes.models", "models")
-    from stoptimes.core.contracts.artifact import ArtifactMetadata, METADATA_FILENAME, read_metadata
+    from stoptimes.core.registry import open_registry
 
+    def _skip(name: str, exc: Exception) -> None:
+        typer.secho(f"  skip {name}: could not read artifact.json ({exc!r})", fg="yellow", err=True)
+
+    reg = open_registry(registry)
     rows: list[dict] = []
-    if registry.exists():
-        for entry in sorted(registry.iterdir()):
-            if not (entry / METADATA_FILENAME).exists():
-                continue
-            try:
-                meta: ArtifactMetadata = read_metadata(entry)
-            except Exception as exc:  # noqa: BLE001 - one bad artifact shouldn't kill the listing
-                typer.secho(f"  skip {entry.name}: could not read artifact.json ({exc!r})", fg="yellow", err=True)
-                continue
-            if family and meta.family != family:
-                continue
-            if source and meta.scope.source_id not in (None, source):
-                continue
-            if route and route not in meta.scope.route_ids:
-                continue
-            rows.append(
-                {
-                    "artifact_id": meta.artifact_id,
-                    "family": meta.family,
-                    "scope": meta.scope.level.value,
-                    "routes": meta.scope.route_ids,
-                    "metric": meta.metrics.get("test_mae_seconds"),
-                    "created": meta.provenance.created_at.isoformat(),
-                }
-            )
+    # one bad artifact never kills the listing: it is reported by _skip and left out
+    for meta in reg.list(strict=False, on_skip=_skip):
+        if family and meta.family != family:
+            continue
+        if source and meta.scope.source_id not in (None, source):
+            continue
+        if route and route not in meta.scope.route_ids:
+            continue
+        rows.append(
+            {
+                "artifact_id": meta.artifact_id,
+                "family": meta.family,
+                "scope": meta.scope.level.value,
+                "routes": meta.scope.route_ids,
+                "metric": meta.metrics.get("test_mae_seconds"),
+                "created": meta.provenance.created_at.isoformat(),
+            }
+        )
 
     if json_output:
         typer.echo(json.dumps(rows, indent=2))
@@ -89,7 +88,9 @@ def models_list(
 @app.command("card")
 def models_card(
     artifact_id: Optional[str] = typer.Argument(None, help="Artifact id (registry subdirectory name)."),
-    registry: Path = typer.Option(_DEFAULT_REGISTRY, "--registry", help="Artifact registry directory."),
+    registry: str = typer.Option(
+        str(_DEFAULT_REGISTRY), "--registry", help="Artifact registry: a directory, or mlflow+<tracking uri>."
+    ),
     json_output: bool = typer.Option(
         False, "--json", help="Print {'artifact_id', 'card_path', 'card'} as JSON instead of raw markdown."
     ),
@@ -108,15 +109,16 @@ def models_card(
         raise typer.Exit(2)
 
     require("stoptimes.models", "models")
-    from stoptimes.core.contracts.artifact import artifact_dir
+    from stoptimes.core.registry import open_registry
 
-    card_path = artifact_dir(registry, artifact_id) / "card.md"
-    if not card_path.exists():
+    reg = open_registry(registry)
+    card_path = f"{reg.describe(artifact_id)}/card.md"
+    text = reg.card(artifact_id)
+    if text is None:
         typer.secho(f"✗ no card.md for artifact {artifact_id!r} at {card_path}", fg="red", err=True)
         raise typer.Exit(1)
-    text = card_path.read_text(encoding="utf-8")
     if json_output:
-        typer.echo(json.dumps({"artifact_id": artifact_id, "card_path": str(card_path), "card": text}))
+        typer.echo(json.dumps({"artifact_id": artifact_id, "card_path": card_path, "card": text}))
         return
     typer.echo(text)
 

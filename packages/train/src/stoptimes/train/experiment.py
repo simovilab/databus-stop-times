@@ -23,11 +23,12 @@ from stoptimes.core.contracts.artifact import (
     ModelScope,
     Provenance,
     ScopeLevel,
-    artifact_dir,
     write_metadata,
 )
 from stoptimes.core.contracts.experiment import DataSelection, Experiment, SplitStrategy
 from stoptimes.core.features import registry as feature_registry
+from stoptimes.core.registry import ArtifactExistsError as _RegistryArtifactExistsError
+from stoptimes.core.registry import RegistryBackend, open_registry
 
 # Legacy datasets (stoptimes.models.common.data.ETADataset) carry the target
 # under this name; contracts.experiment.Experiment.target defaults to
@@ -42,7 +43,7 @@ HORIZON_BINS_S: tuple[float, ...] = (0, 60, 180, 360, 600, float("inf"))
 _ARTIFACT_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._=-]*$")
 
 
-class ArtifactExistsError(FileExistsError):
+class ArtifactExistsError(_RegistryArtifactExistsError):
     """Raised instead of silently overwriting an existing artifact directory."""
 
 
@@ -299,14 +300,13 @@ def run_experiment(
     from stoptimes.models.common.metrics import compute_all_metrics
     from stoptimes.models.common.provenance import git_sha, lib_versions
 
-    registry_root = Path(registry_dir) if registry_dir is not None else Path(experiment.outputs.registry_dir)
+    registry = open_registry(registry_dir if registry_dir is not None else experiment.outputs.registry_dir)
     artifact_id = _sanitize_artifact_id(experiment.name)
-    target_dir = artifact_dir(registry_root, artifact_id)
-    if target_dir.exists() and not overwrite:
+    if registry.exists(artifact_id) and not overwrite:
         # States the fact only: the remedy is spelled differently for a library
         # caller (`overwrite=True`, documented in this function's docstring) and
         # for a CLI user (`--overwrite`), so each caller adds its own.
-        raise ArtifactExistsError(f"artifact {artifact_id!r} already exists at {target_dir}")
+        raise ArtifactExistsError(f"artifact {artifact_id!r} already exists at {registry.describe(artifact_id)}")
 
     from stoptimes.train.live_experiment import locate_live_frame, run_live_experiment
 
@@ -395,39 +395,25 @@ def run_experiment(
         tags=list(experiment.outputs.tags),
     )
 
-    _write_artifact(fitted, meta, registry_root, target_dir, split_outcome.notes, baseline_metrics)
+    _write_artifact(fitted, meta, registry, split_outcome.notes, baseline_metrics, overwrite=overwrite)
     return meta
 
 
 def _write_artifact(
     model: Any,
     meta: ArtifactMetadata,
-    registry_root: Path,
-    target_dir: Path,
+    registry: RegistryBackend,
     split_notes: list[str],
     baseline_metrics: dict[str, dict[str, float]],
+    *,
+    overwrite: bool = False,
 ) -> None:
-    import shutil
-    import tempfile
-
-    registry_root.mkdir(parents=True, exist_ok=True)
-    tmp_dir = Path(tempfile.mkdtemp(dir=registry_root, prefix=f".train-{meta.artifact_id}-"))
-    try:
+    with registry.staged(meta.artifact_id, overwrite=overwrite) as tmp_dir:
         model.save(tmp_dir)
         write_metadata(meta, tmp_dir)
         (tmp_dir / "card.md").write_text(
             render_card(meta, baseline_metrics=baseline_metrics, notes=split_notes), encoding="utf-8"
         )
-
-        if target_dir.exists():
-            shutil.rmtree(target_dir)
-        target_dir.parent.mkdir(parents=True, exist_ok=True)
-        import os
-
-        os.rename(tmp_dir, target_dir)
-    except BaseException:
-        shutil.rmtree(tmp_dir, ignore_errors=True)
-        raise
 
 
 def render_card(

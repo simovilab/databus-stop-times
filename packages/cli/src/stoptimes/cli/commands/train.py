@@ -20,8 +20,10 @@ def train_run(
         dir_okay=False,
         help="experiment.yaml (stoptimes.core.contracts.experiment.Experiment).",
     ),
-    registry: Optional[Path] = typer.Option(
-        None, "--registry", help="Artifact registry directory. Defaults to the experiment's outputs.registry_dir."
+    registry: Optional[str] = typer.Option(
+        None,
+        "--registry",
+        help="Artifact registry: a directory, or mlflow+<tracking uri>. Defaults to the experiment's outputs.registry_dir.",
     ),
     dataset_dir: Optional[Path] = typer.Option(
         None,

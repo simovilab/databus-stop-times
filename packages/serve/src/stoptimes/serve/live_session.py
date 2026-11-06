@@ -175,7 +175,7 @@ class LiveSession:
     def from_artifact(
         cls,
         meta: Any,
-        registry_dir: Path | str,
+        registry_dir: Any,
         static: StaticTripSource,
         *,
         fallback_timezone: str | None = None,

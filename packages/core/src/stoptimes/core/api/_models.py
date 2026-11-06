@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Any
 
 import yaml
-from stoptimes.core.contracts.artifact import ArtifactMetadata, METADATA_FILENAME, artifact_dir, read_metadata
+from stoptimes.core.contracts.artifact import METADATA_FILENAME, artifact_dir, read_metadata
 
 __all__ = ["list_models", "model_card", "promote_model"]
 
@@ -22,7 +22,7 @@ _DEFAULT_REGISTRY = Path("artifacts/models")
 
 def list_models(
     *,
-    registry: str | Path = _DEFAULT_REGISTRY,
+    registry: Any = _DEFAULT_REGISTRY,
     source: str | None = None,
     route: str | None = None,
     family: str | None = None,
@@ -37,17 +37,10 @@ def list_models(
         >>> sorted(rows[0])  # doctest: +SKIP
         ['artifact_id', 'created', 'family', 'metric', 'routes', 'scope']
     """
-    registry = Path(registry)
+    from stoptimes.core.registry import open_registry
+
     rows: list[dict[str, Any]] = []
-    if not registry.exists():
-        return rows
-    for entry in sorted(registry.iterdir()):
-        if not (entry / METADATA_FILENAME).exists():
-            continue
-        try:
-            meta: ArtifactMetadata = read_metadata(entry)
-        except Exception:  # noqa: BLE001 - one bad artifact shouldn't kill the listing
-            continue
+    for meta in open_registry(registry).list(strict=False):
         if family and meta.family != family:
             continue
         if source and meta.scope.source_id not in (None, source):
@@ -67,7 +60,7 @@ def list_models(
     return rows
 
 
-def model_card(artifact_id: str, *, registry: str | Path = _DEFAULT_REGISTRY) -> str:
+def model_card(artifact_id: str, *, registry: Any = _DEFAULT_REGISTRY) -> str:
     """The raw markdown text of an artifact's model card.
 
     Equivalent to `stoptimes models card`.
@@ -75,10 +68,13 @@ def model_card(artifact_id: str, *, registry: str | Path = _DEFAULT_REGISTRY) ->
     Raises:
         FileNotFoundError: no `card.md` for `artifact_id` in `registry`.
     """
-    card_path = artifact_dir(Path(registry), artifact_id) / "card.md"
-    if not card_path.exists():
-        raise FileNotFoundError(f"no card.md for artifact {artifact_id!r} at {card_path}")
-    return card_path.read_text(encoding="utf-8")
+    from stoptimes.core.registry import open_registry
+
+    reg = open_registry(registry)
+    text = reg.card(artifact_id)
+    if text is None:
+        raise FileNotFoundError(f"no card.md for artifact {artifact_id!r} at {reg.describe(artifact_id)}/card.md")
+    return text
 
 
 def promote_model(

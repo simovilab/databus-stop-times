@@ -28,12 +28,12 @@ from stoptimes.core.contracts.artifact import (
     ModelFormat,
     artifact_dir,
     read_asset_bytes,
-    read_metadata,
     version_mismatches,
 )
 from stoptimes.core.contracts.model import Model, ModelRef, ModelRefKind
 from stoptimes.core.contracts.selection import SelectionPolicy, select_artifact
 from stoptimes.core.logging import get_logger
+from stoptimes.core.registry import RegistryLike, open_registry
 from stoptimes.models.common.provenance import lib_versions as _installed_lib_versions
 
 __all__ = [
@@ -334,7 +334,7 @@ ASSET_SEGMENT_STATS = "segment_stats"
 ASSET_ROUTE_VOCABULARY = "route_vocabulary"
 
 
-def check_artifact_assets(meta: ArtifactMetadata, registry_dir: Path | str) -> None:
+def check_artifact_assets(meta: ArtifactMetadata, registry_dir: RegistryLike) -> None:
     """Refuse an artifact whose assets are not exactly what was trained.
 
     Every declared asset must exist and match its recorded sha256, and every asset a declared
@@ -347,7 +347,7 @@ def check_artifact_assets(meta: ArtifactMetadata, registry_dir: Path | str) -> N
     if needed:
         detail = "; ".join(f"{n} ({', '.join(r)})" for n, r in sorted(needed.items()))
         raise ArtifactAssetError(f"artifact {meta.artifact_id!r} cannot serve its features: {detail}")
-    directory = artifact_dir(registry_dir, meta.artifact_id)
+    directory = artifact_dir(open_registry(registry_dir).local_root(meta), meta.artifact_id)
     for name, asset in sorted(meta.assets.items()):
         try:
             read_asset_bytes(directory, name, asset)
@@ -358,7 +358,7 @@ def check_artifact_assets(meta: ArtifactMetadata, registry_dir: Path | str) -> N
 _ALL_INPUTS = frozenset({"schedule", "trip_state", "identity", "clock"})
 
 
-def load_artifact_assets(meta: ArtifactMetadata, registry_dir: Path | str) -> "LiveAssets":
+def load_artifact_assets(meta: ArtifactMetadata, registry_dir: RegistryLike) -> "LiveAssets":
     """Load the artifact's `segment_stats` / `route_vocabulary` assets, hash-verified.
 
     Missing optional assets come back as ``None``; a declared asset that fails verification,
@@ -370,8 +370,9 @@ def load_artifact_assets(meta: ArtifactMetadata, registry_dir: Path | str) -> "L
     from stoptimes.core.features.live import LiveAssets
     from stoptimes.core.features.prior import SegmentStats
 
-    check_artifact_assets(meta, registry_dir)
-    directory = artifact_dir(registry_dir, meta.artifact_id)
+    root = open_registry(registry_dir).local_root(meta)
+    check_artifact_assets(meta, root)
+    directory = artifact_dir(root, meta.artifact_id)
     stats = vocabulary = None
     try:
         if ASSET_SEGMENT_STATS in meta.assets:
@@ -390,22 +391,17 @@ def load_artifact_assets(meta: ArtifactMetadata, registry_dir: Path | str) -> "L
 # ---------------------------------------------------------------------------
 
 
-def iter_registry_artifacts(registry_dir: Path | str) -> list[ArtifactMetadata]:
-    """Read every `<registry_dir>/<artifact_id>/artifact.json`, skipping
-    directories that don't have one (nothing is ranked from a pickle)."""
-    root = Path(registry_dir)
-    if not root.is_dir():
-        return []
-    metadatas: list[ArtifactMetadata] = []
-    for child in sorted(root.iterdir()):
-        meta_path = child / "artifact.json"
-        if meta_path.is_file():
-            metadatas.append(read_metadata(child))
-    return metadatas
+def iter_registry_artifacts(registry_dir: RegistryLike) -> list[ArtifactMetadata]:
+    """Every artifact's metadata in the registry (a directory, URI or `RegistryBackend`).
+
+    Entries without an `artifact.json` are skipped (nothing is ranked from a pickle); a malformed
+    `artifact.json` raises, so a broken registry is never served from silently.
+    """
+    return open_registry(registry_dir).list(strict=True)
 
 
 def resolve_artifact(
-    registry_dir: Path | str,
+    registry_dir: RegistryLike,
     *,
     source_id: str,
     policy: SelectionPolicy | None = None,
@@ -429,7 +425,7 @@ def resolve_artifact(
 
 def load_artifact_model(
     meta: ArtifactMetadata,
-    registry_dir: Path | str,
+    registry_dir: RegistryLike,
     *,
     allow_version_drift: bool | None = None,
     allow_unproducible_features: bool | None = None,
@@ -464,8 +460,9 @@ def load_artifact_model(
     """
     check_version_drift(meta, allow_override=allow_version_drift)
     check_feature_producibility(meta, allow_override=allow_unproducible_features)
-    check_artifact_assets(meta, registry_dir)
-    directory = artifact_dir(registry_dir, meta.artifact_id)
+    root = open_registry(registry_dir).local_root(meta)
+    check_artifact_assets(meta, root)
+    directory = artifact_dir(root, meta.artifact_id)
     if meta.format is ModelFormat.PICKLE:
         with open(directory / meta.model_filename, "rb") as fh:  # noqa: S301 - registry-owned artifact
             obj = pickle.load(fh)

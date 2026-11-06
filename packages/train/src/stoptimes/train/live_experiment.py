@@ -17,8 +17,6 @@ from __future__ import annotations
 
 import json
 import pickle
-import shutil
-import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -34,7 +32,6 @@ from stoptimes.core.contracts.artifact import (
     ModelScope,
     Provenance,
     ScopeLevel,
-    artifact_dir,
     sha256_hex,
     write_asset,
     write_metadata,
@@ -139,11 +136,12 @@ def run_live_experiment(
     from stoptimes.models.common.provenance import git_sha, lib_versions
     from stoptimes.train.experiment import ArtifactExistsError, _sanitize_artifact_id
 
-    registry_root = Path(registry_dir) if registry_dir is not None else Path(experiment.outputs.registry_dir)
+    from stoptimes.core.registry import open_registry
+
+    registry = open_registry(registry_dir if registry_dir is not None else experiment.outputs.registry_dir)
     artifact_id = _sanitize_artifact_id(experiment.name)
-    target_dir = artifact_dir(registry_root, artifact_id)
-    if target_dir.exists() and not overwrite:
-        raise ArtifactExistsError(f"artifact {artifact_id!r} already exists at {target_dir}")
+    if registry.exists(artifact_id) and not overwrite:
+        raise ArtifactExistsError(f"artifact {artifact_id!r} already exists at {registry.describe(artifact_id)}")
     if experiment.model.family not in ("xgboost", "xgb"):
         raise NotImplementedError(f"live frames train the 'xgboost' family, got {experiment.model.family!r}")
 
@@ -219,7 +217,7 @@ def run_live_experiment(
         "is fitted on all training days.",
         f"best iteration {model.best_iteration} of at most {_split_params(dict(experiment.model.params))[1]}.",
     ]
-    _write_live_artifact(model, meta, assets, registry_root, target_dir, notes)
+    _write_live_artifact(model, meta, assets, registry, notes, overwrite=overwrite)
     return meta
 
 
@@ -237,27 +235,17 @@ def _write_live_artifact(
     model: Any,
     meta: ArtifactMetadata,
     assets: dict[str, bytes],
-    registry_root: Path,
-    target_dir: Path,
+    registry: Any,
     notes: list[str],
+    *,
+    overwrite: bool = False,
 ) -> None:
-    import os
-
     from stoptimes.train.experiment import render_card
 
-    registry_root.mkdir(parents=True, exist_ok=True)
-    tmp_dir = Path(tempfile.mkdtemp(dir=registry_root, prefix=f".train-{meta.artifact_id}-"))
-    try:
+    with registry.staged(meta.artifact_id, overwrite=overwrite) as tmp_dir:
         with open(tmp_dir / meta.model_filename, "wb") as fh:
             pickle.dump(model, fh)
         for name, data in assets.items():
             write_asset(tmp_dir, meta.assets[name].file, data)
         write_metadata(meta, tmp_dir)
         (tmp_dir / "card.md").write_text(render_card(meta, baseline_metrics={}, notes=notes), encoding="utf-8")
-        if target_dir.exists():
-            shutil.rmtree(target_dir)
-        target_dir.parent.mkdir(parents=True, exist_ok=True)
-        os.rename(tmp_dir, target_dir)
-    except BaseException:
-        shutil.rmtree(tmp_dir, ignore_errors=True)
-        raise

@@ -144,10 +144,10 @@ def create_app(
         """Return the IDs of all registered predictors, then one `stoptimes:<artifact_id>`
         per artifact in the model registry (scanned per request, so a newly trained
         model appears without restarting the API)."""
-        from stoptimes.val.predictors.artifact import default_registry_dir, load_registry_candidates
+        from stoptimes.val.predictors.artifact import load_registry_candidates
 
         ids = list(PREDICTOR_REGISTRY.keys())
-        for meta in load_registry_candidates(default_registry_dir()):
+        for meta in load_registry_candidates(None):
             pid = f"stoptimes:{meta.artifact_id}"
             if pid not in ids:
                 ids.append(pid)
