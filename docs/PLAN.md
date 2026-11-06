@@ -3,7 +3,8 @@
 Status: **Phase 3 tracks merged; the clean-machine gate has been run and its findings fixed (2026-09-19)** —
 1526 passed, 20 skipped · next: Phase 4 (§7.4's serving feature-contract gap is closed)
 (note G4 now precedes G2a — see §8) ·
-branch `feat/stoptimes-scaffold`, not pushed (the account has read-only access to the remote) · last updated 2026-09-19 (serving target revised §7.2/G2; gate run and fix track merged §7.4)
+branch `feat/stoptimes-scaffold`, not pushed (the account has read-only access to the remote) · last updated 2026-11-06
+(§8.1 added: live features and agency-agnostic serving, F-tracks, from the 2026-11 MBTA study)
 
 This is the working plan for turning SIMOVI's ETA research code (`gtfs-eta`) and its
 validation tool (`etaval`) into **stoptimes**: a general toolkit that lets anyone with
@@ -573,6 +574,65 @@ Each step touching production needs the user's explicit go.
 - **G5 Freeze:** tag `gtfs-eta` and `etaval` (citation), update `CITATION.cff`, archive both repos with a pointer here.
 - **G6 Main:** replace `main` of `simovilab/databus-stop-times` with this branch (user decision).
 - Then delete `legacy/`.
+
+### 8.1 Live features and agency-agnostic serving (F-tracks, added 2026-11-06)
+
+**Why.** The 2026-11 MBTA study (83 train days, 14 held-out test days, ground truth = interpolated shape-distance
+arrivals, baseline = MBTA's own TripUpdates) found that a 19-feature XGBoost (`rs-xgb-servable-plus`) scores
+**95.5 s MAE vs MBTA's 118.1 s**, while the best model the package can serve today (`e2e-stop-xgb`: distance,
+stops ahead, clock) scores 211.8 s and loses at every horizon. The gap is seven features the serving path cannot
+compute. Reference code (behavioral spec, never imported): `docs/research/mbta-2026-11/reference/`.
+
+**Target user.** Anyone with GTFS static + a GTFS-RT **VehiclePositions** feed whose `trip_id`s match the static
+feed. A TripUpdates feed is optional and only ever a *comparison baseline* in `val`, never a model input.
+
+**The seven features, by what they need at inference time:**
+
+| Feature | Needs | Definition (t = prediction time, ping = latest position ≤ t, j = target stop) |
+|---|---|---|
+| `route_i` → `route_code` | artifact vocabulary | index of `route_id` in the training vocabulary; unseen → missing (replaces MBTA's int-cast route ids) |
+| `stop_sequence` | identity | already producible |
+| `delay_now` | schedule | `ping_ts − sched(progress)`; `sched(·)` = scheduled time interpolated over stop progress (cummax) |
+| `sched_rem` | schedule | `sched(j) − sched(progress)` |
+| `sched_rem_t` | schedule | `sched(j) − t` |
+| `delay_last` | trip state | `a(k) − sched(k)` for the last passed stop k with an arrival detected at or before the ping |
+| `prior_rem` | fitted asset | median segment times from the vehicle to j, summed along the path, hour re-evaluated at `t + eta` |
+
+Schedule times are anchored per GTFS (service date's noon − 12 h in the agency timezone; times ≥ 24:00 allowed);
+timezone from `agency.txt`, config as fallback. No hard-coded timezone or service-day boundary anywhere.
+
+**How a live tick works** (serve and `val` identically): match the ping (forward-only along the trip's shape) →
+update that trip's state (append ping; detect stops crossed since the last ping by linear interpolation, rejected
+when the bracketing gap > 60 s; record arrival and its detection time) → compute features per downstream stop from
+clock + schedule + trip state + artifact assets → predict. The only cross-tick memory is per-trip state; the only
+things shipped from training are the model, the segment-statistics table and the route vocabulary.
+
+**Tracks.** F1–F3 are pure `core` modules with no cross-track edits, run in parallel; F4 integrates them; F5 proves generality.
+
+- **F1 schedule** (owns `core/gtfs/static.py` additions, new `core/features/schedule.py` + tests): per-trip scheduled
+  arrival epochs per stop with GTFS anchoring; pure functions for `delay_now`, `sched_rem`, `sched_rem_t`.
+- **F2 assets** (owns new `core/features/prior.py`, `core/features/identity.py` + tests): segment statistics
+  (fit, out-of-fold fit by day for training rows, hierarchical fallback, lookup, path-sum `prior_rem`), a
+  deterministic on-disk format with a content hash; `RouteVocabulary`.
+- **F3 trip state** (owns new `core/features/trip_state.py` + tests): `TripStateStore` protocol + in-memory default
+  (expiry at trip end / TTL); forward-only online progress tracker (off-route > 100 m ignored, back-jitter 60 m);
+  online arrival detection with detection time; `delay_last`; behavior from a cold start (state begins mid-trip)
+  is explicit, so training can simulate it.
+- **F4 integration** (after F1–F3; owns `core/features/registry.py`, `serve/pipeline.py`, `serve/model_loading.py`,
+  `core/contracts/artifact.py`, `train/frame.py`, `val/predictors/artifact.py`):
+  - register the features with input tags (`schedule`, `trip_state`, `asset`), so a refusal names the missing input, not just the column;
+  - one feature-assembly function used by training and serving;
+  - artifact sidecar assets;
+  - a parity test between the offline frame and a tick-by-tick replay;
+  - a stateful `val` artifact predictor that never reads `val`'s ground-truth detectors.
+  **Gate:** replaying the 14 study test days through `stoptimes val replay` puts the servable-plus artifact within
+  ~2 s of 95.5 s MAE; a live `stoptimes val run --predictors mbta,stoptimes:<artifact>` beats MBTA over a day.
+- **F5 generality** (= G1, extended): only GTFS static + VehiclePositions configured; agency strings out of
+  `packages/`; `diagnose` reports ping cadence and trip-id match rate; record → train → val on a second public agency.
+- **Later:** own-trip segment ratios, kinematics, leader/cross-vehicle features (study: about 2–3 s more together);
+  a Redis `TripStateStore` for databus (G2b).
+
+Product guidance from the study's size ablation: 7 recorded days already beat MBTA; the gain stops at about 30 days.
 
 ## 9. Phase 5 — Ecosystem (optional, parallel)
 
