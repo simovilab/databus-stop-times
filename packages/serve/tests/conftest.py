@@ -18,3 +18,14 @@ _FIXTURES_DIR = Path(__file__).parent / "fixtures"
 @pytest.fixture(autouse=True)
 def _default_dataset_dir(monkeypatch):
     monkeypatch.setenv("STOPTIMES_DATASET_DIR", str(_FIXTURES_DIR))
+
+
+@pytest.fixture(scope="session")
+def kit():
+    """The synthetic live-serving kit (`livekit.py`), loaded by path (this directory is not a package)."""
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location("serve_livekit", Path(__file__).parent / "livekit.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module

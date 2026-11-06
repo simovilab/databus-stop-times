@@ -527,12 +527,20 @@ def test_live_features_pass_when_inputs_and_assets_are_available(tmp_path):
     check_feature_producibility(meta, available_inputs=ALL_LIVE_INPUTS)  # must not raise
 
 
-def test_live_features_are_refused_by_default_until_the_pipeline_supplies_inputs(tmp_path, monkeypatch):
+def test_live_artifact_loads_by_default_now_that_the_pipeline_supplies_inputs(tmp_path, monkeypatch):
+    from stoptimes.serve.pipeline import SERVING_INPUTS
+
+    monkeypatch.delenv(ALLOW_UNPRODUCIBLE_FEATURES_ENV, raising=False)
+    assert SERVING_INPUTS == ALL_LIVE_INPUTS
+    meta = _write_live_artifact(tmp_path)
+    assert load_artifact_model(meta, tmp_path).family == "fake"  # no override env var
+
+
+def test_live_features_are_refused_when_the_caller_supplies_no_inputs(tmp_path, monkeypatch):
     monkeypatch.delenv(ALLOW_UNPRODUCIBLE_FEATURES_ENV, raising=False)
     meta = _write_live_artifact(tmp_path)
     with pytest.raises(UnproducibleFeaturesError, match="needs static schedule"):
-        load_artifact_model(meta, tmp_path)
-    assert load_artifact_model(meta, tmp_path, allow_unproducible_features=True).family == "fake"
+        check_feature_producibility(meta, available_inputs=frozenset())
 
 
 def test_missing_asset_is_a_refusal_even_when_inputs_exist():

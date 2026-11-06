@@ -48,12 +48,14 @@ from __future__ import annotations
 
 import importlib
 import importlib.util
+import logging
 import sys
 from dataclasses import dataclass, field
 from datetime import timedelta
 from pathlib import Path
 from typing import Any, Callable, Sequence
 
+import numpy as np
 import pandas as pd
 
 from stoptimes.core.contracts.data import Observation, ObservationKind
@@ -81,6 +83,7 @@ __all__ = [
     "load_pipeline",
     "producible_features",
     "unproducible_registered_features",
+    "SERVING_INPUTS",
 ]
 
 # ---------------------------------------------------------------------------
@@ -100,6 +103,21 @@ MATCH_SPATIAL_COLUMNS: frozenset[str] = frozenset({"distance_to_stop", "stops_ah
 (`vp_lat`, `shape_progress`, `current_speed_kmh`, ...) describes geometry
 only `train.datasets.dataset_builder` computes from an archived, densely
 sampled trip -- this pipeline has no live source for it."""
+
+
+SERVING_INPUTS: frozenset[str] = frozenset({"schedule", "trip_state", "identity", "clock"})
+"""The `core.features.registry` live-feature inputs this pipeline really supplies when a
+`serve.live_session.LiveSession` is configured (`PipelineContext.config["live_session"]`):
+
+- ``schedule`` -- scheduled stop times from the GTFS static feed, anchored on the trip's service date;
+- ``trip_state`` -- the per-vehicle ping history the session keeps across ticks (VehiclePositions);
+- ``identity`` -- trip/route/stop ids (route vocabulary comes from the artifact asset);
+- ``clock`` -- the agency-timezone clock, from the *artifact's* timezone and holiday region.
+
+``serve.model_loading.check_feature_producibility`` reads this name. The CLI refuses a live artifact
+when it cannot build a session (no static feed); a custom pipeline that never configures a session
+gets a per-run error from `default_match` instead of silent NaNs.
+"""
 
 
 def producible_features() -> frozenset[str]:
@@ -215,43 +233,94 @@ class StoptimesPipeline:
 # ---------------------------------------------------------------------------
 
 
-def default_ingest(_payload: Any, ctx: PipelineContext) -> list[Observation]:
-    """Produce `Observation`s for this run.
-
-    Test/offline entry point: `ctx.config["observations"]` is used verbatim
-    when present. Otherwise polls the source's JSON trip_updates feed (the
-    only kind default `predict` below can use, since it needs a stop
-    already identified) with httpx. Protobuf feeds are decoded to the same
-    dict shape via `google.protobuf.json_format.MessageToDict` first.
-    """
-    injected = ctx.config.get("observations")
-    if injected is not None:
-        return list(injected)
-
-    from stoptimes.core.contracts.source import FeedFormat, FeedKind
-
-    source = ctx.source
-    tu_feed = next((f for f in getattr(source, "realtime_feeds", []) if f.kind == FeedKind.TRIP_UPDATES), None)
-    if tu_feed is None:
-        return []
-
+def _fetch_feed(feed: Any) -> dict[str, Any]:
+    """GET one realtime feed and return it as the JSON-shaped dict `core.realtime.gtfsrt_json` parses
+    (protobuf feeds are decoded with `MessageToDict` first)."""
     import httpx
 
-    from stoptimes.core.realtime.gtfsrt_json import parse_tu_feed
+    from stoptimes.core.contracts.source import FeedFormat
 
-    response = httpx.get(tu_feed.url, headers=dict(tu_feed.headers), timeout=10.0)
+    response = httpx.get(feed.url, headers=dict(feed.headers), timeout=10.0)
     response.raise_for_status()
-    if tu_feed.format == FeedFormat.PROTOBUF:
+    if feed.format == FeedFormat.PROTOBUF:
         from google.protobuf import json_format
         from google.transit import gtfs_realtime_pb2
 
         message = gtfs_realtime_pb2.FeedMessage()
         message.ParseFromString(response.content)
-        feed = json_format.MessageToDict(message, preserving_proto_field_name=True)
-    else:
-        feed = response.json()
+        return json_format.MessageToDict(message, preserving_proto_field_name=True)
+    return response.json()
 
-    _header_ts, records = parse_tu_feed(feed)
+
+def _ingest_vehicle_positions(ctx: PipelineContext, feed: Any) -> list[Observation]:
+    """One `vehicle_position` Observation per vehicle entity of a VehiclePositions feed."""
+    from stoptimes.core.realtime.gtfsrt_json import parse_vp_feed
+
+    _header_ts, records = parse_vp_feed(_fetch_feed(feed))
+    observations: list[Observation] = []
+    for record in records:
+        state = record.state
+        observations.append(
+            Observation(
+                kind=ObservationKind.VEHICLE_POSITION,
+                source_id=ctx.source.id,
+                trip_id=record.trip_id,
+                route_id=record.route_id or None,
+                direction_id=record.direction_id,
+                start_date=record.start_date,
+                vehicle_id=record.vehicle_id or None,
+                ts=pd.Timestamp(state.epoch, unit="s", tz="UTC"),
+                lat=state.lat,
+                lon=state.lon,
+                speed=state.speed,
+                current_status=state.current_status,
+                current_stop_sequence=state.current_stop_sequence,
+            )
+        )
+    return observations
+
+
+def default_ingest(_payload: Any, ctx: PipelineContext) -> list[Observation]:
+    """Produce `Observation`s for this run.
+
+    Test/offline entry point: `ctx.config["observations"]` is used verbatim
+    when present. Otherwise polls the source's JSON/protobuf feeds with httpx:
+
+    - with a live-feature session configured (`ctx.config["live_session"]`, a model whose
+      features need vehicle state): the **VehiclePositions** feed -- the only live input;
+      a TripUpdates feed, if the agency has one, is never a model input;
+    - otherwise the **TripUpdates** feed (the only kind the stop-wise default `predict` can
+      use without vehicle state, since it needs a stop already identified).
+
+    Protobuf feeds are decoded to the same dict shape via
+    `google.protobuf.json_format.MessageToDict` first.
+    """
+    injected = ctx.config.get("observations")
+    if injected is not None:
+        return list(injected)
+
+    from stoptimes.core.contracts.source import FeedKind
+
+    source = ctx.source
+    if ctx.config.get("live_session") is not None:
+        vp_feed = next((f for f in getattr(source, "realtime_feeds", []) if f.kind == FeedKind.VEHICLE_POSITIONS), None)
+        if vp_feed is None:
+            record_error(
+                ctx,
+                stage="ingest",
+                trip_id=None,
+                error=RuntimeError("the artifact needs vehicle positions but the source has no vehicle_positions feed"),
+            )
+            return []
+        return _ingest_vehicle_positions(ctx, vp_feed)
+
+    tu_feed = next((f for f in getattr(source, "realtime_feeds", []) if f.kind == FeedKind.TRIP_UPDATES), None)
+    if tu_feed is None:
+        return []
+
+    from stoptimes.core.realtime.gtfsrt_json import parse_tu_feed
+
+    _header_ts, records = parse_tu_feed(_fetch_feed(tu_feed))
     observations: list[Observation] = []
     for record in records:
         for stu in record.stop_time_updates:
@@ -459,6 +528,92 @@ def _match_vehicle_position(
     return matched
 
 
+def _needs_live_session(model: Any) -> bool:
+    from stoptimes.serve.live_session import needs_live_session
+
+    return needs_live_session(list(getattr(model, "required_features", ())))
+
+
+LIVE_KEY = "_live_key"
+"""`MatchedObservation.extra` entry naming the session vehicle-trip a live row belongs to."""
+
+
+def _match_live(observations: list[Observation], ctx: PipelineContext, session: Any) -> list[MatchedObservation]:
+    """Live match: feed pings to the run's session, then one row per downstream stop of every fresh vehicle.
+
+    The session (not this stage) owns the per-trip state, so it survives across ticks. Pings are fed in
+    timestamp order; `t` is the tick instant `ctx.now`. A vehicle whose newest valid ping is more than
+    the session's `max_ping_age_s` older than `t` is skipped (the training-time staleness bound).
+    """
+    import numpy as np
+
+    from stoptimes.core.features.trip_state import Ping
+    from stoptimes.serve.live_session import LiveSessionError
+
+    t = ctx.now.timestamp()
+    vps = [o for o in observations if o.kind == ObservationKind.VEHICLE_POSITION and o.ts is not None]
+    vps.sort(key=lambda o: o.ts)
+    failed: set[str] = set()
+    for obs in vps:
+        if obs.lat is None or obs.lon is None or obs.trip_id in failed:
+            continue
+        ping = Ping(
+            epoch=obs.ts.timestamp(),
+            lat=float(obs.lat),
+            lon=float(obs.lon),
+            speed=obs.speed,
+            status=obs.current_status,
+            current_stop_sequence=obs.current_stop_sequence,
+        )
+        try:
+            session.observe(obs.trip_id, obs.route_id, obs.start_date, obs.vehicle_id, ping)
+        except LiveSessionError as exc:
+            failed.add(obs.trip_id)
+            record_error(ctx, stage="match", trip_id=obs.trip_id, error=exc)
+    session.evict(t)
+
+    matched: list[MatchedObservation] = []
+    fresh = session.fresh_keys(t)
+    for key in fresh:
+        slot = session.fresh_slot(key, t)
+        if slot is None:
+            continue
+        ctx_trip = slot.ctx
+        sprog = np.asarray(ctx_trip.stop_progress_m, dtype=float)
+        j0 = int(np.searchsorted(sprog, slot.progress_m, side="right"))
+        observation = Observation(
+            kind=ObservationKind.VEHICLE_POSITION,
+            source_id=ctx.source.id,
+            trip_id=ctx_trip.trip_id,
+            route_id=ctx_trip.route_id,
+            start_date=ctx_trip.service_date,
+            vehicle_id=slot.vehicle_id or None,
+            ts=pd.Timestamp(slot.ping_epoch, unit="s", tz="UTC"),
+            lat=slot.lat,
+            lon=slot.lon,
+        )
+        for j in range(j0, ctx_trip.n_stops):
+            matched.append(
+                MatchedObservation(
+                    trip_id=ctx_trip.trip_id,
+                    route_id=ctx_trip.route_id,
+                    direction_id=None,
+                    start_date=ctx_trip.service_date,
+                    vehicle_id=slot.vehicle_id or None,
+                    stop_id=ctx_trip.stop_ids[j],
+                    stop_sequence=ctx_trip.stop_sequences[j],
+                    observation=observation,
+                    extra={
+                        "distance_to_stop": float(sprog[j] - slot.progress_m),
+                        "stops_ahead": float(j - j0),
+                        LIVE_KEY: key,
+                    },
+                )
+            )
+    ctx.state["stale_vehicles_skipped"] = session.n_tracked() - len(fresh)
+    return matched
+
+
 def default_match(observations: list[Observation], ctx: PipelineContext) -> list[MatchedObservation]:
     """Match every observation against the source's static feed.
 
@@ -470,6 +625,21 @@ def default_match(observations: list[Observation], ctx: PipelineContext) -> list
     per-item error) when no static geometry can be resolved at all -- see
     `_load_static_geometry`.
     """
+    session = ctx.config.get("live_session")
+    if session is not None:
+        return _match_live(observations, ctx, session)
+    if ctx.model is not None and _needs_live_session(ctx.model):
+        record_error(
+            ctx,
+            stage="match",
+            trip_id=None,
+            error=RuntimeError(
+                "the model needs live features (schedule / vehicle state) but no live session is "
+                "configured: pass PipelineContext.config['live_session'] "
+                "(stoptimes.serve.live_session.LiveSession.from_artifact) and keep it across ticks"
+            ),
+        )
+        return []
     geometry = _load_static_geometry(ctx)
     matched: list[MatchedObservation] = []
     for obs in observations:
@@ -499,6 +669,10 @@ def default_features(matched: list[MatchedObservation], ctx: PipelineContext) ->
     """
     from stoptimes.core.features.registry import build as build_registry_features
     from stoptimes.core.features.registry import list_features as list_registry_features
+
+    live_keys = list(dict.fromkeys(m.extra[LIVE_KEY] for m in matched if LIVE_KEY in m.extra))
+    if live_keys:
+        return _live_features(live_keys, ctx)
 
     holiday_region = getattr(ctx.source, "holiday_region", None)
     timezone = getattr(ctx.source, "timezone", "UTC")
@@ -532,6 +706,32 @@ def default_features(matched: list[MatchedObservation], ctx: PipelineContext) ->
     return frame.drop(columns=["_ts"])
 
 
+def _live_features(keys: list[Any], ctx: PipelineContext) -> pd.DataFrame:
+    """Live feature rows for the vehicles `match` selected: `core.features.live.assemble_live_features`
+    at the tick instant, with the identity columns `default_predict` reads. Timezone, holiday region
+    and assets are the artifact's (held by the session), not the serving source's."""
+    session = ctx.config["live_session"]
+    frame = session.assemble(keys, ctx.now.timestamp())
+    if frame.empty:
+        return frame
+    frame = frame.copy()
+    frame["direction_id"] = None
+    frame["stop_sequence"] = frame["stop_sequence_id"].astype(int)
+    frame.attrs["batch_predict"] = True
+    return frame
+
+
+def _predict_batch(features: pd.DataFrame, model: Any, required: list[str]) -> np.ndarray | None:
+    """One `model.predict` over every row, or `None` when the batch cannot be formed or fails
+    (the caller then falls back to the per-row path that contains errors row by row)."""
+    try:
+        values = np.asarray(model.predict(features[required].astype(float)), dtype=float).reshape(-1)
+    except Exception as exc:  # noqa: BLE001 - fall back to per-row so one bad row is dropped, not all
+        logging.getLogger(__name__).debug("batched predict failed (%s); falling back to per-row", exc)
+        return None
+    return values if values.shape[0] == len(features) else None
+
+
 def default_predict(features: pd.DataFrame, ctx: PipelineContext) -> list[StopTimePrediction]:
     """Call `ctx.model.predict` one row at a time so one bad row is dropped,
     not fatal, and produce `StopTimePrediction`s.
@@ -552,11 +752,16 @@ def default_predict(features: pd.DataFrame, ctx: PipelineContext) -> list[StopTi
     model_id = getattr(model, "family", getattr(model, "artifact_id", "unknown"))
     artifact_id = getattr(model, "artifact_id", None)
 
-    for _, row in features.iterrows():
+    batch = _predict_batch(features, model, required) if features.attrs.get("batch_predict") else None
+
+    for i, (_, row) in enumerate(features.iterrows()):
         trip_id = row.get("trip_id")
         try:
-            X = pd.DataFrame([{name: row.get(name) for name in required}])
-            horizon_s = float(model.predict(X)[0])
+            if batch is not None:
+                horizon_s = float(batch[i])
+            else:
+                X = pd.DataFrame([{name: row.get(name) for name in required}])
+                horizon_s = float(model.predict(X)[0])
             predictions.append(
                 StopTimePrediction(
                     trip_id=trip_id,
