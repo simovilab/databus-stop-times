@@ -108,7 +108,6 @@ def test_build_blank_times_interpolated_by_index():
         ["08:00:00", "", "", "08:09:00"],
         ["08:00:00", "", "", "08:09:00"],
     )
-    assert sched.offsets_s == (28800.0, 29160.0, 29520.0, 29340.0 + 0.0 + 0.0) or True
     assert sched.offsets_s[1:3] == pytest.approx((28800 + 180, 28800 + 360))
     assert sched.interpolated == (False, True, True, False)
 
