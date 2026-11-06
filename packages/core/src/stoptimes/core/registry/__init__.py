@@ -9,6 +9,7 @@
 from __future__ import annotations
 
 import os
+import threading
 from pathlib import Path
 from typing import TypeAlias
 
@@ -40,7 +41,8 @@ def open_registry(spec: RegistryLike | None = None) -> RegistryBackend:
     - a `RegistryBackend` is returned as is;
     - `None`: `$STOPTIMES_REGISTRY` if set, else `core.config`'s `model_registry_dir`
       (which honors `STOPTIMES_MODEL_REGISTRY_DIR`);
-    - `"mlflow+<tracking uri>"`: the MLflow backend (not available yet);
+    - `"mlflow+<tracking uri>"`: the MLflow backend (`stoptimes-core[mlflow]`), one shared instance
+      per URI;
     - anything else is a directory path.
     """
     if isinstance(spec, RegistryBackend) and not isinstance(spec, (str, Path)):
@@ -54,8 +56,22 @@ def open_registry(spec: RegistryLike | None = None) -> RegistryBackend:
 
             return FilesystemRegistry(get_config().model_registry_dir)
     if isinstance(spec, str) and spec.startswith(MLFLOW_SCHEME):
-        raise RegistryError(
-            f"registry {spec!r}: the MLflow backend is not available in this version "
-            "(docs/MLFLOW_INTEGRATION.md §0, track M2)"
-        )
+        return _mlflow_registry(spec[len(MLFLOW_SCHEME) :])
     return FilesystemRegistry(spec)
+
+
+_MLFLOW_REGISTRIES: dict[str, RegistryBackend] = {}
+_MLFLOW_LOCK = threading.Lock()
+
+
+def _mlflow_registry(tracking_uri: str) -> RegistryBackend:
+    """One `MlflowRegistry` per tracking URI per process, so its listing cache and downloads are shared."""
+    if not tracking_uri:
+        raise RegistryError("registry 'mlflow+': missing tracking URI, e.g. mlflow+https://ml.example.org")
+    with _MLFLOW_LOCK:
+        registry = _MLFLOW_REGISTRIES.get(tracking_uri)
+        if registry is None:
+            from stoptimes.core.registry.mlflow_backend import MlflowRegistry
+
+            registry = _MLFLOW_REGISTRIES[tracking_uri] = MlflowRegistry(tracking_uri)
+        return registry

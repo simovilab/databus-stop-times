@@ -19,6 +19,8 @@ dependencies = [
 pb = ["gtfs-realtime-bindings>=1.0.0"]
 # Reading and writing archive parquet.
 parquet = ["pyarrow>=16.0"]
+# The MLflow model-registry backend (STOPTIMES_REGISTRY=mlflow+<uri>): client only, no server.
+mlflow = ["mlflow-skinny>=3.4,<4"]
 
 [build-system]
 requires = ["hatchling"]

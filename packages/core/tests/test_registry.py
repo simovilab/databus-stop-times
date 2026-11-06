@@ -46,10 +46,27 @@ def _publish(registry: RegistryBackend, meta: ArtifactMetadata, *, card: str | N
             (tmp / "card.md").write_text(card, encoding="utf-8")
 
 
-@pytest.fixture(params=["filesystem"])
-def backend(request, tmp_path: Path) -> RegistryBackend:
+def mlflow_registry(tmp_path: Path, monkeypatch, **kwargs):
+    """An `MlflowRegistry` on a throwaway local sqlite store: no server, no network."""
+    pytest.importorskip("mlflow")
+    monkeypatch.setenv("MLFLOW_DISABLE_TELEMETRY", "true")
+    from stoptimes.core.registry.mlflow_backend import MlflowRegistry
+
+    return MlflowRegistry(
+        f"sqlite:///{tmp_path / 'mlflow.db'}",
+        artifact_location=str(tmp_path / "mlartifacts"),
+        cache_dir=tmp_path / "cache",
+        list_ttl_s=kwargs.pop("list_ttl_s", 0.0),
+        **kwargs,
+    )
+
+
+@pytest.fixture(params=["filesystem", "mlflow"])
+def backend(request, tmp_path: Path, monkeypatch) -> RegistryBackend:
     if request.param == "filesystem":
         return FilesystemRegistry(tmp_path / "registry")
+    if request.param == "mlflow":
+        return mlflow_registry(tmp_path, monkeypatch)
     raise AssertionError(request.param)
 
 
@@ -169,6 +186,141 @@ class TestOpenRegistry:
             monkeypatch.delenv("STOPTIMES_MODEL_REGISTRY_DIR")
             reset_config()
 
-    def test_mlflow_uri_is_refused_until_the_backend_exists(self):
-        with pytest.raises(RegistryError, match="MLflow"):
-            open_registry("mlflow+https://ml.example.org")
+    def test_mlflow_uri_opens_one_shared_mlflow_backend(self):
+        pytest.importorskip("mlflow")
+        from stoptimes.core.registry.mlflow_backend import MlflowRegistry
+
+        reg = open_registry("mlflow+https://ml.example.org")
+        assert isinstance(reg, MlflowRegistry)
+        assert reg.tracking_uri == "https://ml.example.org"
+        assert reg.uri == "mlflow+https://ml.example.org"
+        assert open_registry("mlflow+https://ml.example.org") is reg  # cache and downloads shared
+
+    def test_mlflow_uri_needs_a_tracking_uri(self):
+        with pytest.raises(RegistryError, match="missing tracking URI"):
+            open_registry("mlflow+")
+
+
+class TestMlflow:
+    def test_versions_live_in_one_registered_model_per_agency(self, tmp_path, monkeypatch):
+        reg = mlflow_registry(tmp_path, monkeypatch)
+        _publish(reg, _meta("a", scope={"source_id": "mbta"}))
+        _publish(reg, _meta("b"))  # no source -> the global model
+        assert [(v.name, v.version, v.artifact_id) for v in reg.versions()] == [
+            ("stoptimes-global", 1, "b"),
+            ("stoptimes-mbta", 1, "a"),
+        ]
+
+    def test_version_tags_carry_selection_fields(self, tmp_path, monkeypatch):
+        reg = mlflow_registry(tmp_path, monkeypatch)
+        meta = _meta(scope={"source_id": "mbta"}, metrics={"test_mae_seconds": 95.6})
+        _publish(reg, meta)
+        mv = reg._client().get_model_version("stoptimes-mbta", "1")
+        assert mv.tags["stoptimes.artifact_id"] == "xgb-live"
+        assert mv.tags["stoptimes.source_id"] == "mbta"
+        assert mv.tags["stoptimes.test_mae_s"] == "95.600"
+        assert mv.run_id  # every publish records a run
+
+    def test_overwrite_adds_a_version_and_latest_wins(self, tmp_path, monkeypatch):
+        reg = mlflow_registry(tmp_path, monkeypatch)
+        _publish(reg, _meta(params={"v": 1}))
+        _publish(reg, _meta(params={"v": 2}), overwrite=True)
+        assert [v.version for v in reg.versions()] == [1, 2]
+        assert reg.get("xgb-live").params == {"v": 2}
+        assert reg.get_version("stoptimes-global", 1).meta.params == {"v": 1}
+
+    def test_old_version_downloads_its_own_files(self, tmp_path, monkeypatch):
+        reg = mlflow_registry(tmp_path, monkeypatch)
+        _publish(reg, _meta(params={"v": 1}))
+        _publish(reg, _meta(params={"v": 2}), overwrite=True)
+        old = reg.get_version("stoptimes-global", 1).meta
+        root = reg.local_root(old)
+        from stoptimes.core.contracts.artifact import read_metadata
+
+        assert read_metadata(artifact_dir(root, "xgb-live")).params == {"v": 1}
+
+    def test_aliases_resolve_and_move(self, tmp_path, monkeypatch):
+        reg = mlflow_registry(tmp_path, monkeypatch)
+        _publish(reg, _meta(params={"v": 1}))
+        _publish(reg, _meta(params={"v": 2}), overwrite=True)
+        reg.set_alias("stoptimes-global", "production", 1)
+        assert reg.resolve("stoptimes-global@production").meta.params == {"v": 1}
+        assert reg.resolve("stoptimes-global/2").meta.params == {"v": 2}
+        assert reg.resolve("xgb-live").version == 2
+        assert {v.version: v.aliases for v in reg.versions()} == {1: ("production",), 2: ()}
+        reg.set_alias("stoptimes-global", "production", 2)  # promote; moving it back is the rollback
+        assert reg.resolve("stoptimes-global@production").version == 2
+        reg.delete_alias("stoptimes-global", "production")
+        with pytest.raises(RegistryError):
+            reg.resolve("stoptimes-global@production")
+
+    def test_download_is_cached(self, tmp_path, monkeypatch):
+        reg = mlflow_registry(tmp_path, monkeypatch)
+        meta = _meta()
+        _publish(reg, meta)
+        first = reg.local_root(meta)
+        import mlflow
+
+        def boom(*a, **k):
+            raise AssertionError("downloaded twice")
+
+        monkeypatch.setattr(mlflow.artifacts, "download_artifacts", boom)
+        assert reg.local_root(meta) == first
+
+    def test_metadata_too_big_for_a_tag_is_fetched_from_the_files(self, tmp_path, monkeypatch):
+        import stoptimes.core.registry.mlflow_backend as backend_mod
+
+        monkeypatch.setattr(backend_mod, "MAX_TAG_VALUE", 10)
+        reg = mlflow_registry(tmp_path, monkeypatch)
+        meta = _meta()
+        _publish(reg, meta)
+        mv = reg._client().get_model_version("stoptimes-global", "1")
+        assert "stoptimes.metadata" not in mv.tags
+        assert reg.get("xgb-live") == meta
+
+    def test_foreign_model_versions_are_ignored(self, tmp_path, monkeypatch):
+        reg = mlflow_registry(tmp_path, monkeypatch)
+        _publish(reg, _meta())
+        client = reg._client()
+        client.create_registered_model("stoptimes-other")  # matches the prefix, not a stoptimes artifact
+        assert [m.artifact_id for m in reg.list()] == ["xgb-live"]
+
+    def test_listing_is_cached_for_the_ttl(self, tmp_path, monkeypatch):
+        reg = mlflow_registry(tmp_path, monkeypatch, list_ttl_s=3600)
+        assert reg.list() == []
+        calls = []
+        real = reg._search
+        monkeypatch.setattr(reg, "_search", lambda **kw: calls.append(kw) or real(**kw))
+        assert reg.list() == []
+        assert calls == []  # served from the cache
+        _publish(reg, _meta())  # a publish invalidates it
+        assert [m.artifact_id for m in reg.list()] == ["xgb-live"]
+
+    def test_publish_restores_mlflow_global_uris(self, tmp_path, monkeypatch):
+        import mlflow
+
+        reg = mlflow_registry(tmp_path, monkeypatch)
+        before = (mlflow.get_tracking_uri(), mlflow.get_registry_uri())
+        _publish(reg, _meta())
+        assert (mlflow.get_tracking_uri(), mlflow.get_registry_uri()) == before
+
+    def test_pyfunc_predicts_on_a_feature_frame(self, tmp_path, monkeypatch):
+        import pickle
+
+        import mlflow
+        import pandas as pd
+
+        reg = mlflow_registry(tmp_path, monkeypatch)
+        meta = _meta(features=["distance_to_stop"])
+        with reg.staged(meta.artifact_id) as tmp:
+            write_metadata(meta, tmp)
+            (tmp / "model.pkl").write_bytes(pickle.dumps(_Doubler()))
+        root = reg.local_root(meta)  # the version's files, as MLflow stored them
+        model = mlflow.pyfunc.load_model(str(root.parent))
+        frame = pd.DataFrame({"distance_to_stop": [1.0, 2.5], "ignored": [0, 0]})
+        assert list(model.predict(frame)) == [2.0, 5.0]
+
+
+class _Doubler:
+    def predict(self, frame):
+        return frame["distance_to_stop"].to_numpy() * 2
