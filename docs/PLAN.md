@@ -4,7 +4,7 @@ Status: **Phase 3 tracks merged; the clean-machine gate has been run and its fin
 1526 passed, 20 skipped · next: Phase 4 (§7.4's serving feature-contract gap is closed)
 (note G4 now precedes G2a — see §8) ·
 branch `feat/stoptimes-scaffold`, not pushed (the account has read-only access to the remote) · last updated 2026-11-06
-(§8.1 added: live features and agency-agnostic serving, F-tracks, from the 2026-11 MBTA study)
+(§8.1 F1–F4 merged: live features served and validated; gate passed, 95.6 s vs MBTA 118.1 s; next F5 generality)
 
 This is the working plan for turning SIMOVI's ETA research code (`gtfs-eta`) and its
 validation tool (`etaval`) into **stoptimes**: a general toolkit that lets anyone with
@@ -631,6 +631,25 @@ things shipped from training are the model, the segment-statistics table and the
   `packages/`; `diagnose` reports ping cadence and trip-id match rate; record → train → val on a second public agency.
 - **Later:** own-trip segment ratios, kinematics, leader/cross-vehicle features (study: about 2–3 s more together);
   a Redis `TripStateStore` for databus (G2b).
+
+**Status 2026-11-06: F1–F4 merged** (`db465c6`). Artifact `xgb-live` was trained by `stoptimes train run` on the
+83 study train days. Val MAE is 93.18 s (study 93.16 s).
+- **Gate A** (package val-predictor path, study scorer, 14 test days, scored once): 95.6 s [93.0, 98.1] vs the study's
+  95.5 s and MBTA's 118.1 s [114.8, 121.3]. It wins in every horizon bucket.
+- **Gate B** (`stoptimes val replay`, 20:00–20:25Z on each test day, 3,452 paired trip-stops): 67.8 s vs MBTA 80.9 s,
+  but it loses at [0,2) min (31.8 vs 28.6 s), which is not yet explained.
+
+Open items found on the way, for F5 or later:
+- replay runs at about 1× real time or slower (the predictor takes 38 ms per trip per tick, and the engine re-projects
+  each trip's history every tick);
+- the val TU reader turns a null `arrival_time` into about −9.2e9;
+- `--archive-tu` fails on TU files that mix the type of `schedule_relationship`;
+- `GtfsStaticLoader` has no `calendar.txt` filter for ghost trips and filters all of stop_times per trip;
+- `data frame --live` takes a single static feed;
+- the registry's temporal features fall back to `America/New_York`;
+- the val predictor's `now` is the newest ping seen, because the engine doesn't pass the tick time;
+- `test_ws_stream_run_collects_ticks_and_ends` is flaky (fails about 1 run in 6, also before F1).
+Notes: `docs/notes/p4-f*.md`. Guide: `docs/guides/live-features.md`.
 
 Product guidance from the study's size ablation: 7 recorded days already beat MBTA; the gain stops at about 30 days.
 
