@@ -12,6 +12,7 @@ from pathlib import Path
 import pandas as pd
 
 from stoptimes.core.domain.models import Stop
+from stoptimes.core.features.schedule import TripSchedule, build_trip_schedule
 
 
 class GtfsStaticLoader:
@@ -31,6 +32,7 @@ class GtfsStaticLoader:
         self._zip_path = Path(zip_path)
         if not self._zip_path.exists():
             raise FileNotFoundError(self._zip_path)
+        self._schedule_cache: dict[str, TripSchedule] = {}
         self._load()
 
     # ------------------------------------------------------------------
@@ -51,6 +53,12 @@ class GtfsStaticLoader:
             self.routes: pd.DataFrame = (
                 pd.read_csv(zf.open("routes.txt"), dtype=str)
                 if "routes.txt" in names
+                else pd.DataFrame()
+            )
+
+            self.agency: pd.DataFrame = (
+                pd.read_csv(zf.open("agency.txt"), dtype=str)
+                if "agency.txt" in names
                 else pd.DataFrame()
             )
 
@@ -141,3 +149,40 @@ class GtfsStaticLoader:
             )
 
         return shape_points, ordered_stops
+
+    def agency_timezone(self) -> str | None:
+        """First agency's ``agency_timezone`` from agency.txt, or None if absent/blank."""
+        if self.agency.empty or "agency_timezone" not in self.agency.columns:
+            return None
+        value = self.agency["agency_timezone"].iloc[0]
+        if pd.isna(value) or not str(value).strip():
+            return None
+        return str(value).strip()
+
+    def trip_schedule(self, trip_id: str) -> TripSchedule:
+        """Scheduled stop times of *trip_id* (cached). Raises ValueError if unknown."""
+        cached = self._schedule_cache.get(trip_id)
+        if cached is not None:
+            return cached
+        if not (self.trips["trip_id"] == trip_id).any():
+            raise ValueError(f"trip_id {trip_id!r} not found in trips.txt")
+        rows = self.stop_times[self.stop_times["trip_id"] == trip_id]
+        dist = (
+            pd.to_numeric(rows["shape_dist_traveled"], errors="coerce").tolist()
+            if "shape_dist_traveled" in rows.columns
+            else None
+        )
+
+        def col(name: str) -> list[object]:
+            return rows[name].tolist() if name in rows.columns else [None] * len(rows)
+
+        schedule = build_trip_schedule(
+            trip_id,
+            rows["stop_id"].astype(str).tolist(),
+            rows["stop_sequence"].astype(int).tolist(),
+            col("arrival_time"),
+            col("departure_time"),
+            dist,
+        )
+        self._schedule_cache[trip_id] = schedule
+        return schedule
