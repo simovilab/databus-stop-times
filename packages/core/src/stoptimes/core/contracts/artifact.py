@@ -10,7 +10,8 @@ Layout — one directory per artifact under a registry root::
     └── <artifact_id>/
         ├── artifact.json   ArtifactMetadata (this module), always present
         ├── model.<ext>     the fitted model, ext from ModelFormat
-        └── card.md         human-readable model card (optional)
+        ├── card.md         human-readable model card (optional)
+        └── <asset files>   sidecar assets listed in ArtifactMetadata.assets (optional)
 
 `artifact.json` never needs the model's own library to be read, so listing,
 cards and compatibility checks work in a serve-only install.
@@ -18,8 +19,10 @@ cards and compatibility checks work in a serve-only install.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
+import re
 import tempfile
 from datetime import datetime
 from enum import Enum
@@ -28,7 +31,8 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-ARTIFACT_SCHEMA_VERSION = 1
+ARTIFACT_SCHEMA_VERSION = 2
+"""2 adds optional ``assets`` / ``timezone`` / ``holiday_region``; version-1 files load unchanged."""
 METADATA_FILENAME = "artifact.json"
 CARD_FILENAME = "card.md"
 
@@ -154,6 +158,30 @@ class HorizonScore(BaseModel):
     p90_ae_s: float | None = None
 
 
+_ASSET_FILE_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._=-]*$")
+_SHA256_PATTERN = re.compile(r"^[0-9a-f]{64}$")
+
+
+class ArtifactAsset(BaseModel):
+    """A sidecar file next to the model that its features need (e.g. segment statistics)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    file: str
+    """File name inside the artifact directory (no path separators)."""
+
+    sha256: str
+    """Hex SHA-256 of the file's bytes; loaders refuse a file that does not match."""
+
+    @model_validator(mode="after")
+    def _safe(self) -> "ArtifactAsset":
+        if not _ASSET_FILE_PATTERN.match(self.file) or self.file in (METADATA_FILENAME, CARD_FILENAME):
+            raise ValueError(f"asset file {self.file!r} must be a plain file name inside the artifact directory")
+        if not _SHA256_PATTERN.match(self.sha256):
+            raise ValueError("asset sha256 must be 64 lowercase hex characters")
+        return self
+
+
 class ArtifactMetadata(BaseModel):
     """Contents of `artifact.json`."""
 
@@ -174,6 +202,12 @@ class ArtifactMetadata(BaseModel):
     tags: list[str] = Field(default_factory=list)
     legacy: dict[str, Any] | None = None
     """Original pre-migration metadata, verbatim, for artifacts made by `models migrate`."""
+    assets: dict[str, ArtifactAsset] = Field(default_factory=dict)
+    """Sidecar assets by name (``segment_stats``, ``route_vocabulary``): file + sha256."""
+    timezone: str | None = None
+    """Agency timezone the live features were trained with (IANA name), if the model uses live features."""
+    holiday_region: str | None = None
+    """Holiday-calendar region the temporal features were trained with."""
 
     @property
     def model_filename(self) -> str:
@@ -204,6 +238,45 @@ def write_metadata(meta: ArtifactMetadata, directory: Path) -> Path:
         Path(tmp).unlink(missing_ok=True)
         raise
     return target
+
+
+def sha256_hex(data: bytes) -> str:
+    return hashlib.sha256(data).hexdigest()
+
+
+def write_asset(directory: Path, filename: str, data: bytes) -> ArtifactAsset:
+    """Write a sidecar asset atomically into an artifact directory and describe it."""
+    asset = ArtifactAsset(file=filename, sha256=sha256_hex(data))
+    directory = Path(directory)
+    directory.mkdir(parents=True, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(dir=directory, prefix=".asset.")
+    try:
+        with os.fdopen(fd, "wb") as fh:
+            fh.write(data)
+        os.replace(tmp, directory / filename)
+    except BaseException:
+        Path(tmp).unlink(missing_ok=True)
+        raise
+    return asset
+
+
+def read_asset_bytes(directory: Path, name: str, asset: ArtifactAsset) -> bytes:
+    """The bytes of a recorded asset, verified against its sha256.
+
+    Raises ``FileNotFoundError`` when the file is gone and ``ValueError`` on a hash mismatch.
+    """
+    path = Path(directory) / asset.file
+    try:
+        data = path.read_bytes()
+    except FileNotFoundError:
+        raise FileNotFoundError(f"asset {name!r}: file {asset.file!r} is missing from {directory}") from None
+    actual = sha256_hex(data)
+    if actual != asset.sha256:
+        raise ValueError(
+            f"asset {name!r} ({asset.file}) does not match its recorded sha256: "
+            f"expected {asset.sha256[:12]}..., found {actual[:12]}..."
+        )
+    return data
 
 
 def version_mismatches(meta: ArtifactMetadata, installed: dict[str, str | None]) -> list[str]:
