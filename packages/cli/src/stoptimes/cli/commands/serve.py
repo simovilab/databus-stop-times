@@ -15,6 +15,47 @@ import typer
 DEFAULT_SOURCES_DIR = "./examples/agencies"
 
 
+def _build_live_session(meta, registry, static_loader, src):
+    """A run-scoped `LiveSession` when the artifact's features need schedule / vehicle state, else None.
+
+    Refuses (exit 1, with the reason) when the run cannot supply what such an artifact needs: the static
+    feed (schedule + stop geometry) and a vehicle_positions feed on the source.
+    """
+    from stoptimes.core.contracts.source import FeedKind
+    from stoptimes.serve.live_session import LiveSession, needs_live_session
+    from stoptimes.serve.model_loading import ArtifactAssetError
+
+    if not needs_live_session(meta.features):
+        return None
+    if static_loader is None:
+        typer.secho(
+            f"✗ artifact {meta.artifact_id!r} uses live features (schedule, vehicle state) and needs the GTFS static "
+            "feed: pass --static <zip|url> or set gtfs_static_url on the source",
+            fg="red",
+            err=True,
+        )
+        raise typer.Exit(1)
+    if not any(f.kind == FeedKind.VEHICLE_POSITIONS for f in src.realtime_feeds):
+        typer.secho(
+            f"✗ artifact {meta.artifact_id!r} uses live features and needs a vehicle_positions feed, but source "
+            f"{src.id!r} declares none",
+            fg="red",
+            err=True,
+        )
+        raise typer.Exit(1)
+    try:
+        return LiveSession.from_artifact(
+            meta,
+            registry,
+            static_loader,
+            fallback_timezone=src.timezone,
+            fallback_holiday_region=src.holiday_region,
+        )
+    except (ArtifactAssetError, ValueError) as exc:
+        typer.secho(f"✗ {exc}", fg="red", err=True)
+        raise typer.Exit(1) from exc
+
+
 def serve(
     source: str = typer.Option(None, "--source", help="Agency id, e.g. 'mbta' (examples/agencies/<id>.yaml)."),
     sources_dir: Path = typer.Option(
@@ -109,6 +150,7 @@ def serve(
     model_choice = artifact or model
     resolved_model = None
     resolved_artifact_id = None
+    live_session = None
     if model_choice is not None and (
         model_choice.startswith("pickle:")
         or model_choice.startswith("onnx:")
@@ -142,6 +184,7 @@ def serve(
                 # is looking at this during an incident.
                 typer.secho(f"✗ {exc}", fg="red", err=True)
                 raise typer.Exit(1) from exc
+            live_session = _build_live_session(meta, registry, static_loader, src)
         elif model_choice is not None:
             typer.secho(f"✗ artifact {model_choice!r} not found in registry {registry}", fg="red", err=True)
             raise typer.Exit(1)
@@ -159,7 +202,9 @@ def serve(
             static_feed=static_loader,
             model=resolved_model,
             now=datetime.now(timezone.utc),
-            config={"sink": active_sink, "format": format},
+            # `live_session` is built once above and handed to every tick: it holds the per-trip
+            # vehicle state, which must outlive a single run_once().
+            config={"sink": active_sink, "format": format, "live_session": live_session},
         )
         run_pipeline.run(ctx)
         trip_updates = ctx.state.get("trip_updates", [])
@@ -171,6 +216,7 @@ def serve(
             "trip_update_count": len(trip_updates),
             "errors": errors,
             "published": ctx.state.get("published", False),
+            "live": live_session is not None,
         }
 
     def report(summary: dict) -> None:
