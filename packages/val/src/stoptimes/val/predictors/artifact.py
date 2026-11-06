@@ -38,10 +38,22 @@ whether it carries pre-Phase-2 ``legacy`` migration metadata:
   see ``_build_matched_observations`` below. Only the feature/predict
   stages are shared; ``match`` itself is a no-op here because val already
   did it. See ``docs/notes/f2.md``.
+- **Live** (the artifact's features need schedule / vehicle state, e.g.
+  ``xgb-live``): scored by a run-scoped :class:`~stoptimes.serve.live_session.LiveSession`,
+  the same object ``stoptimes serve`` uses. The predictor *is* the run: the engine calls
+  ``predict()`` for every active trip on every tick, so the predictor sees the ping stream in
+  arrival order and feeds it to its own ``TripStateStore``; the static loader is the one the
+  engine already loaded (``attach_static_loader``). It never reads val's ground-truth detectors
+  or arrivals -- only the ``VehicleState`` it is handed. Prediction time ``t`` is the newest
+  ping epoch seen across all trips (the tick clock the engine itself exposes only through the
+  pings); a trip whose own newest ping is more than 30 s older than ``t`` gets no prediction
+  (the training-time staleness bound). Build one predictor per run (a replay or live session):
+  its trip state is the run's memory.
 """
 
 from __future__ import annotations
 
+import math
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -85,6 +97,12 @@ def load_registry_candidates(registry_dir: Path) -> list[ArtifactMetadata]:
         except Exception:  # noqa: BLE001 - malformed artifact.json, skip, not fatal
             continue
     return candidates
+
+
+def _needs_live(artifact: ArtifactMetadata) -> bool:
+    from stoptimes.serve.live_session import needs_live_session
+
+    return artifact.legacy is None and needs_live_session(artifact.features)
 
 
 class _ConfigLocale:
@@ -255,10 +273,28 @@ class StoptimesArtifactPredictor:
         self._candidates = load_registry_candidates(self._registry_dir)
         by_id = {c.artifact_id: c for c in self._candidates}
         self._static_artifact: ArtifactMetadata | None = by_id.get(ref)
+        self._static_loader: Any = None
+        self._live: dict[str, tuple[Any, Any]] = {}
+        """artifact_id -> (LiveSession, model): the run's live state (see the module docstring)."""
+        self._fed: dict[tuple[str, str], tuple[float, Any]] = {}
+        """(trip_id, vehicle_id) -> (epoch of the newest ping already fed, its session key)."""
+        self._clock: float = -math.inf
+        self._last_evict: float = -math.inf
         self._native_model_cache: dict[str, Any] = {}
         """Loaded native models, keyed by artifact_id -- `load_artifact_model`
         deserializes a pickle per call, so a live/replay loop scoring the
         same artifact every tick would otherwise reload it every tick."""
+
+    accepts_position_history = True
+    """Engine opt-in: also hand ``predict`` the trip's full ping history, so a ping the engine saw but
+    that was not the newest at tick time still reaches the trip state."""
+
+    def attach_static_loader(self, loader: Any) -> None:
+        """Receive the run's already-loaded static feed (called by the run assembly). Resets live state."""
+        self._static_loader = loader
+        self._live.clear()
+        self._fed.clear()
+        self._clock = -math.inf
 
     def _resolve(self, trip: TripInstance) -> ArtifactMetadata | None:
         """The artifact to serve *trip* with -- the static match if *ref* was
@@ -280,6 +316,8 @@ class StoptimesArtifactPredictor:
         upcoming_stops: list[Stop],
         vehicle_state: VehicleState,
         trip_updates: Any = None,
+        position_history: list[VehicleState] | None = None,
+        now: float | None = None,
     ) -> list[StopPrediction]:
         """Resolve an artifact for *trip* and delegate scoring to it.
 
@@ -295,11 +333,13 @@ class StoptimesArtifactPredictor:
             resolves for this trip (e.g. an empty/mismatched registry --
             never invents predictions).
         """
-        if not upcoming_stops:
-            return []
-
         artifact = self._resolve(trip)
         if artifact is None:
+            return []
+        if _needs_live(artifact):
+            # Live artifacts must see every ping, also when no stop is left ahead (the state is the run's memory).
+            return self._predict_live(artifact, trip, vehicle_state, position_history, now)
+        if not upcoming_stops:
             return []
 
         legacy = artifact.legacy or {}
@@ -318,3 +358,110 @@ class StoptimesArtifactPredictor:
             vehicle_state,
             self._native_model_cache,
         )
+
+    # -- live artifacts -----------------------------------------------------------------
+
+    def _live_session(self, artifact: ArtifactMetadata) -> tuple[Any, Any]:
+        entry = self._live.get(artifact.artifact_id)
+        if entry is not None:
+            return entry
+        if self._static_loader is None:
+            raise RuntimeError(
+                f"artifact {artifact.artifact_id!r} uses live features and needs the run's static GTFS feed: "
+                "call attach_static_loader(loader) first (the val run assembly does this)"
+            )
+        from stoptimes.core.config import get_config
+        from stoptimes.serve.live_session import LiveSession
+        from stoptimes.serve.model_loading import load_artifact_model
+
+        config = get_config()
+        model = self._native_model_cache.get(artifact.artifact_id)
+        if model is None:
+            model = load_artifact_model(artifact, self._registry_dir)
+            self._native_model_cache[artifact.artifact_id] = model
+        session = LiveSession.from_artifact(
+            artifact,
+            self._registry_dir,
+            self._static_loader,
+            fallback_timezone=config.default_timezone,
+            fallback_holiday_region=config.default_region,
+        )
+        self._live[artifact.artifact_id] = (session, model)
+        return session, model
+
+    def _feed_pings(
+        self,
+        session: Any,
+        trip: TripInstance,
+        vehicle_state: VehicleState,
+        position_history: list[VehicleState] | None,
+    ) -> Any:
+        """Feed the trip's pings that the session has not seen (oldest first); returns the trip key."""
+        from stoptimes.core.features.trip_state import Ping
+
+        fed_key = (trip.trip_id, trip.vehicle_id)
+        last, key = self._fed.get(fed_key, (-math.inf, None))
+        history = position_history if position_history else [vehicle_state]
+        new: list[VehicleState] = []
+        for state in reversed(history):
+            if state.epoch <= last:
+                break
+            new.append(state)
+        for state in reversed(new):
+            key = session.observe(
+                trip.trip_id,
+                trip.route_id,
+                trip.start_date or None,
+                trip.vehicle_id,
+                Ping(
+                    epoch=state.epoch,
+                    lat=state.lat,
+                    lon=state.lon,
+                    speed=state.speed,
+                    status=state.current_status,
+                    current_stop_sequence=state.current_stop_sequence,
+                ),
+            )
+            last = max(last, state.epoch)
+        self._fed[fed_key] = (last, key)
+        return key
+
+    def _predict_live(
+        self,
+        artifact: ArtifactMetadata,
+        trip: TripInstance,
+        vehicle_state: VehicleState,
+        position_history: list[VehicleState] | None,
+        now: float | None,
+    ) -> list[StopPrediction]:
+        from stoptimes.serve.live_session import LiveSessionError
+
+        session, model = self._live_session(artifact)
+        self._clock = max(self._clock, vehicle_state.epoch)
+        try:
+            key = self._feed_pings(session, trip, vehicle_state, position_history)
+        except LiveSessionError:
+            return []  # trip unknown to the static feed / unusable shape: nothing to predict, nothing invented
+        if key is None:
+            return []
+        t = float(now) if now is not None else self._clock
+        if t - self._last_evict > 300.0:
+            session.evict(t)
+            self._last_evict = t
+        frame = session.predict(model, [key], t)
+        if frame.empty:
+            return []
+        n_rows = len(frame)
+        out: list[StopPrediction] = []
+        for row, ahead in zip(frame.itertuples(index=False), frame["stops_ahead"].to_numpy(float)):
+            out.append(
+                StopPrediction(
+                    stop_id=str(row.stop_id),
+                    stop_sequence=int(row.stop_sequence_id),
+                    predicted_arrival_epoch=t + float(row.horizon_s),
+                    made_at_epoch=t,
+                    dist_remaining_m=float(row.distance_to_stop),
+                    stops_remaining=int(n_rows - ahead),
+                )
+            )
+        return out
