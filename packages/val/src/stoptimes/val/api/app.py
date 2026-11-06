@@ -141,8 +141,17 @@ def create_app(
 
     @app.get("/api/predictors")
     async def predictors() -> list[str]:
-        """Return the IDs of all registered predictors."""
-        return list(PREDICTOR_REGISTRY.keys())
+        """Return the IDs of all registered predictors, then one `stoptimes:<artifact_id>`
+        per artifact in the model registry (scanned per request, so a newly trained
+        model appears without restarting the API)."""
+        from stoptimes.val.predictors.artifact import default_registry_dir, load_registry_candidates
+
+        ids = list(PREDICTOR_REGISTRY.keys())
+        for meta in load_registry_candidates(default_registry_dir()):
+            pid = f"stoptimes:{meta.artifact_id}"
+            if pid not in ids:
+                ids.append(pid)
+        return ids
 
     @app.post("/api/runs")
     async def create_run(body: RunRequest) -> dict:

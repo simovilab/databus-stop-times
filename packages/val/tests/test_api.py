@@ -139,6 +139,30 @@ async def test_predictors_contains_expected(client: httpx.AsyncClient) -> None:
     assert "baseline:constant_speed" in ids
 
 
+async def test_predictors_lists_registry_artifacts(
+    client: httpx.AsyncClient, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Every artifact in the model registry is offered as `stoptimes:<artifact_id>`,
+    read per request so a newly trained model shows up without restarting the API."""
+    from datetime import UTC, datetime
+
+    from stoptimes.core.contracts.artifact import ArtifactMetadata, Provenance, write_metadata
+
+    registry = tmp_path / "registry"
+    monkeypatch.setenv("STOPTIMES_MODEL_REGISTRY_DIR", str(registry))
+    assert "stoptimes:my-live-model" not in (await client.get("/api/predictors")).json()
+
+    meta = ArtifactMetadata(
+        artifact_id="my-live-model", family="xgboost", provenance=Provenance(created_at=datetime.now(UTC))
+    )
+    write_metadata(meta, registry / "my-live-model")
+
+    ids = (await client.get("/api/predictors")).json()
+    assert "stoptimes:my-live-model" in ids
+    assert ids.count("stoptimes:my-live-model") == 1
+    assert "gtfsrt" in ids
+
+
 # ── Full run lifecycle ─────────────────────────────────────────────────────────
 
 
