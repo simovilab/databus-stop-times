@@ -60,3 +60,70 @@ def test_version_mismatches_compares_major_minor():
     assert version_mismatches(meta, {"xgboost": "3.1.9", "scikit-learn": "1.7.0"}) == []
     assert version_mismatches(meta, {"xgboost": "3.0.5"}) == ["xgboost: built with 3.1.2, installed 3.0.5"]
     assert version_mismatches(meta, {}) == []
+
+
+# --- sidecar assets (schema version 2) -------------------------------------------
+
+
+def test_assets_round_trip_and_default_to_empty(tmp_path):
+    from stoptimes.core.contracts.artifact import ArtifactAsset, write_asset
+
+    assert _meta().assets == {}
+    directory = artifact_dir(tmp_path, "with-assets")
+    asset = write_asset(directory, "segment_stats.bin", b"abc")
+    meta = _meta(
+        artifact_id="with-assets",
+        assets={"segment_stats": asset},
+        timezone="America/New_York",
+        holiday_region="US_MA",
+    )
+    write_metadata(meta, directory)
+    back = read_metadata(directory)
+    assert back == meta
+    assert back.assets["segment_stats"] == ArtifactAsset(file="segment_stats.bin", sha256=asset.sha256)
+    assert back.timezone == "America/New_York" and back.schema_version == 2
+    assert not list(directory.glob(".asset.*"))
+
+
+def test_version_one_artifact_json_still_loads(tmp_path):
+    meta = _meta()
+    directory = artifact_dir(tmp_path, meta.artifact_id)
+    write_metadata(meta, directory)
+    import json
+
+    path = directory / "artifact.json"
+    raw = json.loads(path.read_text())
+    raw["schema_version"] = 1
+    for key in ("assets", "timezone", "holiday_region"):
+        raw.pop(key)
+    path.write_text(json.dumps(raw))
+    old = read_metadata(directory)
+    assert old.schema_version == 1 and old.assets == {} and old.timezone is None
+
+
+@pytest.mark.parametrize("bad_file", ["", "../x", "a/b", "artifact.json", "card.md", ".hidden"])
+def test_asset_file_must_be_a_plain_name(bad_file):
+    from stoptimes.core.contracts.artifact import ArtifactAsset
+
+    with pytest.raises(ValidationError):
+        ArtifactAsset(file=bad_file, sha256="0" * 64)
+
+
+def test_asset_sha256_must_be_hex():
+    from stoptimes.core.contracts.artifact import ArtifactAsset
+
+    with pytest.raises(ValidationError):
+        ArtifactAsset(file="x.bin", sha256="nothex")
+
+
+def test_read_asset_bytes_verifies_hash_and_presence(tmp_path):
+    from stoptimes.core.contracts.artifact import read_asset_bytes, write_asset
+
+    asset = write_asset(tmp_path, "a.bin", b"payload")
+    assert read_asset_bytes(tmp_path, "a", asset) == b"payload"
+    (tmp_path / "a.bin").write_bytes(b"tampered")
+    with pytest.raises(ValueError, match="does not match its recorded sha256"):
+        read_asset_bytes(tmp_path, "a", asset)
+    (tmp_path / "a.bin").unlink()
+    with pytest.raises(FileNotFoundError, match="missing"):
+        read_asset_bytes(tmp_path, "a", asset)

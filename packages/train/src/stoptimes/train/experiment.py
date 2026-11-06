@@ -222,9 +222,10 @@ def split_dataset(dataset, split: SplitStrategy, *, seed: int) -> SplitOutcome:
     return SplitOutcome(train_df, test_df, notes)
 
 
-def _horizon_scores(y_true: np.ndarray, y_pred: np.ndarray) -> list[HorizonScore]:
+def _horizon_scores(
+    y_true: np.ndarray, y_pred: np.ndarray, edges: tuple[float, ...] = HORIZON_BINS_S
+) -> list[HorizonScore]:
     scores: list[HorizonScore] = []
-    edges = HORIZON_BINS_S
     for lo, hi in zip(edges[:-1], edges[1:]):
         mask = (y_true >= lo) & (y_true < hi) if np.isfinite(hi) else (y_true >= lo)
         n = int(mask.sum())
@@ -306,6 +307,14 @@ def run_experiment(
         # caller (`overwrite=True`, documented in this function's docstring) and
         # for a CLI user (`--overwrite`), so each caller adds its own.
         raise ArtifactExistsError(f"artifact {artifact_id!r} already exists at {target_dir}")
+
+    from stoptimes.train.live_experiment import locate_live_frame, run_live_experiment
+
+    live = locate_live_frame(experiment.data, dataset_dir)
+    if live is not None:  # a `data frame --live` dataset: calendar split, early stopping, sidecar assets
+        return run_live_experiment(
+            experiment, live[0], live[1], registry_dir=registry_dir, overwrite=overwrite
+        )
 
     dataset = resolve_dataset(experiment.data, dataset_dir=dataset_dir)
     dataset.clean_data()

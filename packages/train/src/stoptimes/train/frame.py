@@ -8,6 +8,10 @@ model families / feature registry (T3), which is documented (in
 `core.features.registry`) to consume exactly the column shape this module
 produces.
 
+Live features: ``build_live_dataset`` / ``prepare_trip_records`` (re-exported from
+``stoptimes.train.live_frame``) build the 19-feature frame serving computes, from raw
+pings and GTFS static; ``stoptimes data frame --live`` is the CLI face of it.
+
 Public entry point
 -------------------
 ``build_training_frame(observations, arrivals, static, *, source, params) ->
@@ -44,7 +48,28 @@ from stoptimes.core.contracts.source import Source
 from stoptimes.core.domain.models import Stop
 from stoptimes.core.spatial.geo import ShapePolyline, calculate_distance_features_with_shape
 
-__all__ = ["FrameParams", "StaticGeometry", "build_training_frame"]
+from stoptimes.train.live_frame import (  # noqa: E402  (the live-feature frame lives beside this one)
+    LiveDataset,
+    LiveFrameParams,
+    TripRecord,
+    build_day_frame,
+    build_live_dataset,
+    prepare_trip_records,
+    write_live_assets,
+)
+
+__all__ = [
+    "FrameParams",
+    "StaticGeometry",
+    "build_training_frame",
+    "LiveDataset",
+    "LiveFrameParams",
+    "TripRecord",
+    "build_day_frame",
+    "build_live_dataset",
+    "prepare_trip_records",
+    "write_live_assets",
+]
 
 _log = logging.getLogger(__name__)
 

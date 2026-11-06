@@ -36,7 +36,7 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass
-from typing import Any, Callable, Mapping, Sequence
+from typing import Any, Callable, Collection, Mapping, Sequence
 
 import pandas as pd
 
@@ -69,6 +69,12 @@ class Feature:
             present (a copy; `build()` always works off a fresh copy).
         source: where the computation actually lives, for the description
             and for error messages when the column is missing upstream.
+        inputs: what a *live* caller must supply to compute the feature,
+            drawn from ``INPUT_DESCRIPTIONS`` (``schedule``, ``trip_state``,
+            ``asset``, ``identity``, ``clock``). Empty for features that do
+            not declare one (temporal features need only a timestamp).
+        assets: names of the artifact sidecar assets an ``asset`` input
+            reads (``segment_stats``, ``route_vocabulary``).
     """
 
     name: str
@@ -77,7 +83,18 @@ class Feature:
     tags: tuple[str, ...]
     fn: FeatureFn
     source: str = ""
+    inputs: tuple[str, ...] = ()
+    assets: tuple[str, ...] = ()
 
+
+INPUT_DESCRIPTIONS: dict[str, str] = {
+    "schedule": "static schedule",
+    "trip_state": "per-trip state (vehicle position history)",
+    "asset": "an artifact asset",
+    "identity": "trip identity",
+    "clock": "the agency-timezone clock",
+}
+"""Inputs a live feature can declare on `Feature.inputs`, with the wording used in refusals."""
 
 _REGISTRY: dict[str, Feature] = {}
 
@@ -102,6 +119,38 @@ def get(name: str) -> Feature:
     except KeyError as exc:
         available = ", ".join(sorted(_REGISTRY)) or "(none registered)"
         raise FeatureNotFoundError(f"unknown feature {name!r}; available: {available}") from exc
+
+
+def missing_inputs(
+    names: Sequence[str],
+    available_inputs: Collection[str],
+    artifact_assets: Collection[str],
+) -> dict[str, list[str]]:
+    """Why each registered feature in `names` cannot be computed, by missing *input*.
+
+    A feature is blocked when one of its declared `inputs` is not in
+    `available_inputs`, or when it reads a sidecar asset that is not in
+    `artifact_assets` (the ``asset`` input is judged by the assets alone). Names the registry does not know, and features that
+    declare no inputs, are never reported (absence of information is not
+    evidence). Returns ``{feature: [human-readable reasons]}`` for blocked
+    features only.
+    """
+    blocked: dict[str, list[str]] = {}
+    for name in names:
+        feature = _REGISTRY.get(name)
+        if feature is None:
+            continue
+        reasons = [
+            f"needs {INPUT_DESCRIPTIONS.get(inp, inp)}"
+            for inp in feature.inputs
+            if inp != "asset" and inp not in available_inputs
+        ]
+        reasons += [
+            f"artifact has no {asset} asset" for asset in feature.assets if asset not in artifact_assets
+        ]
+        if reasons:
+            blocked[name] = reasons
+    return blocked
 
 
 def build(names: Sequence[str], frame: pd.DataFrame, ctx: Mapping[str, Any] | None = None) -> pd.DataFrame:
@@ -291,5 +340,74 @@ for _name in _ROLLING_DESCRIPTIONS:
             tags=("rolling",),
             fn=_passthrough,
             source="stoptimes.train.datasets.rolling_conditions.add_rolling_conditions_features",
+        )
+    )
+
+
+# --------------------------------------------------------------------------
+# live — the 2026-11 study's servable-plus features. Computed together by
+# `stoptimes.core.features.live.assemble_live_features` (one function for
+# training, serving and `val`); registered here as validated passthroughs
+# that declare which input each one needs, so a refusal can name it.
+# --------------------------------------------------------------------------
+
+_LIVE_SOURCE = "stoptimes.core.features.live.assemble_live_features"
+
+_LIVE_FEATURES: tuple[tuple[str, str, tuple[str, ...], tuple[str, ...]], ...] = (
+    (
+        "minute_of_day",
+        "Minutes since local midnight (agency timezone, service-date UTC offset) at prediction time.",
+        ("clock",),
+        (),
+    ),
+    (
+        "route_code",
+        "Index of the route id in the artifact's training vocabulary; routes unseen at training are missing.",
+        ("identity", "asset"),
+        ("route_vocabulary",),
+    ),
+    (
+        "delay_now",
+        "Seconds the vehicle's latest position is behind (positive) the scheduled time at that point of the trip.",
+        ("schedule", "trip_state"),
+        (),
+    ),
+    (
+        "sched_rem",
+        "Scheduled seconds from the vehicle's current point on the trip to the target stop.",
+        ("schedule", "trip_state"),
+        (),
+    ),
+    (
+        "sched_rem_t",
+        "Scheduled arrival time at the target stop minus the prediction time, in seconds.",
+        ("schedule",),
+        (),
+    ),
+    (
+        "delay_last",
+        "Delay (observed minus scheduled arrival) at the last stop the vehicle passed with a detected arrival.",
+        ("schedule", "trip_state"),
+        (),
+    ),
+    (
+        "prior_rem",
+        "Seconds to the target stop summing historical median segment times along the path, hour re-evaluated en route.",
+        ("schedule", "trip_state", "asset"),
+        ("segment_stats",),
+    ),
+)
+
+for _name, _desc, _inputs, _assets in _LIVE_FEATURES:
+    _register(
+        Feature(
+            name=_name,
+            description=_desc,
+            requires=(_name,),
+            tags=("live",),
+            fn=_passthrough,
+            source=_LIVE_SOURCE,
+            inputs=_inputs,
+            assets=_assets,
         )
     )

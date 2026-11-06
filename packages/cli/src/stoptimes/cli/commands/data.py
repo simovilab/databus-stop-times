@@ -412,8 +412,11 @@ def data_frame(
     observations: str = typer.Option(
         ..., "--observations", help="Observations to build from: a catalog dataset name, or a path/URI."
     ),
-    arrivals: str = typer.Option(
-        ..., "--arrivals", help="The Arrival table (target): a catalog dataset name, or a path/URI to a parquet file."
+    arrivals: str | None = typer.Option(
+        None,
+        "--arrivals",
+        help="The Arrival table (target): a catalog dataset name, or a path/URI to a parquet file. "
+        "Not used with --live (arrivals are derived from the pings).",
     ),
     static: str = typer.Option(..., "--static", help="GTFS static .zip (path or URL)."),
     source: str = typer.Option(..., "--source", help="Source id (agency) these observations/arrivals came from."),
@@ -432,10 +435,31 @@ def data_frame(
     ),
     overwrite: bool = typer.Option(False, "--overwrite", help="Replace an existing catalog entry / output file."),
     json_output: bool = typer.Option(False, "--json", help="Print a machine-readable summary."),
+    live: bool = typer.Option(
+        False,
+        "--live",
+        help="Build the live-feature frame instead: archived VehiclePositions + this one static feed -> "
+        "the 19 serving features per (prediction instant x downstream stop), target from interpolated "
+        "arrivals, segment statistics fitted out-of-fold. Needs --train-days and --val-days. "
+        "Writes <out>.assets/ next to the parquet (read by `train run`).",
+    ),
+    train_days: str | None = typer.Option(
+        None, "--train-days", help="--live: service dates fitting the model, START:END as YYYY-MM-DD (inclusive)."
+    ),
+    val_days: str | None = typer.Option(
+        None, "--val-days", help="--live: service dates for early stopping / validation, START:END (inclusive)."
+    ),
+    rows_per_day: int | None = typer.Option(
+        None, "--rows-per-day", help="--live: uniform random row subsample per day (default: keep all)."
+    ),
+    seed: int = typer.Option(42, "--seed", help="--live: subsampling seed."),
 ) -> None:
     """Build the training frame: observations + arrivals + static GTFS -> one
     row per (vehicle position, upcoming stop), ready for `train run`
     (via the feature registry, which adds temporal features on top).
+
+    With `--live`, builds the live-feature frame (see the option) for
+    `train run examples/experiments/xgb-live.yaml`.
 
     `--json`: ``{"source", "observations", "arrivals", "rows", "labeled_rows",
     "static_tables", "out", "registered"}``.
@@ -445,13 +469,23 @@ def data_frame(
 
     src = _resolve_source(source, sources_dir)
     obs_frame = _load_observations(observations, source)
-    arrivals_frame = _load_arrivals(arrivals)
     loader, static_feed = _read_static_or_exit(static, source)
 
     out_path = Path(out)
     if out_path.exists() and not overwrite:
         typer.secho(f"✗ {out} already exists (pass --overwrite to replace it)", fg="red", err=True)
         raise typer.Exit(1)
+
+    if live:
+        _data_frame_live(
+            src, obs_frame, loader, out_path, train_days, val_days, rows_per_day, seed, register,
+            overwrite, observations, static, json_output,
+        )
+        return
+    if arrivals is None:
+        typer.secho("✗ --arrivals is required (or pass --live to derive arrivals from the pings)", fg="red", err=True)
+        raise typer.Exit(2)
+    arrivals_frame = _load_arrivals(arrivals)
 
     params = FrameParams(max_stops_ahead=max_stops_ahead, keep_unlabeled=keep_unlabeled)
     result = build_training_frame(obs_frame, arrivals_frame, loader, source=src, params=params)
@@ -506,6 +540,85 @@ def data_frame(
     typer.secho(
         f"✓ {summary['rows']} row(s) ({summary['labeled_rows']} labeled) from "
         f"{summary['observations']} observation(s) + {summary['arrivals']} arrival(s) → {out_path}",
+        fg="green",
+    )
+
+
+def _day_range(spec: str | None, flag: str) -> list[str]:
+    """``START:END`` (inclusive, YYYY-MM-DD) -> list of ``YYYYMMDD`` service dates."""
+    import pandas as pd
+
+    if not spec or ":" not in spec:
+        typer.secho(f"✗ {flag} START:END is required with --live (e.g. 2026-07-01:2026-10-13)", fg="red", err=True)
+        raise typer.Exit(2)
+    start, _, end = spec.partition(":")
+    try:
+        days = pd.date_range(start, end, freq="D")
+    except ValueError:
+        typer.secho(f"✗ {flag}: cannot parse {spec!r}", fg="red", err=True)
+        raise typer.Exit(2) from None
+    return [d.strftime("%Y%m%d") for d in days]
+
+
+def _data_frame_live(
+    src, obs_frame, loader, out_path, train_days, val_days, rows_per_day, seed, register, overwrite,
+    observations, static, json_output,
+) -> None:
+    from stoptimes.core.catalog import Catalog, DatasetEntry, DatasetExistsError, DatasetKind
+    from stoptimes.train.live_frame import (
+        LiveFrameParams,
+        build_live_dataset,
+        prepare_trip_records,
+        write_live_assets,
+    )
+
+    train, val = _day_range(train_days, "--train-days"), _day_range(val_days, "--val-days")
+    params = LiveFrameParams(rows_per_day=rows_per_day, seed=seed)
+    try:
+        by_day, skipped = prepare_trip_records(
+            obs_frame, loader, config_timezone=src.timezone, holiday_region=src.holiday_region,
+            params=params, service_dates=[*train, *val],
+        )
+        agency_tz = loader.agency_timezone() or src.timezone
+        train = [d for d in train if d in by_day]
+        val = [d for d in val if d in by_day]
+        if not train or not val:
+            typer.secho("✗ no trips found on the requested train and/or val days", fg="red", err=True)
+            raise typer.Exit(1)
+        dataset = build_live_dataset(
+            train, val, lambda d: by_day[d], tz=agency_tz, holiday_region=src.holiday_region, params=params
+        )
+    except ValueError as exc:
+        typer.secho(f"✗ {exc}", fg="red", err=True)
+        raise typer.Exit(1) from None
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    dataset.frame.to_parquet(out_path, index=False)
+    hashes = write_live_assets(out_path.with_suffix(".assets"), dataset)
+    if register:
+        entry = DatasetEntry(
+            name=register, source_id=src.id, kind=DatasetKind.FRAME, location=str(out_path),
+            row_count=int(len(dataset.frame)), added_at=_now_utc(),
+            extra={"live": True, "derived_from_observations": observations, "static": static},
+        )
+        try:
+            Catalog().add(entry, overwrite=overwrite)
+        except DatasetExistsError as exc:
+            typer.secho(f"✗ {exc} (pass --overwrite to replace it)", fg="red", err=True)
+            raise typer.Exit(1) from None
+    summary = {
+        "source": src.id, "rows": int(len(dataset.frame)),
+        "train_rows": int((dataset.frame["split"] == "train").sum()),
+        "val_rows": int((dataset.frame["split"] == "val").sum()),
+        "train_days": len(train), "val_days": len(val), "skipped": skipped,
+        "out": str(out_path), "assets": str(out_path.with_suffix(".assets")), "asset_sha256": hashes,
+        "registered": register,
+    }
+    if json_output:
+        typer.echo(_json.dumps(summary, indent=2))
+        return
+    typer.secho(
+        f"✓ {summary['rows']} live-feature row(s) ({summary['train_rows']} train / {summary['val_rows']} val) "
+        f"→ {out_path} (+ {out_path.with_suffix('.assets').name}/)",
         fg="green",
     )
 

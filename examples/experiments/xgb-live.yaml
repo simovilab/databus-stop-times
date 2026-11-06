@@ -1,0 +1,65 @@
+# Validated by packages/core/tests/test_contract_experiment.py
+# The 19-feature "servable-plus" XGBoost of the 2026-11 MBTA study, trained on live-computable
+# features only (GTFS static + VehiclePositions): along-shape distance, stops ahead, clock,
+# schedule delay, last observed delay and the segment-statistics path prior.
+#
+# Build the frame first (arrivals are derived from the pings; training days use out-of-fold
+# segment statistics, validation days the all-training-days ones):
+#   stoptimes data frame --live --observations <vp archive> --static <gtfs.zip> --source mbta \
+#       --train-days 2026-07-01:2026-10-13 --val-days 2026-10-14:2026-10-20 \
+#       --rows-per-day 30000 --out datasets/mbta-live.parquet
+# then:  stoptimes train run examples/experiments/xgb-live.yaml --dataset-dir datasets
+#
+# On a live frame `split` below is ignored: the frame's own train/val days are the split, and
+# the validation days drive early stopping. n_estimators is the cap.
+name: xgb-live
+data:
+  datasets:
+    - mbta-live
+target: time_to_arrival_seconds
+model:
+  family: xgboost
+  params:
+    objective: reg:absoluteerror
+    max_depth: 8
+    learning_rate: 0.06
+    subsample: 0.8
+    colsample_bytree: 0.8
+    min_child_weight: 20.0
+    reg_lambda: 10.0
+    reg_alpha: 0.1
+    gamma: 0.0
+    n_estimators: 4000
+    early_stopping_rounds: 50
+    n_jobs: 6
+features:
+  - distance_to_stop
+  - stops_ahead
+  - minute_of_day
+  - hour
+  - day_of_week
+  - is_weekend
+  - is_holiday
+  - is_peak_hour
+  - hour_sin
+  - hour_cos
+  - dow_sin
+  - dow_cos
+  - route_code
+  - stop_sequence
+  - delay_now
+  - sched_rem
+  - sched_rem_t
+  - delay_last
+  - prior_rem
+split:
+  kind: time
+  train_fraction: 0.9
+  test_fraction: 0.1
+seed: 42
+outputs:
+  registry_dir: artifacts/models
+  tags:
+    - xgb-live
+    - servable-plus
+baselines: []

@@ -18,7 +18,7 @@ import importlib
 import os
 import pickle  # noqa: S403 - BYO pickle loading is an explicit, documented opt-in
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 import pandas as pd
@@ -27,6 +27,7 @@ from stoptimes.core.contracts.artifact import (
     ArtifactMetadata,
     ModelFormat,
     artifact_dir,
+    read_asset_bytes,
     read_metadata,
     version_mismatches,
 )
@@ -41,8 +42,11 @@ __all__ = [
     "load_artifact_model",
     "check_version_drift",
     "check_feature_producibility",
+    "check_artifact_assets",
+    "load_artifact_assets",
     "ArtifactVersionDriftError",
     "UnproducibleFeaturesError",
+    "ArtifactAssetError",
     "LOAD_CRITICAL_LIBS",
     "ALLOW_VERSION_DRIFT_ENV",
     "ALLOW_UNPRODUCIBLE_FEATURES_ENV",
@@ -54,6 +58,9 @@ __all__ = [
     "CallableModel",
     "HttpModel",
 ]
+
+if TYPE_CHECKING:
+    from stoptimes.core.features.live import LiveAssets
 
 _logger = get_logger("model_loading")
 
@@ -131,6 +138,12 @@ class UnproducibleFeaturesError(ArtifactRefusalError):
     took the note and introduced the shared base instead, since the two
     conditions have nothing to do with each other beyond how they surface.
     """
+
+
+class ArtifactAssetError(ArtifactRefusalError):
+    """Raised when an artifact's sidecar assets cannot be trusted or are missing: a file's
+    sha256 differs from the recorded one, a recorded file is gone, or a declared feature
+    reads an asset the artifact does not carry. See `check_artifact_assets`."""
 
 
 def _lib_name(mismatch: str) -> str:
@@ -215,7 +228,12 @@ def _feature_override_requested(artifact_id: str) -> bool:
     return artifact_id in allowed_ids
 
 
-def check_feature_producibility(meta: ArtifactMetadata, *, allow_override: bool | None = None) -> None:
+def check_feature_producibility(
+    meta: ArtifactMetadata,
+    *,
+    allow_override: bool | None = None,
+    available_inputs: Any = None,
+) -> None:
     """Refuse to proceed if `meta.features` names a `core.features.registry`
     feature the default serving pipeline (`serve.pipeline.default_match` /
     `default_features`) has no way to compute, unless overridden.
@@ -242,11 +260,32 @@ def check_feature_producibility(meta: ArtifactMetadata, *, allow_override: bool 
       this artifact (or "all"/"1"/"true"/"*"). Meant for a custom
       `--pipeline` whose own `features` stage supplies the column some
       other way; always logged loudly when used.
+    - A registered *live* feature (one that declares `inputs` in the registry:
+      `delay_now`, `prior_rem`, `route_code`, ...) is judged by what it needs
+      instead of by name: each declared input (`schedule`, `trip_state`,
+      `identity`, `clock`) must be in `available_inputs` (default:
+      `serve.pipeline.SERVING_INPUTS`, empty until the pipeline supplies them)
+      and each asset it reads (`segment_stats`, `route_vocabulary`) must be in
+      `meta.assets`. The refusal names the missing *input*, e.g. "needs static
+      schedule" or "artifact has no segment_stats asset".
     """
-    from stoptimes.serve.pipeline import unproducible_registered_features
+    from stoptimes.core.features.registry import get as get_feature
+    from stoptimes.core.features.registry import missing_inputs
+    from stoptimes.serve import pipeline as serving_pipeline
 
-    missing = unproducible_registered_features(meta.features)
-    if not missing:
+    # Features that declare live inputs (schedule / trip_state / asset ...) are judged by those
+    # inputs; every other registered feature by the pipeline's fixed producible set.
+    live = [n for n in meta.features if _declares_inputs(n, get_feature)]
+    missing = [
+        n for n in serving_pipeline.unproducible_registered_features(meta.features) if n not in live
+    ]
+    available = (
+        frozenset(available_inputs)
+        if available_inputs is not None
+        else frozenset(getattr(serving_pipeline, "SERVING_INPUTS", frozenset()))
+    )
+    blocked = missing_inputs(live, available, set(meta.assets))
+    if not missing and not blocked:
         return
 
     override = _feature_override_requested(meta.artifact_id) if allow_override is None else allow_override
@@ -254,22 +293,96 @@ def check_feature_producibility(meta: ArtifactMetadata, *, allow_override: bool 
         _logger.warning(
             "OVERRIDE: loading artifact despite required feature(s) the default pipeline cannot compute",
             artifact_id=meta.artifact_id,
-            missing_features=missing,
+            missing_features=missing + sorted(blocked),
         )
         return
 
+    parts: list[str] = []
+    if missing:
+        parts.append(
+            f"feature(s) {missing} that stoptimes serve's default "
+            "pipeline cannot compute: they are core.features.registry entries describing columns only a "
+            "stoptimes.train.datasets builder materializes (VP geometry, segment identity, or rolling "
+            "traversal-time/congestion stats from archived data), and default_match/default_features have "
+            "no live source for them from a single realtime observation"
+        )
+    if blocked:
+        detail = "; ".join(f"{name} ({', '.join(reasons)})" for name, reasons in sorted(blocked.items()))
+        parts.append(f"live feature(s) whose inputs are not available: {detail}")
     raise UnproducibleFeaturesError(
-        f"artifact {meta.artifact_id!r} requires feature(s) {missing} that stoptimes serve's default "
-        "pipeline cannot compute: they are core.features.registry entries describing columns only a "
-        "stoptimes.train.datasets builder materializes (VP geometry, segment identity, or rolling "
-        "traversal-time/congestion stats from archived data), and default_match/default_features have "
-        "no live source for them from a single realtime observation. Either retrain on features the "
+        f"artifact {meta.artifact_id!r} requires " + " and ".join(parts) + ". Either retrain on features the "
         "live pipeline can produce (run `stoptimes features list` -- or see "
         "serve.pipeline.producible_features() -- for what qualifies), or, if you have a custom "
         "--pipeline whose own features stage supplies these columns another way, override with "
         f"{ALLOW_UNPRODUCIBLE_FEATURES_ENV}=all (or a comma-separated list of artifact ids including "
         f"{meta.artifact_id!r}) -- this is logged loudly, never the default."
     )
+
+
+def _declares_inputs(name: str, get_feature: Any) -> bool:
+    try:
+        return bool(get_feature(name).inputs)
+    except LookupError:
+        return False
+
+
+# ---------------------------------------------------------------------------
+# Sidecar assets
+# ---------------------------------------------------------------------------
+
+ASSET_SEGMENT_STATS = "segment_stats"
+ASSET_ROUTE_VOCABULARY = "route_vocabulary"
+
+
+def check_artifact_assets(meta: ArtifactMetadata, registry_dir: Path | str) -> None:
+    """Refuse an artifact whose assets are not exactly what was trained.
+
+    Every declared asset must exist and match its recorded sha256, and every asset a declared
+    feature reads (`Feature.assets` in the registry) must be declared. Raises
+    `ArtifactAssetError`; an artifact with no asset-reading features and no assets passes.
+    """
+    from stoptimes.core.features.registry import missing_inputs
+
+    needed = missing_inputs(meta.features, available_inputs=_ALL_INPUTS, artifact_assets=set(meta.assets))
+    if needed:
+        detail = "; ".join(f"{n} ({', '.join(r)})" for n, r in sorted(needed.items()))
+        raise ArtifactAssetError(f"artifact {meta.artifact_id!r} cannot serve its features: {detail}")
+    directory = artifact_dir(registry_dir, meta.artifact_id)
+    for name, asset in sorted(meta.assets.items()):
+        try:
+            read_asset_bytes(directory, name, asset)
+        except (FileNotFoundError, ValueError) as exc:
+            raise ArtifactAssetError(f"artifact {meta.artifact_id!r}: {exc}") from exc
+
+
+_ALL_INPUTS = frozenset({"schedule", "trip_state", "identity", "clock"})
+
+
+def load_artifact_assets(meta: ArtifactMetadata, registry_dir: Path | str) -> "LiveAssets":
+    """Load the artifact's `segment_stats` / `route_vocabulary` assets, hash-verified.
+
+    Missing optional assets come back as ``None``; a declared asset that fails verification,
+    or one the features need but the artifact lacks, raises `ArtifactAssetError`.
+    """
+    import json
+
+    from stoptimes.core.features.identity import RouteVocabulary
+    from stoptimes.core.features.live import LiveAssets
+    from stoptimes.core.features.prior import SegmentStats
+
+    check_artifact_assets(meta, registry_dir)
+    directory = artifact_dir(registry_dir, meta.artifact_id)
+    stats = vocabulary = None
+    try:
+        if ASSET_SEGMENT_STATS in meta.assets:
+            raw = read_asset_bytes(directory, ASSET_SEGMENT_STATS, meta.assets[ASSET_SEGMENT_STATS])
+            stats = SegmentStats.from_bytes(raw)
+        if ASSET_ROUTE_VOCABULARY in meta.assets:
+            raw = read_asset_bytes(directory, ASSET_ROUTE_VOCABULARY, meta.assets[ASSET_ROUTE_VOCABULARY])
+            vocabulary = RouteVocabulary.from_dict(json.loads(raw.decode("utf-8")))
+    except (ValueError, KeyError, UnicodeDecodeError) as exc:  # malformed content despite a matching hash
+        raise ArtifactAssetError(f"artifact {meta.artifact_id!r}: cannot read asset: {exc}") from exc
+    return LiveAssets(segment_stats=stats, route_vocabulary=vocabulary)
 
 
 # ---------------------------------------------------------------------------
@@ -333,7 +446,11 @@ def load_artifact_model(
     - `meta.features` declares a feature the default serving pipeline has
       no way to compute (`check_feature_producibility`), unless
       `allow_unproducible_features` (or the
-      `STOPTIMES_ALLOW_UNPRODUCIBLE_FEATURES` env var) overrides it.
+      `STOPTIMES_ALLOW_UNPRODUCIBLE_FEATURES` env var) overrides it;
+    - a sidecar asset is missing or differs from its recorded sha256, or a
+      feature reads an asset the artifact lacks (`check_artifact_assets`;
+      never overridable). Load the assets themselves with
+      `load_artifact_assets`.
 
     Only `ModelFormat.PICKLE` is wired up here: it covers every family
     `stoptimes.models.common.registry.ModelRegistry.save_model` produces
@@ -347,6 +464,7 @@ def load_artifact_model(
     """
     check_version_drift(meta, allow_override=allow_version_drift)
     check_feature_producibility(meta, allow_override=allow_unproducible_features)
+    check_artifact_assets(meta, registry_dir)
     directory = artifact_dir(registry_dir, meta.artifact_id)
     if meta.format is ModelFormat.PICKLE:
         with open(directory / meta.model_filename, "rb") as fh:  # noqa: S301 - registry-owned artifact
