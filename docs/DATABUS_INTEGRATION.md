@@ -267,6 +267,11 @@ state is written by realtime-engine only; derived prediction projections by pred
 
 ### 5.3 For G2d (MLflow, optional)
 
+> **Superseded 2026-11-06:** SIMOVI's MLflow is the external server `ml.simovi.org`, so databus's compose file
+> needs no `mlflow` service. Only the prediction service needs outbound HTTPS and a read-only credential. The
+> live 19-feature model can't use G2a, because it needs per-trip state, so it reaches databus through O3 only.
+> See [MLFLOW_INTEGRATION.md](MLFLOW_INTEGRATION.md) §0.3.
+
 Nothing in databus beyond an `mlflow` service in compose (or an external one). The prediction service's
 environment changes to `STOPTIMES_REGISTRY=mlflow+http://mlflow:5000`. MLflow can use databus's Postgres (a
 separate database) as its backend store, and a volume or S3 for artifacts.

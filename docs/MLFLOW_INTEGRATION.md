@@ -1,8 +1,86 @@
 # MLflow integration path
 
-Status: **proposal, not scheduled** · written 2026-09-18 · to start after Phase 3 is tested
-(see [PLAN.md](PLAN.md) §7) · assumes the plan is finished and works as described there.
+Status: **revised 2026-11-06, see §0, which overrides the rest where they differ** · first written 2026-09-18.
 For how databus would consume MLflow-backed predictions, see [DATABUS_INTEGRATION.md](DATABUS_INTEGRATION.md) (O3, model source).
+
+---
+
+## 0. Revision 2026-11-06: ml.simovi.org is SIMOVI's model registry
+
+### 0.1 What changed since the first version
+
+- **There is a server.** MLflow runs at `https://ml.simovi.org` behind MLflow's built-in basic auth
+  (`/health` returns 200; every `/api/2.0/mlflow/*` call and `/version` return 401 without credentials).
+  So MLflow is no longer an optional backend kept only for comparison. **For SIMOVI it is the registry.**
+  The filesystem registry stays the package default, so a user without an MLflow server (the
+  agency-agnostic goal in PLAN §8.1) loses nothing. It is also the local cache for the MLflow backend.
+- **An artifact is now several files, and serving keeps state.** Since F4 (PLAN §8.1), a servable model is
+  `artifact.json` (schema v2, `timezone`, `holiday_region`, input tags), plus the model file, plus asset
+  sidecars (segment statistics, route vocabulary) with a sha256 each. Its live features need per-trip state
+  built from successive pings. A pyfunc that takes a feature frame cannot reproduce our numbers on its own,
+  because the features are computed by the live session, not by the caller.
+
+### 0.2 Decisions
+
+| # | Decision | Why |
+|---|---|---|
+| D1 | **The unit stored in MLflow is a whole stoptimes artifact directory.** It is logged as a pyfunc model whose `artifacts` are the directory, so nothing is lost and MLflow-native tools still see a model. There is one registered model per agency, `stoptimes-<source_id>`, and one model version per artifact. | MLflow handles versions, aliases, UI and audit. The directory keeps our contract intact. |
+| D2 | **stoptimes never runs the pyfunc.** Loading from MLflow downloads the version's directory into a local cache (`~/.cache/stoptimes/mlflow/<name>/<version>/`, immutable per version) and then takes the existing filesystem path: `read_metadata` → asset sha256 check → U7 drift refusal → live session. | All the guarantees we already test still apply unchanged. MLflow's own dependency handling only warns on a mismatch, so it can't replace the U7 refusal. |
+| D3 | **Version tags carry what selection needs**: `stoptimes.artifact_id`, `family`, `target`, `scope.level`, `scope.keys`, `inputs` (live/clock/…), `schema_version`, `timezone`, `metric.val_mae_s`, `data.test_window`. `list()` reads tags only and downloads nothing. | `SelectionPolicy` ranks candidates without fetching 35 MB per version. |
+| D4 | **Aliases are the promotion mechanism.** `@production` is what the databus prediction service serves; `@staging` is what runs in shadow. Pins such as `@route-22` follow the reversible encoding in I2. `stoptimes models promote` moves an alias. It can optionally require a passing `val` result logged for that version (D6) first. Rollback moves the alias back. | MLflow records every alias change, so promotion is auditable without a databus deploy. |
+| D5 | **The backend is chosen by URI.** `STOPTIMES_REGISTRY=mlflow+https://ml.simovi.org`, or a plain path for the filesystem registry. `STOPTIMES_MODEL_REGISTRY_DIR` keeps working. | One switch, used the same way by train, serve, val and the UI. |
+| D6 | **Tracking.** `train run` logs a run in experiment `stoptimes/<source_id>` with params, metrics, per-horizon scores, the card and baseline child runs, and the model version links to that run. `val` runs (CLI and UI) log to `stoptimes-val/<source_id>`, tagged with the model version, and include the baseline MAEs (for example MBTA `gtfsrt`). | The MLflow UI then answers "does v7 beat MBTA live, and since when?" |
+| D7 | **Credentials** come only from MLflow's standard `MLFLOW_TRACKING_USERNAME` / `MLFLOW_TRACKING_PASSWORD` environment variables. They never go in YAML and are never logged. Use two accounts: a **trainer** that can write experiments and register models, and a **server** with READ on `stoptimes-*` registered models only. | MLflow basic auth supports per-experiment and per-registered-model permissions, so a leaked serving credential cannot change models. |
+| D8 | **Serve hot-swaps on alias change.** The service re-resolves `@production` every few minutes. When the version changes it downloads, checks and loads the new one, then swaps model and assets atomically. Trip state is kept, because it is pings and arrivals, which don't depend on the model. If loading fails, it keeps serving the old version and logs an event. | Promote and rollback reach production with no restart and no databus deploy. |
+| D9 | **The validator lists MLflow models.** `/api/predictors` adds `mlflow:<name>@<alias>` and `mlflow:<name>/<version>` next to `stoptimes:<artifact_id>`, built through the same stateful artifact predictor. | This is the UI picker change; it is the same mechanism for both backends. |
+
+What stays from §§1–9: ground rules (§2: optional extra, lazy imports, `mlflow-skinny` for serve), I2's
+`RegistryBackend` refactor, I4 and I6 (bring-your-own MLflow models), §7 (don't replace serve, val or
+`experiment.yaml`). §6's comparison becomes secondary, because the decision has already been made for SIMOVI.
+
+### 0.3 How databus fits
+
+```
+                 ┌──────────────────────── ml.simovi.org (MLflow) ───────────────────────┐
+                 │ experiments stoptimes/bucr, stoptimes-val/bucr                         │
+                 │ registered model stoptimes-bucr: v1 … vN, aliases @production @staging │
+                 └──────▲ log + register ───────▲ log val runs ────────│ resolve alias, ──┘
+                        │                       │                     │ download version
+  stoptimes train ──────┘          stoptimes val (UI/CLI) ──┐          ▼
+        ▲                                                   │   prediction service (stoptimes serve
+        │ archive                                           │   + databus pipeline file, O3)
+  stoptimes record ◀── VehiclePositions + GTFS ──┐          │          │ read            │ write EX 60
+                                                 │          │          ▼                 ▼
+  databus: realtime-engine ──▶ Redis (runs, positions, stop status)   run:<id>:stop_time_updates
+           schedule-engine ──▶ /feed/{vehicle_positions,trip_updates}.pb ◀── reads ───────┘
+```
+
+- **databus never talks to MLflow.** O4 stays rejected. MLflow is a model source for the prediction service
+  (O3) only, and databus can't see it. Because the server is external, databus's compose file needs no
+  `mlflow` service (this supersedes DATABUS_INTEGRATION §5.3). The prediction service needs outbound HTTPS to
+  `ml.simovi.org` and the read-only credential.
+- **databus is also the data source.** `stoptimes record` archives databus's own VehiclePositions and
+  GTFS feed, and that archive is what `train` learns from. Every trained version therefore comes from the
+  feed it will serve.
+- **databus's published TripUpdates become a baseline**, just as MBTA's are. `val` can score
+  `mlflow:stoptimes-bucr@staging` against databus's own `trip_updates.pb`, which comes from `@production`,
+  over the same trips. That is the shadow comparison of G2b, logged in MLflow.
+- **The live model can't use G2a.** G2a swaps databus's in-process, stateless `estimate_stop_times` call.
+  The 19-feature model needs per-trip state across pings, which only the stateful live session (O3) keeps.
+  G2a can still carry the older stateless models as a reversible first step, but the model that beats the
+  baseline only reaches databus through O3.
+
+### 0.4 Order of work (M-tracks)
+
+| Track | Scope | Gate |
+|---|---|---|
+| **M0** (user) | Server facts: credentials for the two accounts, MLflow server version, artifact store (proxied `mlflow-artifacts:` or direct S3, which decides whether clients also need bucket credentials), the naming in D1 | — |
+| **M1** | `RegistryBackend` protocol and `FilesystemRegistry`. Move every caller behind it: `serve.model_loading`, `val.predictors.artifact`, `train` artifact write, `models list/card/promote`, `/api/predictors`. Filesystem only. | All existing tests pass unchanged |
+| **M2** | `MlflowRegistry` (D1–D5): write, tag-only list, cached download, aliases, promote and rollback. A shared contract test suite runs against both backends, and the MLflow side uses a local `sqlite:///` store in `tmp_path`, with no network. | Contract suite green on both |
+| **M3** | Tracking (D6): train run and val run logging, with best-effort failure handling (a warning, never a failed run) | Tested offline against a `file:` store |
+| **M4** | `mlflow:` predictor IDs in val and the API/UI (D9) | xgb-live picked from the UI by alias |
+| **M5** | Serve alias polling and hot swap (D8), plus the `serve` Docker image (G2 prerequisite) | A swap during replay loses no trip state |
+| **First real use** | Register xgb-live as `stoptimes-mbta` v1 on `ml.simovi.org` with `@staging`, then run the validator from the UI on `mlflow:stoptimes-mbta@staging` vs `gtfsrt` | Needs the user's go: it is the first write to the server |
 
 This document says where MLflow can stand in for something stoptimes already does, where it
 can't, and how to wire each option in as an **optional** extra. The filesystem registry,
