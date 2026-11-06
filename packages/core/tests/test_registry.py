@@ -324,3 +324,58 @@ class TestMlflow:
 class _Doubler:
     def predict(self, frame):
         return frame["distance_to_stop"].to_numpy() * 2
+
+
+class TestEnsureRegisteredModel:
+    """Basic-auth servers answer 403 (not 404) for a model a non-admin can't see, including a new one."""
+
+    @staticmethod
+    def _client(get_code: str | None, create_code: str | None = None):
+        from mlflow.exceptions import MlflowException
+        from mlflow.protos.databricks_pb2 import ErrorCode
+
+        created: list[str] = []
+
+        class _Client:
+            def get_registered_model(self, name):
+                if get_code:
+                    raise MlflowException("nope", error_code=ErrorCode.Value(get_code))
+
+            def create_registered_model(self, name):
+                if create_code:
+                    raise MlflowException("nope", error_code=ErrorCode.Value(create_code))
+                created.append(name)
+
+        return _Client(), created
+
+    def _ensure(self, client):
+        pytest.importorskip("mlflow")
+        from stoptimes.core.registry.mlflow_backend import MlflowRegistry
+
+        MlflowRegistry._ensure_registered_model(client, "stoptimes-mbta")
+
+    def test_existing_model_is_left_alone(self):
+        client, created = self._client(None)
+        self._ensure(client)
+        assert created == []
+
+    @pytest.mark.parametrize("code", ["RESOURCE_DOES_NOT_EXIST", "PERMISSION_DENIED"])
+    def test_missing_or_unreadable_model_is_created(self, code):
+        client, created = self._client(code)
+        self._ensure(client)
+        assert created == ["stoptimes-mbta"]
+
+    def test_someone_elses_model_gives_a_clear_error(self):
+        from stoptimes.core.registry import RegistryError
+
+        client, _ = self._client("PERMISSION_DENIED", create_code="RESOURCE_ALREADY_EXISTS")
+        with pytest.raises(RegistryError, match="belongs to another user"):
+            self._ensure(client)
+
+    def test_other_errors_propagate(self):
+        from mlflow.exceptions import MlflowException
+
+        client, created = self._client("INTERNAL_ERROR")
+        with pytest.raises(MlflowException):
+            self._ensure(client)
+        assert created == []

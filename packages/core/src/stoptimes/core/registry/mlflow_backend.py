@@ -493,14 +493,33 @@ class MlflowRegistry:
 
     @staticmethod
     def _ensure_registered_model(client: Any, name: str) -> None:
+        """Create *name* unless it exists.
+
+        A server with basic auth answers PERMISSION_DENIED, not RESOURCE_DOES_NOT_EXIST, when a
+        non-admin looks up a model nobody has granted them -- which includes one that doesn't exist
+        yet (ml.simovi.org does). Creating it is then the way to find out: any signed-in user may
+        create a model and becomes its manager; if it exists and belongs to someone else, the
+        create fails and that is reported.
+        """
         from mlflow.exceptions import MlflowException
 
         try:
             client.get_registered_model(name)
+            return
         except MlflowException as exc:
-            if getattr(exc, "error_code", "") != "RESOURCE_DOES_NOT_EXIST":
+            denied = getattr(exc, "error_code", "") == "PERMISSION_DENIED"
+            if not denied and getattr(exc, "error_code", "") != "RESOURCE_DOES_NOT_EXIST":
                 raise
+        try:
             client.create_registered_model(name)
+        except MlflowException as exc:
+            if not denied:
+                raise
+            raise RegistryError(
+                f"registered model {name!r}: no permission to read it, and creating it failed "
+                f"({getattr(exc, 'error_code', '')}): it probably exists and belongs to another user; "
+                "ask an MLflow admin to grant you EDIT on it"
+            ) from exc
 
 
 def _fingerprint(meta: ArtifactMetadata) -> str:
