@@ -471,3 +471,112 @@ def test_load_artifact_model_loads_normally_for_producible_features(tmp_path):
     meta = _write_artifact_with_features(tmp_path, "a1", ["distance_to_stop", "hour"])
     model = load_artifact_model(meta, tmp_path)
     assert model.family == "fake"
+
+
+# ---------------------------------------------------------------------------
+# Live features: refusals name the missing input; sidecar assets are verified.
+# ---------------------------------------------------------------------------
+
+ALL_LIVE_INPUTS = {"schedule", "trip_state", "identity", "clock"}
+
+
+def _live_meta(artifact_id="live1", features=("delay_now", "prior_rem", "route_code"), assets=None):
+    return ArtifactMetadata(
+        artifact_id=artifact_id,
+        family="fake",
+        features=list(features),
+        assets=assets or {},
+        provenance=Provenance(created_at=datetime.now(timezone.utc)),
+    )
+
+
+def _write_live_artifact(registry, artifact_id="live1", features=("delay_now", "prior_rem", "route_code")):
+    """A real, hash-consistent artifact carrying both assets."""
+    import json
+
+    from stoptimes.core.contracts.artifact import write_asset
+    from stoptimes.core.features.identity import RouteVocabulary
+    from stoptimes.core.features.prior import fit
+
+    directory = registry / artifact_id
+    stats = fit(pd.DataFrame(columns=["route_id", "from_stop_id", "to_stop_id", "travel_s", "seglen_m", "hour", "daytype", "service_date"]))
+    assets = {
+        "segment_stats": write_asset(directory, "segment_stats.bin", stats.to_bytes()),
+        "route_vocabulary": write_asset(
+            directory, "route_vocabulary.json", json.dumps(RouteVocabulary.fit(["a", "b"]).to_dict()).encode()
+        ),
+    }
+    meta = _live_meta(artifact_id, features, assets)
+    write_metadata(meta, directory)
+    with open(directory / meta.model_filename, "wb") as fh:
+        pickle.dump(_StubModel(), fh)
+    return meta
+
+
+def test_live_features_refusal_names_the_missing_input():
+    meta = _live_meta(features=["delay_now", "prior_rem"])
+    with pytest.raises(UnproducibleFeaturesError) as err:
+        check_feature_producibility(meta, available_inputs={"trip_state"})
+    text = str(err.value)
+    assert "delay_now (needs static schedule)" in text
+    assert "prior_rem (needs static schedule, artifact has no segment_stats asset)" in text
+
+
+def test_live_features_pass_when_inputs_and_assets_are_available(tmp_path):
+    meta = _write_live_artifact(tmp_path)
+    check_feature_producibility(meta, available_inputs=ALL_LIVE_INPUTS)  # must not raise
+
+
+def test_live_features_are_refused_by_default_until_the_pipeline_supplies_inputs(tmp_path, monkeypatch):
+    monkeypatch.delenv(ALLOW_UNPRODUCIBLE_FEATURES_ENV, raising=False)
+    meta = _write_live_artifact(tmp_path)
+    with pytest.raises(UnproducibleFeaturesError, match="needs static schedule"):
+        load_artifact_model(meta, tmp_path)
+    assert load_artifact_model(meta, tmp_path, allow_unproducible_features=True).family == "fake"
+
+
+def test_missing_asset_is_a_refusal_even_when_inputs_exist():
+    from stoptimes.serve.model_loading import ArtifactAssetError, check_artifact_assets
+
+    meta = _live_meta(features=["prior_rem"])
+    check_feature_producibility(meta, allow_override=True)
+    with pytest.raises(ArtifactAssetError, match="artifact has no segment_stats asset"):
+        check_artifact_assets(meta, "/nonexistent")
+
+
+def test_load_artifact_assets_round_trips_and_verifies(tmp_path):
+    from stoptimes.serve.model_loading import load_artifact_assets
+
+    meta = _write_live_artifact(tmp_path)
+    assets = load_artifact_assets(meta, tmp_path)
+    assert assets.route_vocabulary.route_ids == ("a", "b")
+    assert assets.segment_stats.n_obs == 0
+
+
+def test_tampered_asset_is_refused(tmp_path):
+    from stoptimes.serve.model_loading import ArtifactAssetError, load_artifact_assets
+
+    meta = _write_live_artifact(tmp_path)
+    path = tmp_path / meta.artifact_id / "route_vocabulary.json"
+    path.write_text('{"route_ids": ["a", "z"]}')
+    with pytest.raises(ArtifactAssetError, match="does not match its recorded sha256"):
+        load_artifact_assets(meta, tmp_path)
+    with pytest.raises(ArtifactAssetError):
+        load_artifact_model(meta, tmp_path, allow_unproducible_features=True)
+
+
+def test_deleted_asset_file_is_refused(tmp_path):
+    from stoptimes.serve.model_loading import ArtifactAssetError, load_artifact_assets
+
+    meta = _write_live_artifact(tmp_path)
+    (tmp_path / meta.artifact_id / "segment_stats.bin").unlink()
+    with pytest.raises(ArtifactAssetError, match="missing"):
+        load_artifact_assets(meta, tmp_path)
+
+
+def test_artifacts_without_assets_load_as_before(tmp_path):
+    from stoptimes.serve.model_loading import load_artifact_assets
+
+    meta = _write_artifact(tmp_path, "plain")
+    assets = load_artifact_assets(meta, tmp_path)
+    assert assets.segment_stats is None and assets.route_vocabulary is None
