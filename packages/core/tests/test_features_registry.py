@@ -119,3 +119,36 @@ def test_build_composes_multiple_features():
     out = build(["hour", "distance_to_stop"], frame)
     assert "hour" in out.columns
     assert "distance_to_stop" in out.columns
+
+
+# --- live features and input tags (F4a) ----------------------------------------
+
+
+def test_live_features_are_registered_with_declared_inputs():
+    from stoptimes.core.features.live import LIVE_FEATURES
+
+    registered = {f.name for f in list_features()}
+    assert set(LIVE_FEATURES) <= registered
+    assert {f.name for f in list_features(tag="live")} == {
+        "minute_of_day", "route_code", "delay_now", "sched_rem", "sched_rem_t", "delay_last", "prior_rem",
+    }
+    assert get("delay_last").inputs == ("schedule", "trip_state")
+    assert get("prior_rem").assets == ("segment_stats",)
+    assert get("route_code").assets == ("route_vocabulary",)
+    assert get("hour").inputs == ()
+
+
+def test_missing_inputs_names_the_missing_input_not_just_the_column():
+    from stoptimes.core.features.registry import missing_inputs
+
+    blocked = missing_inputs(
+        ["hour", "delay_now", "prior_rem", "route_code", "not_a_registered_name"],
+        available_inputs={"trip_state", "identity", "clock"},
+        artifact_assets={"route_vocabulary"},
+    )
+    assert blocked == {
+        "delay_now": ["needs static schedule"],
+        "prior_rem": ["needs static schedule", "artifact has no segment_stats asset"],
+    }
+    assert missing_inputs(["delay_now", "prior_rem", "route_code"], {"schedule", "trip_state", "asset", "identity"},
+                          {"segment_stats", "route_vocabulary"}) == {}
