@@ -70,6 +70,13 @@ What stays from §§1–9: ground rules (§2: optional extra, lazy imports, `mlf
   G2a can still carry the older stateless models as a reversible first step, but the model that beats the
   baseline only reaches databus through O3.
 
+**Server facts (read-only probe, 2026-11-06):** MLflow **3.17.0**. Artifacts are **proxied** by the server
+(`mlflow-artifacts:/<id>`), so clients need no bucket credentials. The probing account is not an admin. It
+can see one experiment (`test-jae`), gets 403 on the Default experiment, and sees no registered models.
+Calls are **slow, 6–21 s each** (even an empty registered-model search takes about 20 s). So `list()` and
+`/api/predictors` need a TTL cache, alias polling must not block serving, and a cold download of a version
+has to happen before the swap, never on the predict path.
+
 ### 0.4 Order of work (M-tracks)
 
 | Track | Scope | Gate |
