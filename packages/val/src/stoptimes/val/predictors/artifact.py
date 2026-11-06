@@ -252,6 +252,9 @@ class StoptimesArtifactPredictor:
             ``"mbta"``.
         policy: Optional ``SelectionPolicy`` override; defaults to
             ``SelectionPolicy()``.
+        artifact: The one artifact to serve, already resolved (``mlflow:`` predictors): the
+            registry is then not scanned and *ref* only names the predictor.
+        predictor_id: Overrides the ``stoptimes:<ref>`` id.
     """
 
     def __init__(
@@ -260,16 +263,24 @@ class StoptimesArtifactPredictor:
         registry_dir: RegistryLike | None = None,
         source_id: str | None = None,
         policy: SelectionPolicy | None = None,
+        *,
+        artifact: ArtifactMetadata | None = None,
+        predictor_id: str | None = None,
     ) -> None:
         self.ref = ref
-        self.predictor_id: str = f"stoptimes:{ref}"
+        self.predictor_id: str = predictor_id or f"stoptimes:{ref}"
+        self.resolved_version: str | None = None
+        """For an ``mlflow:`` predictor, the ``<model>/<version>`` its ref resolved to at run start."""
         self._registry: RegistryBackend = open_registry(registry_dir)
         self._source_id = source_id if source_id is not None else ref
         self._policy = policy or SelectionPolicy()
 
-        self._candidates = load_registry_candidates(self._registry)
-        by_id = {c.artifact_id: c for c in self._candidates}
-        self._static_artifact: ArtifactMetadata | None = by_id.get(ref)
+        if artifact is not None:
+            self._candidates = [artifact]
+            self._static_artifact: ArtifactMetadata | None = artifact
+        else:
+            self._candidates = load_registry_candidates(self._registry)
+            self._static_artifact = {c.artifact_id: c for c in self._candidates}.get(ref)
         self._static_loader: Any = None
         self._live: dict[str, tuple[Any, Any]] = {}
         """artifact_id -> (LiveSession, model): the run's live state (see the module docstring)."""

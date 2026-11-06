@@ -19,11 +19,13 @@ from stoptimes.core.registry.filesystem import FilesystemRegistry
 __all__ = [
     "ArtifactExistsError",
     "FilesystemRegistry",
+    "MLFLOW_ENV",
     "REGISTRY_ENV",
     "RegistryBackend",
     "RegistryError",
     "RegistryLike",
     "SkipHandler",
+    "mlflow_registry",
     "open_registry",
 ]
 
@@ -31,6 +33,10 @@ __all__ = [
 REGISTRY_ENV = "STOPTIMES_REGISTRY"
 
 MLFLOW_SCHEME = "mlflow+"
+
+#: The MLflow tracking server that `mlflow:<model>@<alias>` predictor ids refer to, e.g.
+#: `https://ml.simovi.org`. Unset: the server named by `$STOPTIMES_REGISTRY` if that is `mlflow+…`.
+MLFLOW_ENV = "STOPTIMES_MLFLOW"
 
 RegistryLike: TypeAlias = RegistryBackend | Path | str
 
@@ -75,3 +81,17 @@ def _mlflow_registry(tracking_uri: str) -> RegistryBackend:
 
             registry = _MLFLOW_REGISTRIES[tracking_uri] = MlflowRegistry(tracking_uri)
         return registry
+
+
+def mlflow_registry(tracking_uri: str | None = None) -> RegistryBackend | None:
+    """The MLflow registry for *tracking_uri*; by default `$STOPTIMES_MLFLOW`, else `$STOPTIMES_REGISTRY`
+    when that is an `mlflow+` URI. None when no MLflow server is configured."""
+    uri = (tracking_uri or os.environ.get(MLFLOW_ENV, "")).strip()
+    if uri.startswith(MLFLOW_SCHEME):
+        uri = uri[len(MLFLOW_SCHEME) :]
+    if not uri:
+        env = os.environ.get(REGISTRY_ENV, "").strip()
+        if not env.startswith(MLFLOW_SCHEME):
+            return None
+        uri = env[len(MLFLOW_SCHEME) :]
+    return _mlflow_registry(uri)

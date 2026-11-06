@@ -108,7 +108,7 @@ DEFAULT_PREDICTOR_IDS: list[str] = ["gtfsrt", "baseline:constant_speed"]
 
 # Prefixes resolved dynamically (arbitrary suffix), rather than as fixed
 # PREDICTOR_REGISTRY entries -- see `resolve_predictor_factory`.
-_DYNAMIC_PREDICTOR_PREFIXES: tuple[str, ...] = ("stoptimes:", "pipeline:")
+_DYNAMIC_PREDICTOR_PREFIXES: tuple[str, ...] = ("stoptimes:", "pipeline:", "mlflow:")
 
 
 def is_known_predictor_id(pid: str) -> bool:
@@ -126,7 +126,7 @@ def is_known_predictor_id(pid: str) -> bool:
 
 def resolve_predictor_factory(pid: str) -> Any:
     """Return a zero-arg factory for *pid* -- a fixed `PREDICTOR_REGISTRY`
-    entry, or one built dynamically for a `stoptimes:`/`pipeline:` prefix
+    entry, or one built dynamically for a `stoptimes:`/`pipeline:`/`mlflow:` prefix
     whose suffix isn't one of the four known trained-model families.
 
     Raises:
@@ -140,6 +140,11 @@ def resolve_predictor_factory(pid: str) -> Any:
     if pid.startswith("pipeline:") and len(pid) > len("pipeline:"):
         path = pid[len("pipeline:") :]
         return lambda: PipelineTripUpdatesPredictor(path)
+    if pid.startswith("mlflow:") and len(pid) > len("mlflow:"):
+        from stoptimes.val.predictors.mlflow_models import build_mlflow_predictor
+
+        mlflow_ref = pid[len("mlflow:") :]
+        return lambda: build_mlflow_predictor(mlflow_ref)
     raise KeyError(pid)
 
 

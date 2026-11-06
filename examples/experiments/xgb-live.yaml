@@ -14,6 +14,8 @@
 # the validation days drive early stopping. n_estimators is the cap.
 name: xgb-live
 data:
+  sources:
+    - mbta # the agency: scope.source_id, so the artifact publishes as MLflow model stoptimes-mbta
   datasets:
     - mbta-live
 target: time_to_arrival_seconds

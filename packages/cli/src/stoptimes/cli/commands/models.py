@@ -123,6 +123,52 @@ def models_card(
     typer.echo(text)
 
 
+@app.command("publish")
+def models_publish(
+    artifact_id: str = typer.Argument(..., help="Artifact id in the source registry."),
+    to: str = typer.Option(..., "--to", help="Target MLflow registry: mlflow+<tracking uri>."),
+    registry: str = typer.Option(
+        str(_DEFAULT_REGISTRY), "--registry", help="Source registry directory holding the artifact."
+    ),
+    alias: list[str] = typer.Option(
+        [], "--alias", help="Point this alias (e.g. staging) at the new version. Repeatable."
+    ),
+    json_output: bool = typer.Option(False, "--json", help="Print the new version as JSON."),
+) -> None:
+    """Upload an artifact to an MLflow registry as a new model version (one model per agency,
+    `stoptimes-<source_id>`), optionally setting aliases on it.
+
+    `--json`: ``{"name", "version", "artifact_id", "aliases"}``.
+    """
+    require("stoptimes.models", "models")
+    from stoptimes.core.registry import MLFLOW_SCHEME, RegistryError, open_registry
+
+    if not to.startswith(MLFLOW_SCHEME):
+        typer.secho(f"✗ --to must be an MLflow registry ({MLFLOW_SCHEME}<tracking uri>), got {to!r}", fg="red", err=True)
+        raise typer.Exit(2)
+    source = open_registry(registry)
+    meta = source.get(artifact_id)
+    if meta is None:
+        typer.secho(f"✗ no artifact {artifact_id!r} in {source.uri}", fg="red", err=True)
+        raise typer.Exit(1)
+    target = open_registry(to)
+    try:
+        version = target.publish(source.local_root(meta) / artifact_id)  # type: ignore[attr-defined]
+        for name in alias:
+            target.set_alias(version.name, name, version.version)  # type: ignore[attr-defined]
+    except RegistryError as exc:
+        typer.secho(f"✗ {exc}", fg="red", err=True)
+        raise typer.Exit(1) from exc
+    row = {"name": version.name, "version": version.version, "artifact_id": artifact_id, "aliases": list(alias)}
+    if json_output:
+        typer.echo(json.dumps(row))
+        return
+    suffix = f" (aliases: {', '.join(alias)})" if alias else ""
+    typer.secho(f"✓ {artifact_id} -> {version.name} v{version.version} on {target.uri}{suffix}", fg="green")
+    for name in alias:
+        typer.echo(f"  predictor id: mlflow:{version.name}@{name}")
+
+
 @app.command("promote")
 def models_promote(
     artifact_id: str = typer.Argument(..., help="Artifact id to promote."),

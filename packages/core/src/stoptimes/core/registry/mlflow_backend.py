@@ -151,7 +151,7 @@ class MlflowRegistry:
         base = Path(cache_dir) if cache_dir is not None else _default_cache_root()
         self.cache_dir = base.expanduser() / host
         self._lock = threading.RLock()
-        self._listing: tuple[float, dict[str, RegistryVersion]] | None = None
+        self._listing: tuple[float, dict[str, RegistryVersion], tuple[RegistryVersion, ...]] | None = None
         self._by_fingerprint: dict[str, RegistryVersion] = {}
         self._client_obj: Any = None
 
@@ -213,6 +213,17 @@ class MlflowRegistry:
         """Every stoptimes version (optionally of one registered model), oldest first."""
         found = self._search(name=name)
         return sorted(found, key=lambda v: (v.name, v.version))
+
+    def listing(self, *, refresh: bool = False) -> builtins.list[RegistryVersion]:
+        """Every stoptimes version, sorted by (name, version), from the same TTL cache as `list()`.
+
+        Versions that can't be read are left out. Use this where a request must stay cheap (the val
+        API lists it on every page load); `versions()` always asks the server.
+        """
+        self._latest(refresh=refresh)
+        with self._lock:
+            assert self._listing is not None
+            return builtins.list(self._listing[2])
 
     def get_version(self, name: str, version: int | str) -> RegistryVersion:
         mv = self._call(lambda c: c.get_model_version(name, str(version)), f"{name} v{version}")
@@ -333,12 +344,13 @@ class MlflowRegistry:
             now = time.monotonic()
             if not refresh and self._listing is not None and now - self._listing[0] < self.list_ttl_s:
                 return self._listing[1]
+            every = sorted(self._search(strict=strict, on_skip=on_skip), key=lambda v: (v.name, v.version))
             latest: dict[str, RegistryVersion] = {}
-            for v in self._search(strict=strict, on_skip=on_skip):
+            for v in every:
                 current = latest.get(v.artifact_id)
                 if current is None or (v.created_ms, v.version) > (current.created_ms, current.version):
                     latest[v.artifact_id] = v
-            self._listing = (now, latest)
+            self._listing = (now, latest, tuple(every))
             return latest
 
     def _search(

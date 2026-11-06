@@ -17,8 +17,11 @@ main()
 
 from __future__ import annotations
 
+import asyncio
+import logging
+import threading
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, Any
 
 import uvicorn
 from fastapi import FastAPI, HTTPException, Query
@@ -60,6 +63,59 @@ def _state_to_info(state: RunState) -> RunInfo:
         ended_at=state.ended_at,
         error=state.error,
     )
+
+
+# ── MLflow predictors ──────────────────────────────────────────────────────────
+
+log = logging.getLogger(__name__)
+
+#: How long `/api/predictors` waits for the MLflow listing before answering without it. The listing
+#: keeps loading in the background and fills the registry's cache, so the next request has it.
+MLFLOW_LIST_TIMEOUT_S = 30.0
+
+
+def _configured_mlflow_registry() -> Any:
+    """The MLflow registry `mlflow:` predictors use, or None (none configured, or mlflow missing)."""
+    from stoptimes.core.registry import mlflow_registry
+
+    try:
+        return mlflow_registry()
+    except Exception as exc:  # noqa: BLE001 - the API must still list the other predictors
+        log.warning("MLflow registry unavailable: %s", exc)
+        return None
+
+
+async def _mlflow_predictor_ids(timeout_s: float = MLFLOW_LIST_TIMEOUT_S) -> list[str]:
+    """`mlflow:<model>@<alias>` / `mlflow:<model>/<version>` ids, or [] if MLflow is off, down or slow."""
+    from stoptimes.val.predictors.mlflow_models import mlflow_predictor_ids
+
+    registry = _configured_mlflow_registry()
+    if registry is None:
+        return []
+    try:
+        versions = await asyncio.wait_for(asyncio.to_thread(registry.listing), timeout_s)
+    except TimeoutError:
+        log.warning("MLflow listing took over %.0fs; answering without mlflow: predictors", timeout_s)
+        return []
+    except Exception as exc:  # noqa: BLE001 - an unreachable server must not break the predictor list
+        log.warning("MLflow listing failed: %s", exc)
+        return []
+    return mlflow_predictor_ids(versions)
+
+
+def _warm_mlflow_listing() -> None:
+    """Load the MLflow listing in the background at startup, so the first page load needn't wait."""
+    registry = _configured_mlflow_registry()
+    if registry is None:
+        return
+
+    def _load() -> None:
+        try:
+            registry.listing()
+        except Exception as exc:  # noqa: BLE001 - logged; /api/predictors retries on demand
+            log.warning("MLflow listing failed at startup: %s", exc)
+
+    threading.Thread(target=_load, name="mlflow-listing", daemon=True).start()
 
 
 # ── Application factory ────────────────────────────────────────────────────────
@@ -108,6 +164,7 @@ def create_app(
 
     # Expose on app.state so middleware / lifespan hooks can reach it.
     app.state.run_manager = run_manager
+    _warm_mlflow_listing()
 
     # ── WebSocket routes (Phase B) ─────────────────────────────────────────────
     app.include_router(ws_router)
@@ -143,14 +200,17 @@ def create_app(
     async def predictors() -> list[str]:
         """Return the IDs of all registered predictors, then one `stoptimes:<artifact_id>`
         per artifact in the model registry (scanned per request, so a newly trained
-        model appears without restarting the API)."""
+        model appears without restarting the API), then the `mlflow:` ids of the MLflow
+        server in `$STOPTIMES_MLFLOW`, if one is set (cached for a minute; left out if
+        the server doesn't answer within `MLFLOW_LIST_TIMEOUT_S`)."""
         from stoptimes.val.predictors.artifact import load_registry_candidates
 
         ids = list(PREDICTOR_REGISTRY.keys())
-        for meta in load_registry_candidates(None):
+        for meta in await asyncio.to_thread(load_registry_candidates, None):
             pid = f"stoptimes:{meta.artifact_id}"
             if pid not in ids:
                 ids.append(pid)
+        ids.extend(pid for pid in await _mlflow_predictor_ids() if pid not in ids)
         return ids
 
     @app.post("/api/runs")
