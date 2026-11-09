@@ -453,6 +453,11 @@ def data_frame(
         None, "--rows-per-day", help="--live: uniform random row subsample per day (default: keep all)."
     ),
     seed: int = typer.Option(42, "--seed", help="--live: subsampling seed."),
+    arrival_radius_m: float | None = typer.Option(
+        None, "--arrival-radius-m",
+        help="--live: a stop also counts as reached within this many metres before it along "
+        "the shape (buses laying over just short of the final stop; default: crossing only).",
+    ),
 ) -> None:
     """Build the training frame: observations + arrivals + static GTFS -> one
     row per (vehicle position, upcoming stop), ready for `train run`
@@ -479,7 +484,7 @@ def data_frame(
     if live:
         _data_frame_live(
             src, obs_frame, loader, out_path, train_days, val_days, rows_per_day, seed, register,
-            overwrite, observations, static, json_output,
+            overwrite, observations, static, json_output, arrival_radius_m,
         )
         return
     if arrivals is None:
@@ -562,7 +567,7 @@ def _day_range(spec: str | None, flag: str) -> list[str]:
 
 def _data_frame_live(
     src, obs_frame, loader, out_path, train_days, val_days, rows_per_day, seed, register, overwrite,
-    observations, static, json_output,
+    observations, static, json_output, arrival_radius_m=None,
 ) -> None:
     from stoptimes.core.catalog import Catalog, DatasetEntry, DatasetExistsError, DatasetKind
     from stoptimes.train.live_frame import (
@@ -573,7 +578,9 @@ def _data_frame_live(
     )
 
     train, val = _day_range(train_days, "--train-days"), _day_range(val_days, "--val-days")
-    params = LiveFrameParams(rows_per_day=rows_per_day, seed=seed)
+    params = LiveFrameParams(
+        rows_per_day=rows_per_day, seed=seed, arrival_radius_m=arrival_radius_m
+    )
     try:
         by_day, skipped = prepare_trip_records(
             obs_frame, loader, config_timezone=src.timezone, holiday_region=src.holiday_region,

@@ -23,7 +23,7 @@ from __future__ import annotations
 import json
 import logging
 from collections.abc import Callable, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
 
@@ -47,7 +47,7 @@ from stoptimes.core.features.prior import (
     segments_from_arrivals,
 )
 from stoptimes.core.features.schedule import resolve_timezone
-from stoptimes.core.features.trip_state import Ping, TripState, arrivals_from_pings
+from stoptimes.core.features.trip_state import Ping, StopArrival, TripState, arrivals_from_pings
 
 __all__ = [
     "LiveFrameParams",
@@ -58,6 +58,7 @@ __all__ = [
     "build_live_dataset",
     "build_day_frame",
     "write_live_assets",
+    "with_radius_arrivals",
     "LIVE_ASSETS_MANIFEST",
     "TARGET_COLUMN",
 ]
@@ -88,6 +89,13 @@ class LiveFrameParams:
 
     rows_per_day: int | None = None
     """Uniform random subsample of (instant x stop) rows per day; None keeps all."""
+
+    arrival_radius_m: float | None = None
+    """When set, a stop also counts as reached at the first matched ping within this many
+    metres *before* it along the shape (the earlier of that and the crossing wins) - the
+    radius rule ``stoptimes val`` scores against. Needed where buses lay over just short of
+    the final stop (bUCR's Odontología: 6 m short, so the crossing only fires when the bus
+    leaves 30 min later). ``None`` keeps crossing-only arrivals."""
 
     seed: int = 42
 
@@ -242,7 +250,22 @@ def _record_for_instance(
         for e, la, lo in zip(group["epoch"], group["lat"], group["lon"], strict=True)
     ]
     state = arrivals_from_pings(pings, matcher, ctx.stop_progress_m, trip_key=ctx.trip_key)
+    if params.arrival_radius_m is not None:
+        state = with_radius_arrivals(state, params.arrival_radius_m)
     return TripRecord(ctx, state, vehicle, len(pings))
+
+
+def with_radius_arrivals(state: TripState, radius_m: float) -> TripState:
+    """``state`` with each stop's arrival moved to the first valid ping within ``radius_m``
+    before the stop along the shape, when that ping is earlier than the crossing (or the
+    crossing was never seen). Such an arrival is known at its own ping (no lag, no gap)."""
+    valid = [(e, p) for e, p, ok in state.pings if ok]
+    arrivals = list(state.arrivals)
+    for i, stop_m in enumerate(state.stop_progress_m):
+        hit = next((e for e, p in valid if p >= stop_m - radius_m), None)
+        if hit is not None and (arrivals[i] is None or hit < arrivals[i].epoch):
+            arrivals[i] = StopArrival(epoch=float(hit), detect_epoch=float(hit), gap_s=0.0)
+    return replace(state, arrivals=tuple(arrivals))
 
 
 # ---------------------------------------------------------------------------
