@@ -27,6 +27,7 @@ from stoptimes.val.provenance import RunProvenance, build_run_provenance, write_
 from stoptimes.val.storage.sqlite import SqliteStorage
 
 _TRACKER_FROM_ENV: Any = object()
+_NOTHING_TO_LOG = "<nothing-to-log>"  # a run with no scored results is skipped, not a failure
 
 
 @dataclass
@@ -410,6 +411,8 @@ class RunManager:
 
             with SqliteStorage(state.db_path) as storage:
                 results = storage.load_results()
+            if not results:
+                return _NOTHING_TO_LOG
             return log_validation(
                 tracker,
                 results,
@@ -432,6 +435,12 @@ class RunManager:
                 mlflow_run, detail = None, f"{type(exc).__name__}: {exc}"
             else:
                 detail = "see the API log"
+            if mlflow_run == _NOTHING_TO_LOG:
+                message = "not logged to MLflow: the run scored no predictions"
+                self.telemetry.log_event(
+                    "info", source="tracking", message=message, run_id=state.id
+                )
+                return
             if mlflow_run is None:
                 message = f"MLflow logging failed ({detail})"
                 self.telemetry.log_event(

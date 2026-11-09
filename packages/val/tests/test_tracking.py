@@ -168,6 +168,24 @@ async def test_api_tracking_failure_is_only_a_warning_event(tmp_path):
     assert events and events[-1]["level"] == "warn"
 
 
+async def test_api_run_with_no_results_is_skipped_not_failed(tmp_path):
+    def _feed_down(*_a, **_kw):
+        raise ConnectionRefusedError(61, "Connection refused")
+
+    manager = RunManager(
+        tmp_path / "data",
+        deps_builder=_feed_down,
+        sources_dir=_SOURCES_DIR,
+        tracker=Tracker(f"sqlite:///{tmp_path / 'mlflow.db'}"),
+    )
+    run_id = await manager.start_run(source="mbta", predictor_ids=[], routes=[], duration_s=60.0)
+    await _finish(manager, run_id)
+    assert manager.get_run(run_id).status == "error"
+    events = [e for e in manager.telemetry.events() if e.get("source") == "tracking"]
+    assert events[-1]["level"] == "info"
+    assert "scored no predictions" in events[-1]["message"]
+
+
 def test_tracking_is_off_by_default(tmp_path):
     manager = RunManager(
         tmp_path / "data", deps_builder=_replay_deps_builder, sources_dir=_SOURCES_DIR
