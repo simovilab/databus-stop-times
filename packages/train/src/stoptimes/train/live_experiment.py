@@ -153,9 +153,13 @@ def run_live_experiment(
     if unknown:
         raise ValueError(f"not live features: {unknown}")
     frame = pd.read_parquet(frame_path)
+    routes = [str(r) for r in experiment.data.routes or []]
+    if routes:  # a route-specific model: fit and score on those routes' rows only
+        frame = frame[frame["route_id"].astype(str).isin(routes)]
     train, val = frame[frame["split"] == "train"], frame[frame["split"] == "val"]
     if train.empty or val.empty:
-        raise ValueError("a live frame needs both train and val days (val drives early stopping)")
+        which = f" for routes {routes}" if routes else ""
+        raise ValueError(f"a live frame needs both train and val days{which} (val drives early stopping)")
     assets = _verified_assets(assets_dir, manifest)
     needed = {a for f in features for a in _feature_assets(f)}
     absent = sorted(needed - set(assets))
@@ -178,7 +182,9 @@ def run_live_experiment(
         target=TARGET_COLUMN,
         format=ModelFormat.PICKLE,
         scope=ModelScope(
-            level=ScopeLevel.GLOBAL, source_id=experiment.data.sources[0] if experiment.data.sources else None
+            level=ScopeLevel.ROUTE if routes else ScopeLevel.GLOBAL,
+            source_id=experiment.data.sources[0] if experiment.data.sources else None,
+            route_ids=routes,
         ),
         features=features,
         params={k: v for k, v in experiment.model.params.items() if isinstance(v, (int, float, str, bool))},

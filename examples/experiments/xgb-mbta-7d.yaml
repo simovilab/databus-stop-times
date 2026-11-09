@@ -1,0 +1,46 @@
+# A small, fast MBTA experiment for trying `train run --track` against an MLflow server.
+# Data: a precomputed 7-day feature frame for routes 222, 15 and 37 (~558k rows), named
+# mbta_bus_222_15_37_7d.parquet in --dataset-dir. Trains in about a minute on a laptop.
+#   stoptimes train run examples/experiments/xgb-mbta-7d.yaml \
+#       --dataset-dir <dir with the parquet> --registry ~/stoptimes-registry \
+#       --track https://ml.simovi.org
+name: xgb-mbta-7d
+data:
+  sources:
+    - mbta # the agency: MLflow experiment stoptimes/mbta
+  datasets:
+    - mbta_bus_222_15_37_7d
+target: time_to_arrival_seconds
+model:
+  family: xgboost
+  params:
+    max_depth: 6
+    n_estimators: 300
+    learning_rate: 0.08
+    subsample: 0.8
+    colsample_bytree: 0.8
+    n_jobs: 6
+features:
+  - distance_to_stop
+  - distance_to_next_stop
+  - progress_ratio
+  - stops_ahead
+  - current_speed_kmh
+  - hour_sin
+  - hour_cos
+  - dow_sin
+  - dow_cos
+  - is_peak_hour
+  - is_weekend
+split:
+  kind: time
+  train_fraction: 0.8
+  test_fraction: 0.2
+seed: 42
+outputs:
+  registry_dir: artifacts/models
+  tags:
+    - xgb-mbta-7d
+    - demo
+baselines:
+  - constant_speed

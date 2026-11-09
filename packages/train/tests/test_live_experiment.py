@@ -96,3 +96,25 @@ def test_tampered_asset_blocks_training(frame_dir, tmp_path):
     (frame_dir / "live.assets" / "route_vocabulary.json").write_text('{"route_ids": ["zz"]}')
     with pytest.raises(ValueError, match="manifest hash"):
         run_experiment(_experiment(), registry_dir=tmp_path / "r", dataset_dir=frame_dir)
+
+
+def test_routes_make_a_route_specific_model(frame_dir, tmp_path, dataset):  # noqa: F811
+    exp = _experiment(data={"datasets": ["live"], "routes": ["rA"]})
+    meta = run_experiment(exp, registry_dir=tmp_path / "r", dataset_dir=frame_dir)
+    assert meta.scope.level.value == "route" and meta.scope.route_ids == ["rA"]
+    rA = dataset.frame[dataset.frame.route_id == "rA"]
+    assert meta.data.n_train == int((rA.split == "train").sum())
+    assert meta.data.n_test == int((rA.split == "val").sum())
+    everything = run_experiment(
+        _experiment(name="all"), registry_dir=tmp_path / "r", dataset_dir=frame_dir
+    )
+    assert everything.scope.level.value == "global" and everything.data.n_train > meta.data.n_train
+
+
+def test_unknown_route_is_an_error(frame_dir, tmp_path):
+    with pytest.raises(ValueError, match=r"routes \['nope'\]"):
+        run_experiment(
+            _experiment(data={"datasets": ["live"], "routes": ["nope"]}),
+            registry_dir=tmp_path / "r",
+            dataset_dir=frame_dir,
+        )

@@ -1,0 +1,55 @@
+# xgb-live's settings on the full mbta-live frame (all three routes, one agency-wide model). Build the frame as in xgb-live.yaml, then:
+#   stoptimes train run examples/experiments/xgb-live-global.yaml --dataset-dir <dir> --track https://ml.simovi.org
+name: xgb-live-global
+data:
+  sources:
+    - mbta # the agency: scope.source_id, so the artifact publishes as MLflow model stoptimes-mbta
+  datasets:
+    - mbta-live
+target: time_to_arrival_seconds
+model:
+  family: xgboost
+  params:
+    objective: reg:absoluteerror
+    max_depth: 8
+    learning_rate: 0.06
+    subsample: 0.8
+    colsample_bytree: 0.8
+    min_child_weight: 20.0
+    reg_lambda: 10.0
+    reg_alpha: 0.1
+    gamma: 0.0
+    n_estimators: 4000
+    early_stopping_rounds: 50
+    n_jobs: 6
+features:
+  - distance_to_stop
+  - stops_ahead
+  - minute_of_day
+  - hour
+  - day_of_week
+  - is_weekend
+  - is_holiday
+  - is_peak_hour
+  - hour_sin
+  - hour_cos
+  - dow_sin
+  - dow_cos
+  - route_code
+  - stop_sequence
+  - delay_now
+  - sched_rem
+  - sched_rem_t
+  - delay_last
+  - prior_rem
+split:
+  kind: time
+  train_fraction: 0.9
+  test_fraction: 0.1
+seed: 42
+outputs:
+  registry_dir: artifacts/models
+  tags:
+    - xgb-live-global
+    - servable-plus
+baselines: []
