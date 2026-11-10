@@ -50,7 +50,8 @@ export interface RunInfo {
   id: string
   params: RunParams
   status: RunStatus
-  summary: RunSummary
+  /** null for a run that failed before its first tick. */
+  summary: RunSummary | null
   db_path: string
   started_at: number | string | null
   ended_at: number | string | null

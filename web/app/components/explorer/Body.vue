@@ -63,13 +63,15 @@ const hasRows = computed(() => rows.value.length > 0)
 const hasFiltered = computed(() => filtered.value.length > 0)
 
 // ── Route select ──────────────────────────────────────────────────────────
+// reka-ui's SelectItem throws on an empty-string value, so "all" needs a sentinel.
+const ALL_ROUTES = '__all__'
 const routeItems = computed(() => [
-  { label: 'All routes', value: '' },
+  { label: 'All routes', value: ALL_ROUTES },
   ...routes.value.map((r) => ({ label: r, value: r }))
 ])
 const routeModel = computed({
-  get: () => selectedRoute.value ?? '',
-  set: (v: string) => selectRoute(v || null)
+  get: () => selectedRoute.value ?? ALL_ROUTES,
+  set: (v: string) => selectRoute(v === ALL_ROUTES ? null : v)
 })
 
 // ── Horizon presets ───────────────────────────────────────────────────────

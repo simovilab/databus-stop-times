@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import type { Source } from '~/types/api'
+import type { RunInfo, Source } from '~/types/api'
 
 useHead({ title: 'stoptimes val:// console' })
 
@@ -28,6 +28,19 @@ const formValid = computed(
   () => selectedSource.value && selectedPredictors.value.length > 0 && duration.value.trim()
 )
 
+// Pre-selected when nothing better is known: the agency feed and the schedule baseline.
+const FALLBACK_PREDICTORS = ['gtfsrt', 'baseline:schedule']
+
+/** Start from the latest run's predictors (still available), not every predictor. */
+function initialPredictors(available: string[], runs: RunInfo[]): string[] {
+  const latest = [...runs].sort(
+    (a, b) => (toDate(b.started_at)?.getTime() ?? 0) - (toDate(a.started_at)?.getTime() ?? 0)
+  )[0]
+  const fromLatest = (latest?.params.predictors ?? []).filter((p) => available.includes(p))
+  if (fromLatest.length > 0) return fromLatest
+  return FALLBACK_PREDICTORS.filter((p) => available.includes(p))
+}
+
 onMounted(async () => {
   try {
     const [srcs, preds, runs] = await Promise.all([
@@ -40,7 +53,7 @@ onMounted(async () => {
     runsCount.value = runs.length
     activeRunsCount.value = runs.filter((r) => r.status === 'pending' || r.status === 'running').length
     if (srcs.length > 0) selectedSource.value = srcs[0]!.name
-    selectedPredictors.value = [...preds]
+    selectedPredictors.value = initialPredictors(preds, runs)
   } catch {
     loadError.value = 'Could not reach the stoptimes val API. Is the backend running on port 8010?'
   }

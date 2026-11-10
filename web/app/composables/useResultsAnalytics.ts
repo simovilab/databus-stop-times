@@ -76,6 +76,39 @@ function getHistBinIdx(e: number): number {
   return HIST_EDGES.length - 2
 }
 
+/** The agency's own feed predictions: the baseline every model has to beat. */
+const AGENCY_BASELINE = 'gtfsrt'
+/** How many non-baseline predictors (lowest overall MAE first) start selected. */
+const DEFAULT_TOP_MODELS = 2
+
+function isBaseline(pid: string): boolean {
+  return pid === AGENCY_BASELINE || pid.startsWith('baseline:')
+}
+
+/**
+ * The predictors selected when a run's analytics open: the agency baseline plus the
+ * DEFAULT_TOP_MODELS best models by overall MAE (falling back to the best baselines
+ * when a run has no models), so the charts start as a readable comparison rather
+ * than every predictor at once. The rest stay one click away in the filter bar.
+ */
+export function defaultPredictorSelection(rows: readonly ResultRow[]): string[] {
+  const absErrs = new Map<string, number[]>()
+  for (const r of rows) {
+    const errs = absErrs.get(r.predictor_id)
+    if (errs) errs.push(Math.abs(r.error_s))
+    else absErrs.set(r.predictor_id, [Math.abs(r.error_s)])
+  }
+  const byMae = [...absErrs.entries()]
+    .map(([pid, errs]) => ({ pid, mae: mean(errs) }))
+    .sort((a, b) => a.mae - b.mae)
+    .map((x) => x.pid)
+  const models = byMae.filter((p) => !isBaseline(p))
+  const pool = models.length > 0 ? models : byMae.filter((p) => p !== AGENCY_BASELINE)
+  const picked = pool.slice(0, DEFAULT_TOP_MODELS)
+  if (absErrs.has(AGENCY_BASELINE)) picked.unshift(AGENCY_BASELINE)
+  return picked.sort()
+}
+
 // ── Main composable ────────────────────────────────────────────────────────
 
 export function useResultsAnalytics(runId: string) {
@@ -100,8 +133,7 @@ export function useResultsAnalytics(runId: string) {
     fetchError.value = null
     try {
       rows.value = await api.getResults(runId)
-      // Initialise selectedPredictors to all that are present
-      selectedPredictors.value = [...new Set(rows.value.map((r) => r.predictor_id))].sort()
+      selectedPredictors.value = defaultPredictorSelection(rows.value)
     } catch (e) {
       fetchError.value = e instanceof Error ? e.message : String(e)
     } finally {
@@ -363,7 +395,7 @@ export function useResultsAnalytics(runId: string) {
   }
 
   function reset(): void {
-    selectedPredictors.value = [...predictors.value]
+    selectedPredictors.value = defaultPredictorSelection(rows.value)
     selectedRoute.value = null
     horizonRange.value = null
     selectedTripStop.value = null

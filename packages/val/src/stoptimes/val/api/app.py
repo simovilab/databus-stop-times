@@ -274,7 +274,18 @@ def create_app(
         state = run_manager.get_run(run_id)
         if state is None:
             raise HTTPException(status_code=404, detail=f"Run {run_id!r} not found")
-        storage = SqliteStorage(state.db_path)
+        if stats and state.status not in ("done", "error"):
+            raise HTTPException(
+                status_code=409,
+                detail=f"Run {run_id!r} is still {state.status!r}; "
+                "?stats=1 requires a finished run (done, or ended early with an error)",
+            )
+        # Loading and scoring a large run takes seconds of CPU: off the event loop, so
+        # every other request (run list, telemetry, the UI's other pages) isn't stalled.
+        return await asyncio.to_thread(_metrics_response, run_id, state.db_path, bool(stats))
+
+    def _metrics_response(run_id: str, db_path: str, stats: bool) -> MetricsResponse:
+        storage = SqliteStorage(db_path)
         try:
             results = storage.load_results()
         finally:
@@ -284,13 +295,6 @@ def create_app(
 
         if not stats:
             return MetricsResponse(**s)
-
-        if state.status not in ("done", "error"):
-            raise HTTPException(
-                status_code=409,
-                detail=f"Run {run_id!r} is still {state.status!r}; "
-                "?stats=1 requires a finished run (done, or ended early with an error)",
-            )
 
         ext = run_manager.get_stats_extension(run_id, results)
         per_predictor_ext = ext["per_predictor_ext"]
@@ -326,12 +330,15 @@ def create_app(
         state = run_manager.get_run(run_id)
         if state is None:
             raise HTTPException(status_code=404, detail=f"Run {run_id!r} not found")
-        storage = SqliteStorage(state.db_path)
+        return await asyncio.to_thread(_result_rows, state.db_path, predictor, limit)
+
+    def _result_rows(db_path: str, predictor: str | None, limit: int) -> list[ResultRow]:
+        storage = SqliteStorage(db_path)
         try:
-            results = storage.load_results(predictor_id=predictor)
+            results = storage.load_results(predictor_id=predictor, limit=limit)
         finally:
             storage.close()
-        return [ResultRow(**r.model_dump()) for r in results[:limit]]
+        return [ResultRow(**r.model_dump()) for r in results]
 
     @app.get("/api/telemetry")
     async def telemetry() -> dict:

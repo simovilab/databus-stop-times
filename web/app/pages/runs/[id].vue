@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import type { RunInfo, RunMetrics, ResultRow, PerPredictorMetric } from '~/types/api'
+import type { RunInfo, RunMetrics, RunSummary, ResultRow, PerPredictorMetric } from '~/types/api'
 
 const route = useRoute()
 const id = route.params.id as string
@@ -24,6 +24,8 @@ const deleteError = ref<string | null>(null)
 
 // ── Live stream (always call at top level; start() called conditionally) ───────
 const stream = useRunStream(id)
+
+const EMPTY_SUMMARY: RunSummary = { ticks: 0, samples_saved: 0, arrivals_saved: 0, results_saved: 0 }
 
 type BadgeColor = 'success' | 'info' | 'warning' | 'error' | 'neutral'
 const statusColors: Record<string, BadgeColor> = {
@@ -152,7 +154,7 @@ const displayStatus = computed(() => {
 
 const displaySummary = computed(() => {
   if (stream.connected.value || stream.ended.value) return stream.summary.value
-  return run.value?.summary ?? { ticks: 0, samples_saved: 0, arrivals_saved: 0, results_saved: 0 }
+  return run.value?.summary ?? EMPTY_SUMMARY
 })
 
 const isLive = computed(() =>
@@ -231,7 +233,7 @@ const isError = computed(() => displayStatus.value === 'error')
         title="Run ended early"
         :description="`${run.error ?? 'Unknown error'} — showing the results scored before it stopped.`"
       />
-      <ConsoleCounterTiles :summary="run.summary" />
+      <ConsoleCounterTiles :summary="run.summary ?? EMPTY_SUMMARY" />
 
       <UAlert v-if="metricsError" color="warning" variant="subtle" :title="metricsError" />
 

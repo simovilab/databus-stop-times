@@ -110,19 +110,19 @@ function goTo(id: string) {
         <div class="grid grid-cols-4 gap-px bg-line mt-2">
           <div class="bg-panel px-1.5 py-1">
             <div class="tile-l">Ticks</div>
-            <div class="text-sm text-bright tabular-nums">{{ run.summary.ticks }}</div>
+            <div class="text-sm text-bright tabular-nums">{{ run.summary?.ticks ?? '—' }}</div>
           </div>
           <div class="bg-panel px-1.5 py-1">
             <div class="tile-l">Samples</div>
-            <div class="text-sm text-bright tabular-nums">{{ run.summary.samples_saved }}</div>
+            <div class="text-sm text-bright tabular-nums">{{ run.summary?.samples_saved ?? '—' }}</div>
           </div>
           <div class="bg-panel px-1.5 py-1">
             <div class="tile-l">Arrivals</div>
-            <div class="text-sm text-bright tabular-nums">{{ run.summary.arrivals_saved }}</div>
+            <div class="text-sm text-bright tabular-nums">{{ run.summary?.arrivals_saved ?? '—' }}</div>
           </div>
           <div class="bg-panel px-1.5 py-1">
             <div class="tile-l">Results</div>
-            <div class="text-sm text-bright tabular-nums">{{ run.summary.results_saved }}</div>
+            <div class="text-sm text-bright tabular-nums">{{ run.summary?.results_saved ?? '—' }}</div>
           </div>
         </div>
       </div>

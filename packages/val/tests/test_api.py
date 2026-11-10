@@ -218,6 +218,50 @@ async def test_metrics_has_per_predictor_mae(client: httpx.AsyncClient) -> None:
         assert row["count"] > 0
 
 
+async def test_slow_metrics_do_not_block_other_requests(
+    client: httpx.AsyncClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Scoring a large run takes seconds; it must run off the event loop, or every other
+    request (the run list, telemetry, the web UI's other pages) waits for it."""
+    import stoptimes.val.api.app as app_module
+
+    resp = await client.post("/api/runs", json={"source": "mbta", "duration": "1m"})
+    run_id = resp.json()["run_id"]
+    await _wait_done(client, run_id)
+
+    real_compute = app_module.compute_metrics
+
+    def slow_compute(results):  # type: ignore[no-untyped-def]
+        time.sleep(1.0)  # a blocking CPU-bound stand-in
+        return real_compute(results)
+
+    monkeypatch.setattr(app_module, "compute_metrics", slow_compute)
+
+    t0 = time.monotonic()
+
+    async def finished_at(path: str, delay_s: float = 0.0) -> float:
+        await asyncio.sleep(delay_s)
+        r = await client.get(path)
+        assert r.status_code == 200
+        return time.monotonic() - t0
+
+    # /api/runs is sent while /metrics is busy computing.
+    metrics_done, runs_done = await asyncio.gather(
+        finished_at(f"/api/runs/{run_id}/metrics"), finished_at("/api/runs", delay_s=0.2)
+    )
+    assert metrics_done >= 1.0
+    assert runs_done < 0.8, f"/api/runs answered at {runs_done:.2f}s, behind /metrics"
+
+
+async def test_results_limit_caps_rows(client: httpx.AsyncClient) -> None:
+    resp = await client.post("/api/runs", json={"source": "mbta", "duration": "1m"})
+    run_id = resp.json()["run_id"]
+    await _wait_done(client, run_id)
+
+    assert len((await client.get(f"/api/runs/{run_id}/results")).json()) > 2
+    assert len((await client.get(f"/api/runs/{run_id}/results?limit=2")).json()) == 2
+
+
 # ── Results endpoint ───────────────────────────────────────────────────────────
 
 

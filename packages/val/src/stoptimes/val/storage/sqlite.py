@@ -248,15 +248,20 @@ class SqliteStorage:
             for row in rows
         ]
 
-    def load_results(self, predictor_id: str | None = None) -> list[ValidationResult]:
-        """Load ValidationResults, optionally filtered by predictor_id."""
+    def load_results(
+        self, predictor_id: str | None = None, limit: int | None = None
+    ) -> list[ValidationResult]:
+        """Load ValidationResults, optionally filtered by predictor_id and capped at *limit*
+        rows (in insertion order), so a capped read doesn't build every row of a large run."""
+        sql = "SELECT * FROM validation_results"
+        params: list[object] = []
         if predictor_id is not None:
-            rows = self._conn.execute(
-                "SELECT * FROM validation_results WHERE predictor_id = ?",
-                (predictor_id,),
-            ).fetchall()
-        else:
-            rows = self._conn.execute("SELECT * FROM validation_results").fetchall()
+            sql += " WHERE predictor_id = ?"
+            params.append(predictor_id)
+        if limit is not None:
+            sql += " ORDER BY rowid LIMIT ?"
+            params.append(limit)
+        rows = self._conn.execute(sql, params).fetchall()
 
         return [
             ValidationResult(
