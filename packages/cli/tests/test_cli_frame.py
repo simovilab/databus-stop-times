@@ -335,3 +335,20 @@ def test_frame_live_needs_day_ranges(tmp_path):
          "--sources-dir", str(_agency_file(tmp_path)), "--out", str(tmp_path / "f.parquet")],
     )
     assert result.exit_code == 2
+
+
+def test_frame_live_without_val_days_puts_every_day_in_train(tmp_path):
+    static, positions = _write_live_feed_and_positions(tmp_path)
+    out = tmp_path / "data" / "live-all.parquet"
+    result = runner.invoke(
+        app,
+        [
+            "data", "frame", "--live", "--observations", str(positions), "--static", str(static),
+            "--source", "demo", "--sources-dir", str(_agency_file(tmp_path)), "--out", str(out),
+            "--train-days", "2026-09-01:2026-09-06", "--rows-per-day", "40", "--json",
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    summary = json.loads(result.output)
+    assert summary["train_days"] == 6 and summary["val_days"] == 0 and summary["val_rows"] == 0
+    assert (out.with_suffix(".assets") / "live.json").is_file()

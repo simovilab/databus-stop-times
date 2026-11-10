@@ -118,3 +118,37 @@ def test_unknown_route_is_an_error(frame_dir, tmp_path):
             registry_dir=tmp_path / "r",
             dataset_dir=frame_dir,
         )
+
+
+def _train_only(frame_dir):
+    frame = pd.read_parquet(frame_dir / "live.parquet")
+    frame[frame.split == "train"].to_parquet(frame_dir / "live.parquet", index=False)
+    return frame[frame.split == "train"]
+
+
+def test_no_val_days_with_early_stopping_off_trains_fixed_rounds_on_all_rows(frame_dir, tmp_path):
+    train = _train_only(frame_dir)
+    params = {"n_estimators": 17, "max_depth": 3, "learning_rate": 0.3, "early_stopping_rounds": 0, "n_jobs": 2}
+    exp = _experiment(model={"family": "xgboost", "params": params})
+    registry = tmp_path / "registry"
+    meta = run_experiment(exp, registry_dir=registry, dataset_dir=frame_dir)
+    with open(registry / meta.artifact_id / "model.pkl", "rb") as fh:
+        model = pickle.load(fh)
+    assert model.get_booster().num_boosted_rounds() == 17
+    assert meta.data.n_train == len(train) and meta.data.n_test == 0
+    assert "test_mae_seconds" not in meta.metrics and "val_mae_seconds" not in meta.metrics
+    mae = float(np.abs(model.predict(train[meta.features]) - train["time_to_arrival_seconds"]).mean())
+    assert meta.metrics["train_mae_seconds"] == pytest.approx(mae, rel=1e-5)
+    assert meta.metrics["n_rounds"] == 17
+    assert "fixed 17 rounds" in (registry / meta.artifact_id / "card.md").read_text()
+
+
+def test_no_val_days_without_an_explicit_round_count_is_an_error(frame_dir, tmp_path):
+    _train_only(frame_dir)
+    params = {"max_depth": 3, "early_stopping_rounds": 0}
+    with pytest.raises(ValueError, match="n_estimators"):
+        run_experiment(
+            _experiment(model={"family": "xgboost", "params": params}),
+            registry_dir=tmp_path / "r",
+            dataset_dir=frame_dir,
+        )

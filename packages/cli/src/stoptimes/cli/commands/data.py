@@ -440,14 +440,14 @@ def data_frame(
         "--live",
         help="Build the live-feature frame instead: archived VehiclePositions + this one static feed -> "
         "the 19 serving features per (prediction instant x downstream stop), target from interpolated "
-        "arrivals, segment statistics fitted out-of-fold. Needs --train-days and --val-days. "
+        "arrivals, segment statistics fitted out-of-fold. Needs --train-days; --val-days is optional (omit it for a final fit on every day with fixed rounds). "
         "Writes <out>.assets/ next to the parquet (read by `train run`).",
     ),
     train_days: str | None = typer.Option(
         None, "--train-days", help="--live: service dates fitting the model, START:END as YYYY-MM-DD (inclusive)."
     ),
     val_days: str | None = typer.Option(
-        None, "--val-days", help="--live: service dates for early stopping / validation, START:END (inclusive)."
+        None, "--val-days", help="--live: service dates for early stopping / validation, START:END (inclusive); optional."
     ),
     rows_per_day: int | None = typer.Option(
         None, "--rows-per-day", help="--live: uniform random row subsample per day (default: keep all)."
@@ -577,7 +577,8 @@ def _data_frame_live(
         write_live_assets,
     )
 
-    train, val = _day_range(train_days, "--train-days"), _day_range(val_days, "--val-days")
+    train = _day_range(train_days, "--train-days")
+    val = _day_range(val_days, "--val-days") if val_days else []
     params = LiveFrameParams(
         rows_per_day=rows_per_day, seed=seed, arrival_radius_m=arrival_radius_m
     )
@@ -589,7 +590,7 @@ def _data_frame_live(
         agency_tz = loader.agency_timezone() or src.timezone
         train = [d for d in train if d in by_day]
         val = [d for d in val if d in by_day]
-        if not train or not val:
+        if not train or (val_days and not val):
             typer.secho("✗ no trips found on the requested train and/or val days", fg="red", err=True)
             raise typer.Exit(1)
         dataset = build_live_dataset(

@@ -1,0 +1,86 @@
+# Production bUCR live model: the xgb-live-bucr features, with the hyperparameters that
+# rolling-origin CV chose, refit on ALL 62 weekdays 2026-08-10..2026-11-06 with no held-out day.
+#
+# Evidence (python -m stoptimes.train.live_cv --scheme rolling --grid-json ..., same frame
+# parameters, 9 rolling folds = test weeks 2026-W37..W45, each fit on all earlier weeks and
+# early-stopped on the last 4-5 of them):
+#   d10 lr0.03 mcw20 es50   pooled MAE 52.1 s (fold mean 52.2, std 4.2, range 46.4..60.5)
+#   timetable (sched_rem)   pooled MAE 93.3 s
+#   segment history prior   pooled MAE 57.9 s
+#   (the old xgb-live-bucr settings, d8 lr0.06: pooled 52.5 s)
+# Round count: best_iteration per fold 235 813 214 421 418 597 360 165 175, median 360
+# (mean 378).  The final fit sees 62 days vs at most 52 fit days in CV (~20% more rows),
+# and more data supports a few more rounds, so n_estimators = 360 x 1.15 = 414 -> 415.
+# With reg:absoluteerror and lr 0.03 the CV curve is flat near the optimum, so +-15%
+# rounds is well inside the noise (fold std 4.2 s).
+#
+# early_stopping_rounds: 0 trains exactly n_estimators rounds; train_mae_seconds in the
+# artifact is IN-SAMPLE. data.sources [bucr] gives scope.source_id bucr, so the artifact
+# publishes as stoptimes-bucr (MLflow experiment stoptimes/bucr).
+#
+# Frame: every day a train day, none val (omit --val-days):
+#   stoptimes data frame --live --observations <obs>/archive --static <bucr gtfs.zip> --source bucr \
+#       --train-days 2026-08-10:2026-11-06 --arrival-radius-m 30 \
+#       --out <dir>/bucr-live-all.parquet --register bucr-live-all
+# (rows_per_day all, seed 42 -- as in xgb-live-bucr.yaml; <obs> from
+# `python -m stoptimes.train.sources.bucr_observations`, see docs/research/SESSION_2026-11-09_*).
+# Train:
+#   stoptimes train run examples/experiments/xgb-live-bucr-final.yaml --dataset-dir <dir> \
+#       --registry ~/stoptimes-registry
+name: xgb-live-bucr-final
+data:
+  sources:
+    - bucr # the agency: MLflow experiment stoptimes/bucr, model stoptimes-bucr
+  datasets:
+    - bucr-live-all
+target: time_to_arrival_seconds
+model:
+  family: xgboost
+  params:
+    objective: reg:absoluteerror
+    max_depth: 10
+    learning_rate: 0.03
+    subsample: 0.8
+    colsample_bytree: 0.8
+    min_child_weight: 20.0
+    reg_lambda: 10.0
+    reg_alpha: 0.1
+    gamma: 0.0
+    n_estimators: 415 # fixed: CV median best_iteration 360 x 1.15 (see header)
+    early_stopping_rounds: 0 # off: there are no val days to stop on
+    n_jobs: 6
+features:
+  - distance_to_stop
+  - stops_ahead
+  - minute_of_day
+  - hour
+  - day_of_week
+  - is_weekend
+  - is_holiday
+  - is_peak_hour
+  - hour_sin
+  - hour_cos
+  - dow_sin
+  - dow_cos
+  - route_code
+  - stop_sequence
+  - delay_now
+  - sched_rem
+  - sched_rem_t
+  - delay_last
+  - prior_rem
+split:
+  kind: time
+  train_fraction: 0.9
+  test_fraction: 0.1
+seed: 42
+outputs:
+  registry_dir: artifacts/models
+  tags:
+    - xgb-live-bucr-final
+    - inferred-trips
+    - all-days-2026-08-10..2026-11-06
+    - cv-rolling-9wk-pooled-mae-52.1s-std-4.2
+    - cv-baseline-timetable-mae-93.3s
+    - cv-baseline-segment-history-mae-57.9s
+baselines: []

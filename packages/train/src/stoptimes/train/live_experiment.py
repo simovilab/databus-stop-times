@@ -6,7 +6,9 @@ generic path:
 
 * the split is the frame's own ``split`` column - ``train`` days fit the model, ``val`` days
   drive early stopping and the reported error (calendar split; the experiment's ``split``
-  fractions are ignored);
+  fractions are ignored).  ``early_stopping_rounds: 0`` turns early stopping off: the model
+  trains exactly ``n_estimators`` rounds, and the frame may then have no ``val`` days at all
+  (the final fit on every day, its round count chosen beforehand by ``live_cv``);
 * features are passed through with their missing values (gradient boosting handles NaN, so a
   cold start stays a cold start instead of dropping the row);
 * the artifact carries the segment-statistics and route-vocabulary assets, the agency
@@ -105,9 +107,10 @@ def _fit(
 
     rest, cap, patience, n_jobs = _split_params(params)
     rest.setdefault("objective", "reg:absoluteerror")
+    eval_set = [] if val.empty else [(val[features], val[TARGET_COLUMN].to_numpy(np.float32))]
     model = XGBRegressor(
         n_estimators=cap,
-        early_stopping_rounds=patience,
+        early_stopping_rounds=patience if patience > 0 else None,
         eval_metric="mae",
         tree_method="hist",
         random_state=seed,
@@ -117,7 +120,7 @@ def _fit(
     model.fit(
         train[features],
         train[TARGET_COLUMN].to_numpy(np.float32),
-        eval_set=[(val[features], val[TARGET_COLUMN].to_numpy(np.float32))],
+        eval_set=eval_set or None,
         verbose=False,
     )
     return model
@@ -157,23 +160,34 @@ def run_live_experiment(
     if routes:  # a route-specific model: fit and score on those routes' rows only
         frame = frame[frame["route_id"].astype(str).isin(routes)]
     train, val = frame[frame["split"] == "train"], frame[frame["split"] == "val"]
-    if train.empty or val.empty:
-        which = f" for routes {routes}" if routes else ""
-        raise ValueError(f"a live frame needs both train and val days{which} (val drives early stopping)")
+    params = dict(experiment.model.params)
+    fixed_rounds = _split_params(params)[2] <= 0
+    _check_splits(train, val, routes, params, fixed_rounds)
     assets = _verified_assets(assets_dir, manifest)
     needed = {a for f in features for a in _feature_assets(f)}
     absent = sorted(needed - set(assets))
     if absent:
         raise ValueError(f"features {features} need assets {absent} missing from {assets_dir}")
 
-    model = _fit(train, val, features, dict(experiment.model.params), experiment.seed)
+    model = _fit(train, val, features, params, experiment.seed)
     model.required_features = features
-    pred = np.asarray(model.predict(val[features]), dtype=float)
-    y_val = val[TARGET_COLUMN].to_numpy(float)
-    metrics = compute_all_metrics(y_val, pred, prefix="test_")
-    scalar = {k: float(v) for k, v in metrics.items() if isinstance(v, (int, float))}
-    scalar["val_mae_seconds"] = scalar["test_mae_seconds"]
-    scalar["best_iteration"] = float(model.best_iteration)
+    scalar: dict[str, float] = {}
+    scores: list = []
+    if not val.empty:
+        pred = np.asarray(model.predict(val[features]), dtype=float)
+        y_val = val[TARGET_COLUMN].to_numpy(float)
+        metrics = compute_all_metrics(y_val, pred, prefix="test_")
+        scalar = {k: float(v) for k, v in metrics.items() if isinstance(v, (int, float))}
+        scalar["val_mae_seconds"] = scalar["test_mae_seconds"]
+        scores = _horizon_scores(y_val, pred)
+    else:  # nothing held out: the in-sample error only checks the fit
+        fitted = np.asarray(model.predict(train[features]), dtype=float)
+        y_train = train[TARGET_COLUMN].to_numpy(float)
+        scalar["train_mae_seconds"] = float(np.abs(fitted - y_train).mean())
+    if fixed_rounds:
+        scalar["n_rounds"] = float(model.get_booster().num_boosted_rounds())
+    else:
+        scalar["best_iteration"] = float(model.best_iteration)
 
     versions = lib_versions()
     meta = ArtifactMetadata(
@@ -193,7 +207,7 @@ def run_live_experiment(
             dataset_sha256=None,
             sources=list(experiment.data.sources),
             start=_day_start(manifest["train_days"][0]),
-            end=_day_start(manifest["val_days"][-1]),
+            end=_day_start((manifest["val_days"] or manifest["train_days"])[-1]),
             n_samples=len(train) + len(val),
             n_train=len(train),
             n_test=len(val),
@@ -206,7 +220,7 @@ def run_live_experiment(
             seed=experiment.seed,
         ),
         metrics=scalar,
-        scores_by_horizon=_horizon_scores(y_val, pred),
+        scores_by_horizon=scores,
         tags=list(experiment.outputs.tags),
         assets={
             name: ArtifactAsset(file=manifest["assets"][name]["file"], sha256=sha256_hex(data))
@@ -215,16 +229,7 @@ def run_live_experiment(
         timezone=manifest["timezone"],
         holiday_region=manifest.get("holiday_region"),
     )
-    notes = [
-        f"trained on {len(manifest['train_days'])} service days "
-        f"({manifest['train_days'][0]}..{manifest['train_days'][-1]}), early-stopped and scored on "
-        f"{len(manifest['val_days'])} validation days ({manifest['val_days'][0]}..{manifest['val_days'][-1]}).",
-        "the test_* metrics are the VALIDATION days used for early stopping (no test day was read); "
-        "a held-out test day is scored by `stoptimes val`.",
-        "training rows use segment statistics fitted out-of-fold by day; the shipped segment_stats asset "
-        "is fitted on all training days.",
-        f"best iteration {model.best_iteration} of at most {_split_params(dict(experiment.model.params))[1]}.",
-    ]
+    notes = _card_notes(manifest, model, params, fixed_rounds)
     from stoptimes.train.experiment import render_card
     from stoptimes.train.tracking import log_training
 
@@ -232,6 +237,54 @@ def run_live_experiment(
     _write_live_artifact(model, meta, assets, registry, card, overwrite=overwrite)
     log_training(tracker, meta, registry, card=card, experiment=experiment)
     return meta
+
+
+def _check_splits(
+    train: pd.DataFrame,
+    val: pd.DataFrame,
+    routes: list[str],
+    params: dict[str, Any],
+    fixed_rounds: bool,
+) -> None:
+    which = f" for routes {routes}" if routes else ""
+    if train.empty or (val.empty and not fixed_rounds):
+        raise ValueError(
+            f"a live frame needs both train and val days{which} (val drives early stopping; "
+            "set early_stopping_rounds: 0 and n_estimators to train without val days)"
+        )
+    if val.empty and "n_estimators" not in params:
+        raise ValueError(
+            f"no val days{which}: early_stopping_rounds: 0 needs an explicit n_estimators"
+        )
+
+
+def _card_notes(
+    manifest: dict[str, Any], model: Any, params: dict[str, Any], fixed_rounds: bool
+) -> list[str]:
+    train_days, val_days = manifest["train_days"], manifest["val_days"]
+    trained = f"trained on {len(train_days)} service days ({train_days[0]}..{train_days[-1]})"
+    cap = _split_params(params)[1]
+    stats = (
+        "training rows use segment statistics fitted out-of-fold by day; the shipped segment_stats asset "
+        "is fitted on all training days."
+    )
+    if not val_days:
+        return [
+            f"{trained}, fixed {cap} rounds, no early stopping and no held-out day.",
+            "train_mae_seconds is IN-SAMPLE; out-of-sample error comes from the cross-validation that "
+            "chose the round count (see the experiment's tags) and from `stoptimes val`.",
+            stats,
+        ]
+    rounds = f"fixed {cap} rounds (no early stopping)." if fixed_rounds else (
+        f"best iteration {model.best_iteration} of at most {cap}."
+    )
+    return [
+        f"{trained}, early-stopped and scored on {len(val_days)} validation days ({val_days[0]}..{val_days[-1]}).",
+        "the test_* metrics are the VALIDATION days used for early stopping (no test day was read); "
+        "a held-out test day is scored by `stoptimes val`.",
+        stats,
+        rounds,
+    ]
 
 
 def _feature_assets(name: str) -> tuple[str, ...]:
