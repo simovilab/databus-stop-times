@@ -29,6 +29,9 @@ import argparse
 import json
 import logging
 import math
+import os
+import re
+import time
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import asdict, dataclass
 from pathlib import Path
@@ -50,15 +53,20 @@ from stoptimes.train.live_frame import (
 __all__ = [
     "Fold",
     "FrameCache",
+    "GridConfig",
     "HORIZON_BUCKETS_S",
     "aggregate",
     "build_frame_cache",
     "day_grouped_kfold",
     "fold_frame",
+    "grid_row",
     "holdout",
+    "load_grid",
     "rolling_origin_by_week",
     "run_cv",
+    "run_grid",
     "score_fold",
+    "shard",
 ]
 
 _log = logging.getLogger(__name__)
@@ -346,23 +354,139 @@ def run_cv(
     seed: int,
 ) -> tuple[pd.DataFrame, dict[str, Any]]:
     """Train and score every fold; ``(per-fold table, aggregate)``."""
+    table, summary = run_grid(cache, folds, features, [GridConfig("cv", params)], seed)["cv"]
+    return table, summary
+
+
+# ---------------------------------------------------------------------------
+# Parameter grids: one frame cache, every config on the same folds
+# ---------------------------------------------------------------------------
+
+_GRID_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]*$")
+
+
+@dataclass(frozen=True)
+class GridConfig:
+    """One grid point: a directory-safe ``name`` and the params merged over the base params."""
+
+    name: str
+    params: Mapping[str, Any]
+
+
+def load_grid(text: str) -> list[GridConfig]:
+    """Parse a grid: a JSON list of ``{"name": ..., "params": {...}}`` with unique names."""
+    raw = json.loads(text)
+    if not isinstance(raw, list) or not raw:
+        raise ValueError("grid must be a non-empty JSON list")
+    configs = []
+    for i, item in enumerate(raw):
+        if not isinstance(item, dict) or set(item) - {"name", "params"}:
+            raise ValueError(f"grid[{i}]: expected an object with 'name' and 'params' only")
+        name, params = item.get("name"), item.get("params", {})
+        if not isinstance(name, str) or not _GRID_NAME.match(name):
+            raise ValueError(f"grid[{i}]: name must match {_GRID_NAME.pattern}, got {name!r}")
+        if not isinstance(params, dict):
+            raise ValueError(f"grid[{i}] ({name}): params must be an object")
+        configs.append(GridConfig(name, dict(params)))
+    names = [c.name for c in configs]
+    if len(set(names)) != len(names):
+        raise ValueError(f"grid names must be unique: {names}")
+    return configs
+
+
+def shard(configs: Sequence[GridConfig], spec: str | None) -> list[GridConfig]:
+    """``"i/n"`` keeps configs ``i, i+n, i+2n, ...`` (0-based); ``None`` keeps every config."""
+    if spec is None:
+        return list(configs)
+    i_s, sep, n_s = spec.partition("/")
+    if not sep or not i_s.isdigit() or not n_s.isdigit() or not 0 <= int(i_s) < int(n_s):
+        raise ValueError(f"shard must be i/n with 0 <= i < n, got {spec!r}")
+    return list(configs)[int(i_s) :: int(n_s)]
+
+
+def run_grid(
+    cache: FrameCache,
+    folds: Sequence[Fold],
+    features: Sequence[str],
+    configs: Sequence[GridConfig],
+    seed: int,
+    on_fold: Callable[[str, pd.DataFrame], None] | None = None,
+) -> dict[str, tuple[pd.DataFrame, dict[str, Any]]]:
+    """Every config on every fold; ``{name: (per-fold table, aggregate)}``.
+
+    Folds are the outer loop, so each fold's frame is built once and shared by all configs.
+    ``on_fold(name, table_so_far)`` is called after each (fold, config), e.g. to checkpoint."""
     unknown = [f for f in features if f not in LIVE_FEATURES]
     if unknown:
         raise ValueError(f"not live features: {unknown}")
-    rows, sums = [], []
+    if len({c.name for c in configs}) != len(configs):
+        raise ValueError("config names must be unique")
+    rows: dict[str, list[dict[str, Any]]] = {c.name: [] for c in configs}
+    sums: dict[str, list[dict[str, tuple[float, int]]]] = {c.name: [] for c in configs}
     for fold in folds:
-        row, s = _train_and_score(fold_frame(cache, fold), fold, list(features), dict(params), seed)
+        t0 = time.perf_counter()
+        frame = fold_frame(cache, fold)
         _log.info(
-            "fold %s: model %.1f s, sched %.1f s, prior %.1f s, best_it %d",
-            fold.name,
-            row["model_mae"],
-            row["sched_mae"],
-            row["prior_mae"],
-            row["best_iteration"],
+            "fold %s: frame %d rows in %.0f s", fold.name, len(frame), time.perf_counter() - t0
         )
-        rows.append(row)
-        sums.append(s)
-    return pd.DataFrame(rows), aggregate(rows, sums)
+        for config in configs:
+            t0 = time.perf_counter()
+            row, s = _train_and_score(frame, fold, list(features), dict(config.params), seed)
+            row["train_seconds"] = time.perf_counter() - t0
+            _log.info(
+                "fold %s [%s]: model %.1f s, sched %.1f s, prior %.1f s, best_it %d, %.0f s",
+                fold.name,
+                config.name,
+                row["model_mae"],
+                row["sched_mae"],
+                row["prior_mae"],
+                row["best_iteration"],
+                row["train_seconds"],
+            )
+            rows[config.name].append(row)
+            sums[config.name].append(s)
+            if on_fold is not None:
+                on_fold(config.name, pd.DataFrame(rows[config.name]))
+    out = {}
+    for config in configs:
+        table = pd.DataFrame(rows[config.name])
+        summary = aggregate(rows[config.name], sums[config.name])
+        summary["best_iteration_median"] = float(table["best_iteration"].median())
+        summary["train_seconds"] = float(table["train_seconds"].sum())
+        out[config.name] = (table, summary)
+    return out
+
+
+def grid_row(name: str, summary: Mapping[str, Any]) -> dict[str, Any]:
+    """One ``grid.csv`` row from a config's ``summary.json``."""
+    model, h20 = summary["model_mae"], summary.get("model_mae_h20p", {})
+    return {
+        "name": name,
+        **{f"p_{k}": v for k, v in summary.get("params", {}).items()},
+        "model_mae_mean": model["mean"],
+        "model_mae_std": model["std"],
+        "model_mae_pooled": model["pooled"],
+        "model_mae_h20p_mean": h20.get("mean", float("nan")),
+        "best_iteration_median": summary.get("best_iteration_median", float("nan")),
+        "train_seconds": summary.get("train_seconds", float("nan")),
+        "n_folds": summary["n_folds"],
+    }
+
+
+def _write_grid_csv(out: Path) -> pd.DataFrame:
+    """Rebuild ``<out>/grid.csv`` from every ``<out>/<name>/summary.json`` on disk (so parallel
+    shards writing into one ``out`` all end up in it), sorted by pooled model MAE."""
+    rows = [
+        grid_row(p.parent.name, json.loads(p.read_text(encoding="utf-8")))
+        for p in sorted(out.glob("*/summary.json"))
+    ]
+    table = pd.DataFrame(rows)
+    if not table.empty:
+        table = table.sort_values("model_mae_pooled", kind="stable").reset_index(drop=True)
+    tmp = out / f".grid.csv.{os.getpid()}"
+    table.to_csv(tmp, index=False)
+    os.replace(tmp, out / "grid.csv")
+    return table
 
 
 # ---------------------------------------------------------------------------
@@ -395,6 +519,12 @@ def _parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
     p.add_argument("--es-fraction", type=float, default=0.15, help="kfold")
     p.add_argument("--test-from", default=None, help="holdout: first test day, YYYY-MM-DD")
     p.add_argument("--params-json", default=None, help="JSON object merged over model.params")
+    p.add_argument(
+        "--grid-json",
+        default=None,
+        help='file: JSON list of {"name", "params"}; each params merged over the base params',
+    )
+    p.add_argument("--shard", default=None, help="grid: I/N runs configs I, I+N, ... (0-based)")
     p.add_argument(
         "--n-jobs", type=int, default=None, help=f"xgboost threads (capped at {MAX_N_JOBS})"
     )
@@ -482,6 +612,7 @@ def main(argv: Sequence[str] | None = None) -> None:
     experiment = load_experiment(args.experiment)
     features = list(experiment.features) if experiment.features else list(LIVE_FEATURES)
     params = _model_params(experiment, args.params_json, args.n_jobs)
+    configs = _grid_configs(args, params)  # fail fast, before reading any data
     src = _load_source(args.source, args.sources_dir)
     obs = readers.read_observations(
         args.observations,
@@ -511,25 +642,61 @@ def main(argv: Sequence[str] | None = None) -> None:
     folds = _folds(args, days, experiment.seed)
     tz = loader.agency_timezone() or src.timezone
     cache = build_frame_cache(days, lambda d: by_day[d], tz=tz, params=frame_params)
-    table, summary = run_cv(cache, folds, features, params, experiment.seed)
-
     out = Path(args.out)
-    out.mkdir(parents=True, exist_ok=True)
-    table.to_csv(out / "folds.csv", index=False)
-    summary = {
-        **summary,
+    meta = {
         "scheme": args.scheme,
         "experiment": experiment.name,
         "features": features,
-        "params": params,
         "seed": experiment.seed,
         "days": [days[0], days[-1], len(days)],
         "frame_params": asdict(frame_params),
         "folds": [asdict(f) for f in folds],
         "assets_fitted_on": "fit days (fit rows out-of-fold by day; es, test rows all fit days)",
     }
+    if configs is None:
+        table, summary = run_cv(cache, folds, features, params, experiment.seed)
+        _write_result(out, table, {**summary, **meta, "params": params})
+        _print_table(table, summary)
+        return
+
+    def checkpoint(name: str, table: pd.DataFrame) -> None:
+        (out / name).mkdir(parents=True, exist_ok=True)
+        table.to_csv(out / name / "folds.csv", index=False)
+
+    results = run_grid(cache, folds, features, configs, experiment.seed, on_fold=checkpoint)
+    by_name = {c.name: c for c in configs}
+    for name, (table, summary) in results.items():
+        _write_result(out / name, table, {**summary, **meta, "params": dict(by_name[name].params)})
+    grid = _write_grid_csv(out)
+    cols = [c for c in grid.columns if not c.startswith("p_")]
+    with pd.option_context("display.width", 200, "display.float_format", "{:.1f}".format):
+        print(grid[cols].to_string(index=False))
+
+
+def _grid_configs(args: argparse.Namespace, base: Mapping[str, Any]) -> list[GridConfig] | None:
+    """The configs this run trains (``--shard``-filtered), params merged over *base*;
+    ``None`` without ``--grid-json``."""
+    if args.grid_json is None:
+        if args.shard is not None:
+            raise SystemExit("--shard needs --grid-json")
+        return None
+    try:
+        configs = shard(load_grid(Path(args.grid_json).read_text(encoding="utf-8")), args.shard)
+    except (OSError, ValueError) as exc:
+        raise SystemExit(f"--grid-json {args.grid_json}: {exc}") from exc
+    if not configs:
+        raise SystemExit(f"--shard {args.shard}: no configs in this shard")
+    jobs = base["n_jobs"]
+    return [
+        GridConfig(c.name, {**base, **c.params, "n_jobs": max(1, min(int(jobs), MAX_N_JOBS))})
+        for c in configs
+    ]
+
+
+def _write_result(out: Path, table: pd.DataFrame, summary: Mapping[str, Any]) -> None:
+    out.mkdir(parents=True, exist_ok=True)
+    table.to_csv(out / "folds.csv", index=False)
     (out / "summary.json").write_text(json.dumps(summary, indent=2, default=str), encoding="utf-8")
-    _print_table(table, summary)
 
 
 if __name__ == "__main__":

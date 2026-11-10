@@ -9,16 +9,21 @@ from stoptimes.core.features.live import LIVE_FEATURES
 from stoptimes.core.gtfs.static import GtfsStaticLoader
 from stoptimes.train.live_cv import (
     Fold,
+    GridConfig,
     _model_params,
     _requested_days,
+    _write_grid_csv,
     aggregate,
     build_frame_cache,
     day_grouped_kfold,
     fold_frame,
     holdout,
+    load_grid,
     rolling_origin_by_week,
     run_cv,
+    run_grid,
     score_fold,
+    shard,
 )
 from stoptimes.train.live_frame import LiveFrameParams, build_live_dataset, prepare_trip_records
 
@@ -237,3 +242,62 @@ def test_cli_helpers():
     assert _model_params(_Exp(), '{"max_depth": 4}', 2) == {"n_jobs": 2, "max_depth": 4}
     assert _requested_days("2026-11-06:2026-11-09", weekdays_only=True) == ["20261106", "20261109"]
     assert len(_requested_days("2026-11-06:2026-11-09", weekdays_only=False)) == 4
+
+
+# ---------------------------------------------------------------------------
+# Parameter grids
+# ---------------------------------------------------------------------------
+
+
+def test_load_grid_and_shard():
+    configs = load_grid(
+        '[{"name": "a", "params": {"max_depth": 4}}, {"name": "b"}, {"name": "c", "params": {}}]'
+    )
+    assert configs[0] == GridConfig("a", {"max_depth": 4}) and configs[1].params == {}
+    assert [c.name for c in shard(configs, "0/2")] == ["a", "c"]
+    assert [c.name for c in shard(configs, "1/2")] == ["b"]
+    assert shard(configs, None) == configs
+    for bad in ("2/2", "1", "x/2", "-1/2"):
+        with pytest.raises(ValueError, match="shard"):
+            shard(configs, bad)
+    for text, match in (
+        ("[]", "non-empty"),
+        ('[{"name": "a"}, {"name": "a"}]', "unique"),
+        ('[{"name": "../x"}]', "name"),
+        ('[{"name": "a", "params": [1]}]', "params"),
+        ('[{"name": "a", "extra": 1}]', "only"),
+    ):
+        with pytest.raises(ValueError, match=match):
+            load_grid(text)
+
+
+def test_run_grid_matches_run_cv_per_config_and_writes_a_sorted_grid_csv(cache, tmp_path):
+    import json
+
+    folds = [Fold("f0", tuple(DAYS[:5]), (DAYS[5],), tuple(DAYS[6:8]))]
+    base = {"n_estimators": 20, "early_stopping_rounds": 5, "n_jobs": 1}
+    configs = [
+        GridConfig("deep", {**base, "max_depth": 4}),
+        GridConfig("stump", {**base, "max_depth": 1}),
+    ]
+    seen: list[str] = []
+    results = run_grid(
+        cache, folds, list(LIVE_FEATURES), configs, seed=1, on_fold=lambda n, t: seen.append(n)
+    )
+    assert seen == ["deep", "stump"]
+    for config in configs:
+        table, summary = results[config.name]
+        ref_table, ref_summary = run_cv(cache, folds, list(LIVE_FEATURES), config.params, seed=1)
+        assert table["model_mae"].tolist() == ref_table["model_mae"].tolist()
+        assert summary["model_mae"]["pooled"] == ref_summary["model_mae"]["pooled"]
+        assert summary["best_iteration_median"] == float(table["best_iteration"].median())
+        assert summary["train_seconds"] > 0
+        (tmp_path / config.name).mkdir()
+        payload = {**summary, "params": dict(config.params)}
+        (tmp_path / config.name / "summary.json").write_text(json.dumps(payload))
+    grid = _write_grid_csv(tmp_path)
+    assert pd.read_csv(tmp_path / "grid.csv").shape == grid.shape
+    assert set(grid["name"]) == {"deep", "stump"}
+    assert grid["model_mae_pooled"].is_monotonic_increasing
+    assert {"p_max_depth", "model_mae_mean", "model_mae_std", "model_mae_h20p_mean"} <= set(grid)
+    assert dict(zip(grid["name"], grid["p_max_depth"], strict=True)) == {"deep": 4, "stump": 1}
