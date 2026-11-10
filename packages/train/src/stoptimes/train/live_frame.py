@@ -313,19 +313,32 @@ def _instants(rec: TripRecord, params: LiveFrameParams) -> np.ndarray:
 
 
 def build_day_frame(
-    records: Sequence[TripRecord], assets: LiveAssets, params: LiveFrameParams, day: str, split: str
+    records: Sequence[TripRecord],
+    assets: LiveAssets,
+    params: LiveFrameParams,
+    day: str,
+    split: str,
+    *,
+    features: Sequence[str] = LIVE_FEATURES,
 ) -> pd.DataFrame:
     """Rows of one service day (``split`` is ``'train'`` or ``'val'``) with the given assets.
 
     Training days must be given their out-of-fold statistics, validation days the shipped ones;
     :func:`build_live_dataset` does that bookkeeping.
+
+    ``features`` restricts the computed feature columns (the assets a subset does not need may
+    be absent). The rows - which instants, which stops, the subsample - do not depend on it, so
+    frames of the same records built with different feature subsets align row for row; the
+    cross-validation in :mod:`stoptimes.train.live_cv` relies on that to compute the
+    asset-free features once and only the asset-dependent ones per fold.
     """
+    features = tuple(features)
     parts = []
     for rec in records:
         times = _instants(rec, params)
         if times.size == 0:
             continue
-        feats = assemble_live_batch(rec.ctx, assets, rec.state, times)
+        feats = assemble_live_batch(rec.ctx, assets, rec.state, times, features=features)
         if feats.empty:
             continue
         arrival, _, _ = rec.state.arrival_arrays()
@@ -341,7 +354,7 @@ def build_day_frame(
     frame["day"] = day
     frame["split"] = split
     frame["vp_ts"] = pd.to_datetime(frame["t"].to_numpy(), unit="s", utc=True)
-    frame[list(LIVE_FEATURES)] = frame[list(LIVE_FEATURES)].astype(np.float32)
+    frame[list(features)] = frame[list(features)].astype(np.float32)
     return frame
 
 
