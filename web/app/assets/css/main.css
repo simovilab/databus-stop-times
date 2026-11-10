@@ -20,15 +20,6 @@
 
 :root {
   color-scheme: dark;
-  --vis-legend-label-color: var(--color-dim);
-  --vis-font-family: var(--font-mono);
-  --vis-axis-tick-label-color: var(--color-dim);
-  --vis-axis-grid-color: #141e19;
-  --vis-axis-domain-color: var(--color-line);
-  --vis-crosshair-line-color: var(--color-line);
-  --vis-tooltip-background-color: var(--color-panel);
-  --vis-tooltip-text-color: var(--color-main);
-  --vis-tooltip-border-color: var(--color-line);
 }
 
 html, body, #__nuxt {
@@ -203,3 +194,103 @@ html, body, #__nuxt {
   margin-bottom: 6px;
   display: block;
 }
+
+/* ── Charts (nuxt-charts / vccs) ──────────────────────────────────────── */
+/* Unlayered, so these beat the library's @layer defaults. Recessive grid and
+   axes; the data carries the colour. */
+
+.vue-chrts {
+  --vc-font-family: var(--font-mono);
+  --vc-grid-color: #16221d;
+  --vc-grid-dash: 2 4;
+  --vc-axis-line-color: var(--color-line);
+  --vc-surface-bg: var(--color-panel);
+  --vc-tick-color: var(--color-dim);
+  --vc-tick-size: 10px;
+  --vc-axis-label-color: var(--color-dim);
+  --vc-axis-label-size: 10px;
+  --vc-axis-label-weight: 400;
+  --vc-legend-color: var(--color-main);
+  --vc-legend-size: 11px;
+  --vc-legend-dot-size: 8px;
+  --vc-reference-line-color: #3a4a43;
+  --vc-hover-fill: rgba(199, 212, 205, 0.045);
+  --vc-tooltip-bg: rgba(10, 15, 13, 0.92);
+  --vc-tooltip-fg: var(--color-bright);
+  --vc-tooltip-muted: var(--color-dim);
+  --vc-tooltip-border: #26362f;
+  --vc-tooltip-radius: 0;
+  --vc-tooltip-padding: 8px 10px;
+  --vc-tooltip-shadow: 0 12px 32px -8px rgba(0, 0, 0, 0.7);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Chart card: a panel whose header states the takeaway, not just the title. */
+.chart-card {
+  background: var(--color-panel);
+  border: 1px solid var(--color-line);
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+.chart-card__head {
+  padding: 12px 14px 4px;
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.chart-card__title {
+  font-size: 10px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--color-dim);
+}
+.chart-card__lede {
+  margin-top: 4px;
+  font-size: 12px;
+  color: var(--color-main);
+  max-width: 62ch;
+  text-wrap: balance;
+}
+.chart-card__lede b { color: var(--color-bright); font-weight: 600; }
+.chart-card__meta {
+  font-size: 10px;
+  color: var(--color-dim);
+  letter-spacing: 0.06em;
+  white-space: nowrap;
+}
+.chart-card__body { padding: 6px 10px 12px; flex: 1; min-width: 0; }
+.chart-card__foot {
+  padding: 0 14px 10px;
+  font-size: 10px;
+  color: var(--color-dim);
+}
+.chart-empty {
+  display: grid;
+  place-items: center;
+  text-align: center;
+  font-size: 11px;
+  color: var(--color-dim);
+  border: 1px dashed var(--color-line);
+  margin: 4px;
+}
+
+/* Inline magnitude bar used in tables and ranked lists. */
+.mbar { position: relative; height: 6px; background: #121c18; }
+.mbar > span { position: absolute; inset: 0 auto 0 0; display: block; }
+
+/* Custom chart tooltip (slot content). */
+.ctip {
+  min-width: 190px; font-size: 11px; padding: 8px 10px;
+  background: var(--vc-tooltip-bg, rgba(10,15,13,.92)); border: 1px solid #26362f;
+  box-shadow: 0 12px 32px -8px rgba(0,0,0,.7); backdrop-filter: blur(6px);
+  pointer-events: none;
+}
+.ctip__title { color: var(--color-bright); margin-bottom: 6px; font-size: 11px; }
+.ctip__row { display: flex; align-items: center; gap: 8px; padding: 1px 0; }
+.ctip__row .sw { width: 8px; height: 8px; flex: none; }
+.ctip__row .n { color: var(--color-main); flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ctip__row .v { color: var(--color-bright); }
+.ctip__hint { margin-top: 6px; color: var(--color-dim); font-size: 10px; }

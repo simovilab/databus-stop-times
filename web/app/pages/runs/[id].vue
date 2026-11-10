@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import type { RunInfo, RunMetrics, RunSummary, ResultRow, PerPredictorMetric } from '~/types/api'
+import type { RunInfo, RunMetrics, RunSummary, ResultRow } from '~/types/api'
 
 const route = useRoute()
 const id = route.params.id as string
@@ -99,21 +99,6 @@ function fmtSha(sha: string | null | undefined, dirty: boolean | null | undefine
 }
 
 const provenance = computed(() => run.value?.provenance ?? null)
-
-function fmtNum(n: number | undefined): string {
-  if (n === undefined || n === null) return '—'
-  return n.toFixed(1)
-}
-
-function fmtMs(sec: number | undefined | null): string {
-  if (sec === undefined || sec === null || !isFinite(sec)) return '—'
-  return Math.round(sec * 1000).toLocaleString()
-}
-
-function fmtCiRange(ci: PerPredictorMetric['mae_ci']): string {
-  if (!ci || !isFinite(ci.lo) || !isFinite(ci.hi)) return '—'
-  return `${ci.lo.toFixed(1)}–${ci.hi.toFixed(1)}`
-}
 
 // ── Significance (per test family, split into rejected vs n.s.) ────────────
 const significanceByTest = computed(() => {
@@ -239,71 +224,13 @@ const isError = computed(() => displayStatus.value === 'error')
 
       <ConsoleWinnerSpotlight v-if="winner" :winner="winner" />
 
-      <!-- Per-predictor metrics table -->
-      <div v-if="metrics" class="panel">
-        <div class="panel-header"><span class="micro-label">Per-predictor metrics</span></div>
-        <div class="overflow-x-auto">
-          <table class="w-full text-[11px]">
-            <thead>
-              <tr class="border-b border-line text-dim uppercase tracking-wide text-[10px]">
-                <th class="text-left py-1.5 px-3 font-normal">Predictor</th>
-                <th class="text-right py-1.5 px-3 font-normal">MAE (s)</th>
-                <th class="text-right py-1.5 px-3 font-normal">RMSE (s)</th>
-                <th class="text-right py-1.5 px-3 font-normal">MAPE (%)</th>
-                <th class="text-right py-1.5 px-3 font-normal">Bias (s)</th>
-                <th class="text-right py-1.5 px-3 font-normal">MAE 95% CI</th>
-                <th class="text-right py-1.5 px-3 font-normal">P95 latency (ms)</th>
-                <th class="text-right py-1.5 px-3 font-normal">Count</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr
-                v-for="m in metrics.per_predictor"
-                :key="m.predictor_id"
-                class="border-b border-[#141f1a]"
-                :class="winner && m.predictor_id === winner.predictor_id ? 'bg-accent-dim' : ''"
-              >
-                <td class="py-1 px-3" :class="winner && m.predictor_id === winner.predictor_id ? 'text-accent' : 'text-bright'">
-                  {{ m.predictor_id }}
-                </td>
-                <td class="py-1 px-3 text-right tabular-nums">{{ fmtNum(m.mae) }}</td>
-                <td class="py-1 px-3 text-right tabular-nums">{{ fmtNum(m.rmse) }}</td>
-                <td class="py-1 px-3 text-right tabular-nums">{{ fmtNum(m.mape) }}</td>
-                <td class="py-1 px-3 text-right tabular-nums">{{ fmtNum(m.bias) }}</td>
-                <td class="py-1 px-3 text-right tabular-nums text-dim">{{ fmtCiRange(m.mae_ci) }}</td>
-                <td class="py-1 px-3 text-right tabular-nums text-dim">{{ fmtMs(m.latency?.p95_s) }}</td>
-                <td class="py-1 px-3 text-right tabular-nums text-dim">{{ m.count.toLocaleString() }}</td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
-      </div>
-
-      <!-- Horizon-bucket pivot -->
-      <div v-if="metrics && metrics.horizon_buckets.length > 0" class="panel">
-        <div class="panel-header"><span class="micro-label">Horizon buckets</span></div>
-        <div class="overflow-x-auto">
-          <table class="w-full text-[11px]">
-            <thead>
-              <tr class="border-b border-line text-dim uppercase tracking-wide text-[10px]">
-                <th class="text-left py-1.5 px-3 font-normal">Bucket</th>
-                <th class="text-left py-1.5 px-3 font-normal">Predictor</th>
-                <th class="text-right py-1.5 px-3 font-normal">MAE (s)</th>
-                <th class="text-right py-1.5 px-3 font-normal">Bias (s)</th>
-                <th class="text-right py-1.5 px-3 font-normal">Count</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr v-for="(b, i) in metrics.horizon_buckets" :key="`${b.label}-${b.predictor_id}-${i}`" class="border-b border-[#141f1a]">
-                <td class="py-1 px-3 text-dim">{{ b.label }}</td>
-                <td class="py-1 px-3 text-bright">{{ b.predictor_id }}</td>
-                <td class="py-1 px-3 text-right tabular-nums">{{ fmtNum(b.mae) }}</td>
-                <td class="py-1 px-3 text-right tabular-nums">{{ fmtNum(b.bias) }}</td>
-                <td class="py-1 px-3 text-right tabular-nums text-dim">{{ b.count.toLocaleString() }}</td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
+      <!-- Headline: MAE with confidence intervals, then error by horizon -->
+      <div v-if="metrics" class="grid grid-cols-1 xl:grid-cols-[1.25fr_1fr] gap-3">
+        <AnalyticsRunMaeForest :metrics="metrics.per_predictor" />
+        <AnalyticsRunHorizonBuckets
+          v-if="metrics.horizon_buckets.length > 0"
+          :buckets="metrics.horizon_buckets"
+        />
       </div>
 
       <!-- Significance -->

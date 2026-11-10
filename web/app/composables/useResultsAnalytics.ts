@@ -51,11 +51,6 @@ function mean(vals: number[]): number {
   return vals.reduce((a, b) => a + b, 0) / vals.length
 }
 
-const PALETTE: readonly string[] = [
-  '#2fd67b', '#7ee0a8', '#b8e8d0', '#e0b040', '#e06060',
-  '#6fd6d0', '#a0d68f', '#d0c060', '#8090e0', '#d08fd0',
-]
-
 const BUCKET_LABELS: readonly string[] = ['<2m', '2-5m', '5-10m', '>10m']
 
 function getBucketIdx(h: number): 0 | 1 | 2 | 3 {
@@ -66,14 +61,17 @@ function getBucketIdx(h: number): 0 | 1 | 2 | 3 {
 }
 
 // Fixed histogram bin edges (in seconds)
-const HIST_EDGES: readonly number[] = [-300, -240, -180, -120, -60, 0, 60, 120, 180, 240, 300]
-const HIST_CENTERS: readonly number[] = HIST_EDGES.slice(0, -1).map((e, i) => (e + HIST_EDGES[i + 1]!) / 2)
+// 30 s bins centred on zero (−300 … +300 s). The end bins also catch the tails.
+const HIST_STEP_S = 30
+const HIST_HALF = 10
+export const HIST_CENTERS: readonly number[] = Array.from(
+  { length: 2 * HIST_HALF + 1 },
+  (_, i) => (i - HIST_HALF) * HIST_STEP_S
+)
 
 function getHistBinIdx(e: number): number {
-  for (let i = 0; i < HIST_EDGES.length - 1; i++) {
-    if (e < HIST_EDGES[i + 1]!) return i
-  }
-  return HIST_EDGES.length - 2
+  const i = Math.round(e / HIST_STEP_S) + HIST_HALF
+  return Math.min(Math.max(i, 0), HIST_CENTERS.length - 1)
 }
 
 /** The agency's own feed predictions: the baseline every model has to beat. */
@@ -152,13 +150,7 @@ export function useResultsAnalytics(runId: string) {
   )
 
   /** Stable color map keyed by predictor_id – computed from all predictors so colours don't shift when filtering. */
-  const colorMap = computed<Record<string, string>>(() => {
-    const map: Record<string, string> = {}
-    predictors.value.forEach((p, i) => {
-      map[p] = PALETTE[i % PALETTE.length] as string
-    })
-    return map
-  })
+  const colorMap = computed<Record<string, string>>(() => buildColorMap(predictors.value))
 
   /** Predictors that are currently toggled on. */
   const activePredictors = computed<string[]>(() =>

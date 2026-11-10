@@ -1,8 +1,8 @@
 <script setup lang="ts">
-// ConvergenceChart – shows |error_s| vs horizon_s for a selected (trip, stop).
-// Multiple lines, one per predictor. Empty state when no trip/stop is selected.
+// ConvergenceChart – for one trip/stop, |error| as the bus approaches.
+// Read right to left: far out on the right, arrival at the left. A good
+// predictor's line falls towards zero as the horizon shrinks.
 
-import { VisXYContainer, VisLine, VisAxis, VisBulletLegend } from '@unovis/vue'
 import type { ConvDatum } from '~/composables/useResultsAnalytics'
 
 const props = defineProps<{
@@ -16,86 +16,68 @@ const emit = defineEmits<{
   clear: []
 }>()
 
-const hasSelection = computed(() => !!props.selectedTripStop)
-const hasData = computed(() => props.data.length > 1)
-
-const xAccessor = (d: ConvDatum) => d.horizonBin
-
-const yAccessors = computed(() =>
-  props.predictors.map((p) => (d: ConvDatum) => {
-    const v = d[p]
-    return typeof v === 'number' && isFinite(v) ? v : undefined
-  })
+const series = computed(() => seriesKeys(props.predictors, props.colorMap))
+const gapSeries = computed(() =>
+  series.value.keys.map((k) => ({ key: k, name: series.value.categories[k]!.name, color: series.value.categories[k]!.color }))
 )
 
-const lineColors = computed(() => props.predictors.map((p) => props.colorMap[p] ?? '#999'))
-
-const legendItems = computed(() =>
-  props.predictors.map((p) => ({ name: p, color: props.colorMap[p] ?? '#999' }))
+// Far horizons first so time runs left → right towards arrival.
+const rows = computed(() =>
+  [...props.data]
+    .sort((a, b) => b.horizonBin - a.horizonBin)
+    .map((d) => {
+      const row: Record<string, string | number | null> = { label: fmtSeconds(d.horizonBin), h: d.horizonBin }
+      for (const p of props.predictors) {
+        const v = d[p]
+        row[series.value.byId[p] as string] = typeof v === 'number' && Number.isFinite(v) ? Math.round(v) : null
+      }
+      return row
+    })
 )
 
-const selectionLabel = computed(() =>
-  props.selectedTripStop
-    ? `Trip: ${props.selectedTripStop.trip_key} / Stop: ${props.selectedTripStop.stop_id}`
-    : ''
-)
+const hasData = computed(() => rows.value.length > 1)
 </script>
 
 <template>
-  <div class="panel">
-    <div class="panel-header">
-      <div class="min-w-0">
-        <span class="micro-label">Prediction convergence</span>
-        <p v-if="hasSelection" class="text-xs text-dim truncate mt-0.5">{{ selectionLabel }}</p>
-      </div>
+  <AnalyticsChartCard
+    title="Prediction convergence"
+    :meta="selectedTripStop ? `stop ${selectedTripStop.stop_id}` : undefined"
+    :empty="!hasData"
+    :height="280"
+  >
+    <template v-if="selectedTripStop" #lede>
+      How each predictor's error shrank as trip <b>{{ selectedTripStop.trip_key }}</b> approached
+      the stop. Time runs left to right.
+    </template>
+    <template #actions>
       <UButton
-        v-if="hasSelection"
+        v-if="selectedTripStop"
         size="xs"
         variant="ghost"
-        icon="i-heroicons-x-mark"
-        label="Clear"
+        color="neutral"
+        icon="i-lucide-x"
+        aria-label="Clear selection"
         @click="emit('clear')"
       />
-    </div>
-
-    <div class="p-3">
-      <ClientOnly>
-        <!-- No selection yet -->
-        <div v-if="!hasSelection" class="py-8 text-center text-xs text-dim">
-          Click a point in the Error Scatter to see convergence for that trip / stop.
-        </div>
-
-        <!-- Selection but no rows survived filters -->
-        <div v-else-if="!hasData" class="py-8 text-center text-xs text-dim">
-          No predictions found for this trip/stop under the current filters.
-        </div>
-
-        <!-- Chart -->
-        <div v-else>
-          <VisBulletLegend :items="legendItems" class="mb-3" />
-          <VisXYContainer :data="data" :height="220">
-            <VisLine
-              v-for="(yFn, i) in yAccessors"
-              :key="predictors[i]"
-              :x="xAccessor"
-              :y="yFn"
-              :color="lineColors[i]"
-              :fallback-value="undefined"
-              :line-width="2"
-              :highlight-on-hover="true"
-            />
-            <VisAxis type="x" label="Horizon (s)" />
-            <VisAxis type="y" label="|Error| (s)" />
-          </VisXYContainer>
-          <p class="mt-1 text-xs text-dim text-center">
-            Lower is better. X = time before arrival when prediction was made (larger = earlier).
-          </p>
-        </div>
-
-        <template #fallback>
-          <div class="h-[220px] bg-panel animate-pulse" />
-        </template>
-      </ClientOnly>
-    </div>
-  </div>
+    </template>
+    <template #empty>
+      <div class="flex flex-col items-center gap-2 px-6">
+        <UIcon name="i-lucide-mouse-pointer-click" class="size-5 text-dim" />
+        <span v-if="selectedTripStop">Not enough predictions for this trip/stop under the current filters.</span>
+        <span v-else>Click a dot in <b class="text-main">Error vs horizon</b> to trace one trip/stop here.</span>
+      </div>
+    </template>
+    <AnalyticsGapLineChart
+      :rows="rows"
+      x-key="label"
+      :series="gapSeries"
+      :height="260"
+      connect-nulls
+      :y-formatter="(v: number) => `${Math.round(v)}s`"
+      y-label="|error|"
+      x-label="time to arrival"
+      :tooltip-title="(r) => `${r.label} before arrival`"
+      aria-label="Absolute error as the vehicle approaches the stop"
+    />
+  </AnalyticsChartCard>
 </template>
