@@ -75,3 +75,28 @@ not yet a held-out test. Next: rolling-origin by week + day-grouped CV.
   1 Dec removed). Next term needs the new feed.
 - `simovi-status` says bUCR static GTFS is "none yet", but weekly snapshots exist in
   `feeds/bucr/gtfs_static/`.
+
+## Cross-validation, tuning and the frozen model (same day, later)
+
+`python -m stoptimes.train.live_cv` (commits 5f46a25, 42651a5) refits the segment-history
+prior and route vocabulary on each fold's fit days only, and early-stops on training days.
+
+| Scheme | Model | Timetable | Segment history |
+|---|---|---|---|
+| Original split (early-stopped on its own test days) | 48.7 s | 94.3 s | 54.4 s |
+| Rolling origin by ISO week, 9 test weeks (W37–W45) | 52.6 ± 4.1 s | 93.5 s | 58.1 s |
+| 5-fold by day | 51.0 ± 2.1 s | 92.2 s | 56.6 s |
+
+Sweep (12 configs, rolling): only depth matters. `max_depth 10, learning_rate 0.03` gives
+pooled 52.1 s against 52.5 s, winning 9 of 9 folds by 0.42 ± 0.15 s. Learning rate,
+`min_child_weight` and patience move it ≤ 0.2 s. The 20+ min horizon stays at ~240 s
+whatever the settings, so it needs features, not tuning.
+
+**Frozen model:** `examples/experiments/xgb-live-bucr-final.yaml`.
+- Trained on all 62 days with `early_stopping_rounds: 0` and `n_estimators: 415`
+  (CV median best iteration 360 × 1.15).
+- Artifact: `~/stoptimes-registry/xgb-live-bucr-final`. In-sample train MAE is 45.6 s.
+- An in-sample replay of 4 Nov, 06–12 h, through `val`: 34.9 s, against 87.1 s for the
+  timetable. That checks the wiring only.
+- Publish as `stoptimes-bucr@staging`, then run the live test in
+  [the runbook](../guides/bucr-live-test.md).

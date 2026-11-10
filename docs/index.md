@@ -18,7 +18,8 @@ configuration.
   baselines) that everything else is built from.
 - **Have a specific job?** The [guides](guides/record-a-feed.md) are organized by what you're
   trying to do: record a feed, diagnose it, train a model, serve predictions, or validate any
-  feed.
+  feed. For an end-to-end live check of the bUCR model on a local databus, see
+  [Live-test the bUCR model](guides/bucr-live-test.md).
 - **Need exact flags?** The [CLI reference](reference/cli.md) is generated from the `stoptimes`
   command itself, so it can't drift from what `--help` prints.
 - **Wiring it into your own system?** [Contracts](contracts-overview.md) explains the frozen interfaces

@@ -1,298 +1,254 @@
 # databus integration: TripUpdate predictions from stoptimes
 
-Status: **design, agreed direction** · written 2026-09-19 · cutover steps are PLAN.md §8 **G2** ·
-audience: databus maintainers and whoever runs the G2 cutover.
+Status: **design, direction agreed (O3)**. Refreshed 2026-11-09 against databus `main` @
+`1be2da1` and `feat/ops-dashboard` @ `39a479d`, and this repo @ `a988f73`. Audience: whoever
+wires databus to serve the bUCR live model. The cutover steps are PLAN.md §8 **G2**.
 
-This document lists the ways databus can get its TripUpdate arrival predictions from stoptimes, what each
-costs, and exactly what databus has to change for the chosen one. It lives in the stoptimes repo because
-that is where the plan lives. The databus-side items (§5) are written so they can be copied into a databus
-issue or ADR unchanged.
+The databus-side items in §4 are written so they can be pasted into a databus issue
+unchanged.
 
-databus facts below were read from databus commit `15dcfe1` on `feat/eta-xgboost-model` /
-`feat/fetch-telemetry`. **The ETA code is not on databus `main`** (nor on `feat/ops-dashboard`), so
-re-check paths against whatever branch is deployed before G2a.
+## 1. Decision, and how we got here
 
----
+The model now runs in a **separate prediction-service container (O3)**:
 
-## 1. How databus predicts today
+- The service loads the model from MLflow (`ml.simovi.org`, `stoptimes-bucr@production`,
+  shadowed by `@staging`).
+- It reads the same VehiclePositions / trip state that databus already has.
+- It writes stop-time predictions that databus folds into its TripUpdates.
 
-```
-Vehicle ─MQTT─▶ realtime-engine (Celery task per position, ~1–5 s)
-                  realtime_engine/tasks.py:293 → produce_stop_times(run_id, vehicle_id)
-                    reads Redis: run:<id>, vehicle:<id>:position, stop status; shape geometry via ORM (cached)
-                    projects the vehicle onto the shape → shape_distance_to_stop per upcoming stop
-                    gtfs_eta.eta_service.estimator.estimate_stop_times(vehicle, upcoming_stops, route_id, trip_id,
-                                                                       prefer_route_model=True, max_stops=3, shape)
-                    SET run:<id>:stop_time_updates  (JSON list, EX 60)
-scheduler (15 s) ─▶ schedule-engine
-                  builders.py: for run_id in runs:in_progress → GET run:<id>:stop_time_updates → trip_updates.pb
-```
+**databus never talks to MLflow and never imports ML code.**
 
-**The Redis contract.** `run:<id>:stop_time_updates` holds a JSON list. Each entry has exactly five fields,
-`stop_sequence`, `stop_id`, `arrival_time`, `departure_time` (POSIX seconds) and `uncertainty` (s). It is
-encoded and decoded by `runs/domain/telemetry/stop_time_updates.py` (`to_redis` / `from_redis`). Today
-`arrival_time == departure_time` and `uncertainty` is always `ETA_DEFAULT_UNCERTAINTY_S` (120).
+History, kept short (the full option table is in git history of this file, before
+2026-11-09):
 
-**Behaviour any option must preserve:**
-
-1. **No predictions → no write.** `produce_stop_times` leaves the last good value in place.
-2. **60 s TTL.** It is the only thing that removes the key. Nothing deletes it when a run ends.
-3. **The builder iterates `runs:in_progress` only**, so a key left over from an ended run never reaches the feed.
-4. **A missing or empty key** produces a TripUpdate entity with no `stop_time_update` entries (the
-   builder's "honest skip").
-5. **`schedule-engine` never runs a model.** It only reads the projection (ARCHITECTURE.md: the publisher
-   role doesn't interpret telemetry).
-
-Also relevant: the model call currently runs **inside the telemetry task**, so model latency or a model
-failing to load delays position ingestion. databus runs **Python 3.14**. stoptimes development is pinned to
-**3.12** because of torch (LSTM only).
-
-## 2. Options at a glance
-
-| | Where the model runs | Changes to databus | In databus's venv | Telemetry task waits on the model | New model without a databus deploy | Extra infrastructure |
-|---|---|---|---|---|---|---|
-| **O1 Library, in-process** (G2a) | realtime-engine | 1 import + dependency pin | stoptimes-serve + model libs | yes (as today) | yes, if the registry is shared | none |
-| **O2 Pipeline, in-process** (former G2b, superseded) | realtime-engine | pipeline stages inside databus | same as O1 | yes | yes | none |
-| **O3 Prediction service** (target, G2b–G2c) | its own container | pipeline file, compose service, remove the producer, ARCHITECTURE.md | **nothing** | **no** | yes | one container |
-| O3 + MLflow in-process (G2d) | the service | none beyond O3 | nothing | no | yes, by moving an alias | MLflow tracking server + store |
-| O3 + MLflow scoring server | a model server behind the service | none beyond O3 | nothing | no | redeploy the model server | MLflow server per model |
-| **O4 databus calls MLflow directly** | MLflow | rebuild the feature code in databus | mlflow client | yes | yes | MLflow |
-
-**Recommendation:** O1 first, because it is a one-line reversible cutover. Then O3, run in shadow mode
-before it takes over. MLflow is an optional model source for O3, not a separate path. O2 is superseded. O4 is
-rejected.
-
-## 3. The options
-
-### O1 · Library, in-process (G2a)
-
-`stop_times.py` swaps `gtfs_eta.eta_service.estimator` for `stoptimes.serve.estimator` (same
-`estimate_stop_times` signature; in Phase 3 it became a thin adapter over the pipeline) and
-`gtfs_eta.feature_engineering.spatial.ShapePolyline` for `stoptimes.core.spatial.geo.ShapePolyline`.
-
-- **Benefits.** Smallest possible change, rollback is a revert, and databus's own shape projection keeps
-  supplying `shape_distance_to_stop` exactly as now.
-- **Trade-offs.**
-  - The model still runs in the telemetry task.
-  - stoptimes-serve and the model libraries have to install and import on **Python 3.14**.
-    Check the scikit-learn/xgboost wheels before scheduling it. The LSTM needs torch and is out of
-    reach on 3.14.
-  - The artifact must load under databus's library versions: **G4 comes before G2a** (U7 refuses a
-    drifted artifact).
-- **databus needs:** §5.1.
-
-### O2 · Pipeline, in-process (superseded)
-
-databus supplies `ingest`/`publish` overrides and runs the pipeline inside `realtime-engine`. It removes the
-duplicated feature code just as O3 does, but keeps every O1 cost: shared venv, Python 3.14, the model in the
-telemetry path. Kept here only to record why it was dropped (2026-09-19).
-
-### O3 · Prediction service (target)
-
-A `stoptimes serve` container runs next to databus on the same Docker network. It loops every few seconds,
-reads active runs from databus's Redis, predicts them all in one batch, and writes
-`run:<id>:stop_time_updates`. databus only reads the key, as it already does.
-
-```
-realtime-engine ──writes──▶ Redis (runs:in_progress, run:<id>, vehicle:<id>:position, stop status)
-                                  │ read every N s
-                  prediction-engine = stoptimes serve --pipeline databus_pipeline.py:pipeline
-                    ingest (databus) → match → features → predict → postprocess → publish (databus)
-                                  │ write (EX 60)
-                             run:<id>:stop_time_updates ──read──▶ schedule-engine (unchanged)
-```
-
-- **Benefits.**
-  - Telemetry ingestion no longer waits on the model.
-  - The model's dependencies and Python version are fully separate from `backend_venv`.
-  - One batched predict call per cycle, so heavier models (LSTM) become realistic.
-  - Models are promoted and rolled back without a databus deploy.
-  - Feature computation is the same code as training (U6), not a second copy in databus.
-  - `schedule-engine`, the Redis contract and the feed are unchanged.
-- **Trade-offs.**
-  - **Freshness.** Predictions are up to one cycle older than today's per-position ones. A 5 s cycle
-    against a 15 s feed build is acceptable. Record the source position's timestamp so staleness is
-    visible (§5.2).
-  - **Architecture.** A second writer to Redis, which ARCHITECTURE.md currently reserves for
-    `realtime-engine`. It needs an amended mandate (§5.2). The precedent is `schedule-engine`, which
-    already runs on a timer over a Redis snapshot.
-  - **Static GTFS consistency.** The service needs shapes and stop times. It must use the same feed
-    version databus publishes, or `trip_id`s and stop sequences drift.
-  - **Operations.** One more container to deploy and monitor. When it is down, keys expire within 60 s and
-    the feed carries TripUpdates without stop time updates. That is the same degradation as "no model
-    today", and it should be visible on the ops dashboard.
-  - **Loop routes.** databus's `STOPPED_AT` / `current_stop_sequence` filtering and bUCR's loop-back-safe
-    shape distance must be carried into the service. The default `match` stage projects onto the shape
-    only, so pass stop status through `ingest` and use it in a databus `match` override.
-- **databus needs:** §5.2.
-
-#### Model source for O3
-
-The service's model can come from three places. Changing between them is configuration only.
-
-| Source | How | Benefits | Trade-offs |
-|---|---|---|---|
-| **Filesystem registry** (default) | `--registry /models`, a volume; `models promote` / rollback (U7) | no extra services; what G2b ships with | promotion means writing to the volume on the host |
-| **MLflow, in-process** | `STOPTIMES_REGISTRY=mlflow+http://mlflow:5000`; pins map to aliases (`@route-22`) | promotion and rollback by moving an alias, with UI and audit trail; no network call per prediction | needs an MLflow server and store; the service re-checks aliases every few minutes; the U7 drift refusal still applies |
-| **MLflow scoring server** | `mlflow models serve` container; the service calls it via `HttpModel` with `request_format: mlflow` | model runtime isolated even from stoptimes | one server per model (per-route choice needs a router model); a network call per cycle; an alias change means restarting the server |
-
-Details: [MLFLOW_INTEGRATION.md](MLFLOW_INTEGRATION.md) (I2, I4, I6). Whichever is chosen, it is invisible to
-databus.
-
-### O4 · databus calls MLflow directly (rejected)
-
-databus would have to rebuild the model's inputs itself: shape progress, kinematic and temporal features.
-That brings back the training/serving duplication G2b exists to remove, and puts the MLflow client in
-databus's venv. The model would also be invisible to stoptimes' selection policy, drift checks and `val`.
-Rejected.
-
----
-
-## 4. Rollout
-
-Also in PLAN.md §8 G2. Each step needs the user's explicit go.
-
-| Step | What happens | Rollback |
+| Option | What it was | Fate |
 |---|---|---|
-| **G4** | Re-export the served artifacts under databus's library versions, or set `STOPTIMES_ALLOW_VERSION_DRIFT` as a logged exception | — |
-| **G2a** | O1 import swap | revert the databus commit |
-| **G2b** | O3 service in **shadow**: writes `run:<id>:stop_time_updates:shadow`; production still comes from G2a. Compare live and by replaying one recorded bUCR day through `val` with both | stop the container |
-| **G2c** | Service writes the real key; the same databus deploy removes `produce_stop_times` | stop the service and revert the databus deploy (back to G2a); keys expire in 60 s |
-| **G2d** (optional) | Switch the service's registry to MLflow; run the MLFLOW_INTEGRATION.md §6 comparison | point the registry back at the volume |
+| O1 | swap databus's `gtfs_eta` import for `stoptimes.serve.estimator`, in-process | **dead for the live model.** The live model needs per-trip state and 19 features; `estimate_stop_times` is per-ping and stateless. It would also need stoptimes and xgboost on databus's Python 3.14 |
+| O2 | stoptimes pipeline running inside `realtime-engine` | superseded 2026-09-19 (all of O1's costs) |
+| **O3** | prediction-service container next to databus | **chosen** |
+| O4 | databus calls MLflow / imports mlflow itself | **rejected.** It would make databus rebuild the 19 live features and per-trip state (the training/serving duplication again), and the model would be invisible to `val`, drift checks and selection |
 
-## 5. What databus needs to change
+MLflow is the model source of O3, not a separate path. The external server means databus's
+compose needs no `mlflow` service ([MLFLOW_INTEGRATION.md](MLFLOW_INTEGRATION.md) §0.3).
 
-### 5.1 For G2a (library, in-process)
+## 2. What is true today
 
-- [ ] `backend/pyproject.toml`: replace the `backend/gtfs-eta` symlink with a pinned `stoptimes-serve`
-      dependency (git ref until PyPI), with `[xgboost]` if the served family needs it. Verify it resolves
-      on Python 3.14.
-- [ ] `runs/domain/progression/stop_times.py`: two imports (estimator module, `ShapePolyline`). Keep
-      calling via the module attribute so the existing test patching still works.
-- [ ] Environment: `MODEL_REGISTRY_DIR` → `STOPTIMES_MODEL_REGISTRY_DIR`; `ETA_*` names remain readable
-      (deprecated). Registry volume mounted into `realtime-engine`.
-- [ ] Before deploy: load the served artifact under databus's versions (G4).
-- [ ] Tests: existing `stop_times` / `test_mqtt_ingestion` suites pass with the new patch target.
+### databus (verified in source)
 
-### 5.2 For G2b–G2c (prediction service)
+The ETA producer **is on `main`** now. This file previously said otherwise.
 
-**Compose service** (dev and prod), on the same network as `state`:
-
-```yaml
-prediction-engine:
-  image: <stoptimes-serve image>        # built from this repo (G2 prerequisite)
-  command: >
-    stoptimes serve --source bucr --static /gtfs/current.zip
-      --pipeline /databus/databus_pipeline.py:pipeline
-      --registry /models --interval 5
-  environment:
-    REDIS_HOST: state
-    REDIS_PASSWORD: ${REDIS_PASSWORD}
-    DATABUS_PREDICTIONS_KEY_SUFFIX: ":shadow"   # G2b; empty at G2c
-  volumes:
-    - ./prediction/databus_pipeline.py:/databus/databus_pipeline.py:ro
-    - models:/models
-    - gtfs:/gtfs:ro
-  depends_on: [state]
+```
+NavSat HTTP ─(fetch_positions, beat 10 s)─▶ MQTT transit/vehicle/<id>/position ◀─ simulator / OBE
+        realtime-engine: process_position_update(run_id, vehicle_id)      realtime_engine/tasks.py:255
+          1 produce_stop_status        → run:<id>:vehicle_stop_status (STOPPED_AT ≤20 m / INCOMING_AT ≤50 m)
+          2 detect_from_telemetry      → RUN_COMPLETED at the terminal
+          3 produce_stop_times         → SET run:<id>:stop_time_updates EX 60       tasks.py:293 (main), :386 (ops-dashboard)
+          4 position-leaf detection    → RunStarted etc.
+scheduler (beat 15 s) ─▶ schedule-engine: build_vehicle_positions / build_trip_updates
+          builders.build_trip_update_entity: for run in runs:in_progress → GET run:<id>:stop_time_updates
+          → backend/feed/files/{vehicle_positions,trip_updates}.{json,pb}
+orchestrator: /feed/realtime/{vehicle_positions,trip_updates}.{json,pb}, /feed/schedule/feed.zip
 ```
 
-**The pipeline file, owned by databus** (it encodes databus's Redis schema, so it belongs with `keys.py`,
-not in stoptimes). Sketch:
+**The producer** is `runs/domain/progression/stop_times.py`:
 
-```python
-from stoptimes.serve.pipeline import build_default_pipeline
-from stoptimes.core.contracts.data import Observation, ObservationKind
+- It lazily imports `gtfs_eta.eta_service.estimator.estimate_stop_times` with
+  `ETA_MAX_STOPS=3`.
+- Uncertainty is a fixed `ETA_DEFAULT_UNCERTAINTY_S=120`, and `STOP_TIME_UPDATES_TTL_S=60`.
+- The model is whatever `MODEL_REGISTRY_DIR` holds. In the repo that is
+  `backend/eta_models/`: a **synthetic** `polyreg_distance_global_baseline_v0`, fit on
+  constant-speed samples, not real telemetry.
+- So today's bUCR TripUpdates are a constant-speed guess for the next 3 stops.
 
-pipeline = build_default_pipeline()
+**The Redis contract** is `runs/domain/telemetry/stop_time_updates.py` (stdlib-only).
+`run:<run_id>:stop_time_updates` is a JSON **string**: a list of entries with exactly
+`stop_sequence`, `stop_id`, `arrival_time`, `departure_time` (POSIX s) and `uncertainty`
+(s). `from_redis` drops malformed entries. The builder sorts and dedups by
+`stop_sequence`, and a missing or empty key gives a TripUpdate with no `stop_time_update`.
 
-@pipeline.stage("ingest")
-def ingest(_payload, ctx) -> list[Observation]:
-    # For each run in runs:in_progress: read run:<id>, vehicle:<id>:position and stop status.
-    # Emit one vehicle_position Observation per run; stash stop status in
-    # ctx.state["stop_status"][trip_id] for the match override.
-    ...
+The builder also guarantees:
 
-@pipeline.stage("match")
-def match(observations, ctx):
-    # Default map-matching, then drop stops already served (STOPPED_AT / current_stop_sequence),
-    # keep at most max_stops, and apply bUCR's loop-back-safe shape distance.
-    ...
+1. It iterates `runs:in_progress` only.
+2. It never runs a model.
+3. A missing projection leads to an honest empty list.
 
-@pipeline.stage("publish")
-def publish(predictions, ctx) -> None:   # list[StopTimePrediction]
-    # Per run: stop_time_updates.to_redis([...5 fields...]) → SET run:<id>:stop_time_updates<suffix> EX 60.
-    # Skip the write when a run has no predictions (keep last good). Also SET a heartbeat key.
-    ...
+**Keys O3 needs**, from `runs/domain/telemetry/keys.py` plus hard-coded ones:
+
+- `runs:in_progress` (set)
+- `run:<id>` (hash: `vehicle`, trip fields)
+- `run:<id>:trip`
+- `vehicle:<id>:position` (hash with `timestamp`, epoch s)
+- `run:<id>:vehicle_stop_status`
+- `trip:<trip_id>:current_run`, `vehicle:<id>:current_run`
+
+**Feed shape.**
+
+- The JSON is the builder dict (snake_case, `json.dumps`), and the `.pb` is the same dict
+  through `ParseDict`.
+- The VP `trip` has `trip_id`, `route_id`, `direction_id` and `schedule_relationship`.
+  `start_date`/`start_time` exist only on `feat/ops-dashboard` (`32c0158`, not on `main`).
+- `vehicle.timestamp` is the ping time.
+
+**Other branch differences.** `feat/ops-dashboard` adds an `ops` app (`/api/ops/`) that
+also reads `stop_time_updates_key`, feed validation in `schedule_engine/validation.py`, and
+the shared-HTTP-source dedupe (`39a479d`).
+
+### stoptimes (verified in source)
+
+- **Live inference:** `stoptimes.serve.live_session.LiveSession`. It is run-scoped: it
+  holds a `TripStateStore`, is fed pings in arrival order, and skips trips whose newest
+  ping is more than 30 s older than the feed clock. The artifact's sidecar assets carry the
+  time zone and holiday region.
+- **`stoptimes serve`** already builds a `LiveSession` for live artifacts
+  (`packages/cli/src/stoptimes/cli/commands/serve.py:18`).
+  - Input: the source's VehiclePositions URL.
+  - Output: GTFS-RT TripUpdates to `--sink file:|http(s)://|mqtt://` in `--format pb|json`,
+    with `--registry mlflow+<uri>`.
+  - It has **no** Redis/databus sink yet.
+- **`val`** scores the same `LiveSession` path (`mlflow:<model>@<alias>`), so a `val` result
+  is a direct preview of O3's quality.
+  - See [guides/bucr-live-test.md](guides/bucr-live-test.md).
+  - The `serving:` block in `examples/agencies/bucr.yaml` pins the August **segment**
+    models. It is used only by the legacy `estimate_stop_times` path (`stoptimes:*` /
+    `gtfs_eta:*` predictors, old O1).
+  - It has no effect on the live model or on O3.
+
+## 3. O3, concretely
+
+```
+databus Redis (state) ──read──┐                       ┌── or: GET /feed/realtime/vehicle_positions.pb
+                              ▼                       ▼
+            prediction-engine  (stoptimes, own image, own Python)
+              model: MLflow stoptimes-bucr@production (resolved at start, re-checked every few min)
+              static: the GTFS zip databus publishes (/feed/schedule/feed.zip), reloaded on change
+              loop every N s: pings → LiveSession → predictions per (run, stop)
+                              │ SET run:<id>:stop_time_updates[:shadow] EX 60  (+ :meta, heartbeat)
+                              ▼
+            schedule-engine builders.build_trip_update_entity  (unchanged) → trip_updates.pb
 ```
 
-It needs a Redis client and databus's `keys` / `stop_time_updates` helpers. Either vendor those two small
-modules into the file's directory, or publish them as a tiny package. The service must not import Django.
+### Interfaces
 
-**Contract and state:**
+- **Input.** Either input works; pick one (open question 1).
+  - **(a) databus's own published VehiclePositions** (`/feed/realtime/vehicle_positions.pb`,
+    15 s). This is zero coupling to the Redis schema, and it is exactly what `val` consumes.
+    It costs up to 15 s of extra latency, and the service sees only In Progress runs.
+  - **(b) Redis directly:** `runs:in_progress` → `run:<id>` (vehicle, trip) →
+    `vehicle:<id>:position`. This gives per-ping freshness, but the service then has to
+    track `keys.py`.
+  - Either way, a ping is `(trip_id, start_date, vehicle_id, epoch, lat, lon)`, plus
+    optional `vehicle_stop_status` for loop safety.
+- **Run id.** The service writes per run. From a VP entity, take `vehicle.id`, then
+  `vehicle:<id>:current_run`, or use `trip:<trip_id>:current_run`.
+- **Output.** The existing five-field list, unchanged, so `schedule-engine` needs no code
+  change:
 
-- [ ] Freshness: record the timestamp of the position each prediction came from. Adding a sixth field
-      breaks `stop_time_updates.to_redis`'s five-field contract, so prefer a sibling key
-      `run:<id>:stop_time_updates:meta` = `{source_ts, computed_at, artifact_id}`. `schedule-engine` may
-      then skip predictions older than a threshold. Optional at G2b, recommended by G2c.
-- [ ] Heartbeat: `prediction-engine:heartbeat` (EX ~3× interval) with the last cycle's run count and error
-      count, shown on the ops dashboard.
-- [ ] Static GTFS: the service loads the same GTFS Schedule databus publishes (shared volume, or the URL
-      schedule-engine serves) and reloads when it changes. It never reads the Django ORM.
+  ```json
+  [{"stop_sequence": 8, "stop_id": "bUCR_0_11", "arrival_time": 1790272777,
+    "departure_time": 1790272777, "uncertainty": 60}]
+  ```
 
-**Code removal at G2c:**
+  - One entry per remaining stop the model predicts. That is more than today's 3, so
+    decide the cap (open question 3).
+  - `stop_sequence` must be the exact `stop_times.txt` value.
+  - `uncertainty` can come from horizon-bucket MAE until quantile models exist.
+- **Freshness and audit.** Add a sibling key `run:<id>:stop_time_updates:meta` =
+  `{source_ts, computed_at, model: "stoptimes-bucr/<version>"}`. Keep it out of the
+  five-field list.
+- **Health.** `prediction-engine:heartbeat` (EX ≈ 3× interval) with run, error and
+  skipped counts.
+- **Where it plugs in.** The consumer is `schedule_engine/builders.py::build_trip_update_entity`
+  (the `stop_time_updates.from_redis(raw)` read). It is untouched. The only databus code
+  change is removing step 3 (`produce_stop_times`) from `process_position_update` at
+  cutover, because there must never be two writers to one key.
 
-- [ ] `realtime_engine/tasks.py`: remove the `produce_stop_times` call in the same deploy that switches the
-      service to the real key. Never two writers to one key. Keep `stop_times.py` until G2c has been stable
-      for a while, then delete it with its tests.
+### Rollout (each step needs the user's go)
 
-**ARCHITECTURE.md amendment** (proposed text):
+| Step | What | Rollback |
+|---|---|---|
+| G2b shadow | service writes `run:<id>:stop_time_updates:shadow`; production still comes from `produce_stop_times`. Compare with `val` live, and by replaying a recorded day | stop the container |
+| G2c cutover | service writes the real key; the same databus deploy removes step 3 | stop the service and revert the deploy; keys expire in 60 s |
 
-> ### Prediction engine
-> **Role:** Arrival-time prediction for active runs.
-> **Responsibilities:** read the operational state snapshot on a fixed interval; write the derived
-> `run:<id>:stop_time_updates` projection (and its `:meta`) with a TTL; publish a heartbeat.
-> **Does NOT:** interpret raw telemetry, modify operational state, build or publish GTFS-RT feeds, serve APIs.
-> **Implemented by:** `stoptimes serve` with a databus-owned pipeline file.
+Old step G2a (O1) is dropped. G4 (artifact library versions) moves inside the service
+image, because databus's versions no longer matter.
 
-Also update the State (Redis) section: the "written by realtime-engine only" rule becomes "operational
-state is written by realtime-engine only; derived prediction projections by prediction-engine".
+## 4. What databus needs to change
 
-**Tests, in databus:**
+- [ ] A `prediction-engine` compose service (dev and prod):
+  - on the network with `state`;
+  - environment `REDIS_HOST=state`, `REDIS_PASSWORD`, `STOPTIMES_MLFLOW`, a **read-only**
+    MLflow credential, and the key suffix (`:shadow` at G2b, empty at G2c);
+  - outbound HTTPS to `ml.simovi.org`;
+  - no host ports.
+- [ ] Ops dashboard (`feat/ops-dashboard`): show the heartbeat and `:meta` age.
+- [ ] At G2c: remove the `produce_stop_times` call (`realtime_engine/tasks.py:293` on
+  `main`) in the same deploy. Delete `stop_times.py`, `backend/eta_models/` and the
+  `gtfs-eta` clone in `docker-entrypoint.sh` once G2c has been stable.
+- [ ] ARCHITECTURE.md: add a "Prediction engine" role.
+  - It reads the state snapshot on an interval.
+  - It writes only the derived `run:<id>:stop_time_updates` (+ `:meta`) with a TTL, plus a
+    heartbeat.
+  - It does not modify operational state, build feeds or serve APIs.
+  - The State section's rule becomes: operational state is written by `realtime-engine` and
+    the lifecycle actions; derived prediction projections are written by `prediction-engine`.
+- [ ] Tests: the builder is unchanged. Optionally add a test that skips predictions whose
+  `:meta.source_ts` is too old.
 
-- [ ] The pipeline file against a fake Redis: active runs in → keys out in the exact `from_redis` format;
-      ended runs are ignored; no predictions → no write.
-- [ ] A recorded bUCR day replayed through the service, diffed against G2a's output (the shadow comparison
-      done off-VPS first).
-- [ ] `schedule-engine` builder unchanged, with an optional test for the `:meta` staleness skip.
+## 5. What stoptimes needs to build
 
-### 5.3 For G2d (MLflow, optional)
+- [ ] A databus sink/ingest for `stoptimes serve`:
+  - a `--pipeline` file that does input (a) or (b) above;
+  - publishing per run to Redis in the five-field format, with `:meta` and heartbeat;
+  - keeping the last good value when a run has no predictions;
+  - no Django imports.
+  - The pipeline file owns databus's key names. Keep it in sync with `keys.py`, or vendor
+    `keys.py` and `stop_time_updates.py` (stdlib-only).
+- [ ] A `serve` Docker image, with MLflow alias re-check and static-GTFS reload.
+- [ ] Loop safety: bUCR stops on loop sections. Feed `vehicle_stop_status` /
+  `current_stop_sequence` into matching so passed stops are never predicted.
 
-> **Superseded 2026-11-06:** SIMOVI's MLflow is the external server `ml.simovi.org`, so databus's compose file
-> needs no `mlflow` service. Only the prediction service needs outbound HTTPS and a read-only credential. The
-> live 19-feature model can't use G2a, because it needs per-trip state, so it reaches databus through O3 only.
-> See [MLFLOW_INTEGRATION.md](MLFLOW_INTEGRATION.md) §0.3.
+## 6. What tomorrow's live test does and doesn't tell us
 
-Nothing in databus beyond an `mlflow` service in compose (or an external one). The prediction service's
-environment changes to `STOPTIMES_REGISTRY=mlflow+http://mlflow:5000`. MLflow can use databus's Postgres (a
-separate database) as its backend store, and a volume or S3 for artifacts.
+The test is [guides/bucr-live-test.md](guides/bucr-live-test.md): real NavSat pings, a
+local databus, and `val` with `mlflow:stoptimes-bucr@staging`.
 
-## 6. What stoptimes provides
+**It tells us:**
 
-These are the G2 prerequisites in PLAN.md §8:
-- a `serve` Docker image;
-- reloading the static GTFS when databus publishes a new version;
-- the heartbeat and `:meta` support;
-- documentation of the prediction-service use;
-- the U6 pipeline, the U7 registry lifecycle and drift refusal, already merged.
+- the model's accuracy on unseen days, with real GPS, scored the way O3 would serve it
+  (the same `LiveSession`);
+- how it compares with the timetable and with what databus publishes today (`gtfsrt`);
+- whether databus's VehiclePositions carry everything the live features need: `trip_id`,
+  ping timestamps fresh within 30 s, and `start_date`.
+
+**It doesn't tell us:**
+
+- **O3's own latency and freshness.** `val` polls the 15 s feed; O3 would also add its
+  cycle and Redis round trip.
+- **How databus *serves* predictions.** Nothing is written to Redis, and `trip_updates.pb`
+  still carries the synthetic model.
+- **Behaviour under operator-matched trips at scale.** Tomorrow's runs are started by hand
+  with hand-chosen `trip_id`s. In production that matching is the operator's (or the
+  simulator's), and mismatches will be more frequent.
+- **Robustness to databus edge cases:**
+  - runs completed early at the terminal: ≤ 20 m `STOPPED_AT` can drop the terminal arrival
+    from scoring;
+  - No Signal / Cancelled runs;
+  - restarts.
+- **Long-term drift.** The calendar ends 2026-11-27, and the next term needs a new feed and
+  likely a retrain.
 
 ## 7. Open questions
 
-- **Cycle interval.** 5 s is the starting proposal. The right value depends on bUCR's position rate and the
-  15 s feed cadence.
-- **Empty TripUpdates.** A TripUpdate with no `stop_time_update` is how databus handles "no prediction"
-  today. Check it against the GTFS-RT spec (it expects at least one unless the trip is canceled) and against
-  what infobus does with it. This is a pre-existing question, not one O3 introduces.
-- **Where the pipeline file lives in databus** (`backend/prediction/`?), and whether the two helper modules
-  are vendored or packaged.
-- **`uncertainty`.** It is a constant 120 s today. The service could fill it from quantile models later, and
-  the contract already has the field.
+1. **Input (a) or (b)?** (a) databus's published VP feed (simplest, up to 15 s staler) or
+   (b) Redis directly (fresher, coupled to `keys.py`).
+2. **Cycle interval.** 5 s was the proposal. The bUCR NavSat cadence and the 10 s
+   `fetch_positions` beat set the useful floor.
+3. **How many stops to publish.** Today it is 3. The model predicts all remaining stops,
+   but is weak beyond 20 min. Options: cap by horizon (e.g. 20 min), or publish everything
+   with a larger `uncertainty`.
+4. **Empty TripUpdates.** GTFS-RT expects at least one `stop_time_update` unless the trip
+   is canceled. What does infobus do with an empty one? (A pre-existing issue.)
+5. **Where the pipeline file lives** (databus `backend/prediction/`, or stoptimes), and
+   whether the two helper modules are vendored.
+6. **Credentials.** Who owns the read-only MLflow credential for the VPS, and how is it
+   delivered (env file vs. Docker secret)?
